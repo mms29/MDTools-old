@@ -194,6 +194,7 @@ contains
     allocate ( global_vel(nmodes) ) 
     allocate ( global_force(nmodes) ) 
     allocate ( global_random_force(nmodes) ) 
+    close(66)
     do i = 1,nmodes
       print*, i+first_mode
       if (i+ first_mode<10) then
@@ -205,9 +206,9 @@ contains
       endif
       print*, 'FMODES='
       print*, fmodes
-      open(unit=66, file=fmodes)
-      read(66,*)  normalModeVec(:,:, i)
-      close(66)
+      open(unit=67, file=fmodes)
+      read(67,*)  normalModeVec(:,:, i)
+      close(67)
     end do
     ! <\EDIT REMI>
 
