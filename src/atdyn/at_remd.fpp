@@ -1984,6 +1984,8 @@ contains
         call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
       end if
+      print*, "test"
+      print*, i
 
       ! perform remd
       !
@@ -1998,6 +2000,8 @@ contains
       call output_remd(i, output, molecule, dynamics, dynvars, boundary, remd)
 
     end do
+
+    print*, "endo"
 
     ! close output files
     !
