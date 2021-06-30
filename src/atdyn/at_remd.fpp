@@ -904,7 +904,7 @@ contains
               if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
                 call error_msg('Setup_Remd> nreplica' // trim(msg1) // ' in [REMD] and &
                                             reference'// trim(msg2) // ' in [RESTRAINTS] &
-                                            have inconsistency')
+                                            have inconsistency2')
               end if
             end if
 
@@ -1977,8 +1977,6 @@ contains
 
       ! MD main loop
       !
-      print*, "test"
-      print*, i
       if (dynamics%integrator == IntegratorLEAP) then
         call leapfrog_dynamics(output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
@@ -1986,8 +1984,6 @@ contains
         call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
       end if
-      print*, "testend"
-      print*, i
 
       ! perform remd
       !
@@ -2002,8 +1998,6 @@ contains
       call output_remd(i, output, molecule, dynamics, dynvars, boundary, remd)
 
     end do
-
-    print*, "endo"
 
     ! close output files
     !
