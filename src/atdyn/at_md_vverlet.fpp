@@ -153,12 +153,14 @@ contains
     print*, fctrl
     print*, 'FINFO1='
     print*, finfo
+    print*, 'FINFO3='
+    print*, finfo
     print*, 'HANDLE='
     print*, handle
-    call open_ctrlfile(fctrl, 65)
+    open(unit=65, file=finfo)
     call read_ctrlfile_string(65, 'Experiments', 'emfit_nma',  &
         finfo)
-    call close_ctrlfile(65)
+    close(65)
     print*, 'FINFO2='
     print*, finfo
     open(unit=66, file=finfo)
