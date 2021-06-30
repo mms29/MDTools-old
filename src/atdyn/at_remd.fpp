@@ -894,11 +894,11 @@ contains
                                           have inconsistency')
             end if
 
-            if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
-              call error_msg('Setup_Remd> nreplica' // trim(msg1) // ' in [REMD] and &
-                                          reference'// trim(msg2) // ' in [RESTRAINTS] &
-                                          have inconsistency')
-            end if
+            !if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
+            !  call error_msg('Setup_Remd> nreplica' // trim(msg1) // ' in [REMD] and &
+            !                              reference'// trim(msg2) // ' in [RESTRAINTS] &
+            !                              have inconsistency')
+            !end if
 
             if (enefunc%restraint_kind(funcid) /= RestraintsFuncEM) then
               if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
