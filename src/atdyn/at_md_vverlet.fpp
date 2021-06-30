@@ -126,6 +126,7 @@ contains
     real(wp), dimension (:), allocatable :: global_force
     real(wp), dimension (:), allocatable :: global_random_force
     character(256)            :: fmodes, fctrl, finfo, fprefix
+
     character :: ctmp
     logical :: global_fit
     ! <\EDIT REMI>
@@ -154,15 +155,13 @@ contains
     print*, 'FINFO1='
     print*, finfo
     print*, 'FINFO3='
+    finfo =  fctrl(1:len(trim(fctrl))-7) // "emfit_nma"
     print*, finfo
-    print*, 'HANDLE='
-    print*, handle
-    call open_ctrlfile(fctrl, handle)
-    call read_ctrlfile_string(handle, 'Experiments', 'emfit_nma',  &
-        finfo)
-    call close_ctrlfile(handle)
-    print*, 'FINFO2='
-    print*, finfo
+    ! call open_ctrlfile(fctrl, handle)
+    ! call read_ctrlfile_string(handle, 'Experiments', 'emfit_nma',  &
+    !     finfo)
+    ! call close_ctrlfile(handle)
+
     open(unit=66, file=finfo)
     read(66, '(I1)') global_fit_rd
     print*, "GLOBALFIT ?"
