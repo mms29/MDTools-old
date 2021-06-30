@@ -1977,6 +1977,8 @@ contains
 
       ! MD main loop
       !
+      print*, "test"
+      print*, i
       if (dynamics%integrator == IntegratorLEAP) then
         call leapfrog_dynamics(output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
@@ -1984,7 +1986,7 @@ contains
         call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
       end if
-      print*, "test"
+      print*, "testend"
       print*, i
 
       ! perform remd
