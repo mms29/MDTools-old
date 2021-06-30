@@ -151,11 +151,15 @@ contains
     call getarg(1, fctrl)
     print*, 'FCTRL='
     print*, fctrl
+    print*, 'FINFO1='
+    print*, finfo
+    print*, 'HANDLE='
+    print*, handle
     call open_ctrlfile(fctrl, handle)
     call read_ctrlfile_string(handle, 'Experiments', 'emfit_nma',  &
         finfo)
     call close_ctrlfile(handle)
-    print*, 'FINFO='
+    print*, 'FINFO2='
     print*, finfo
     open(unit=66, file=finfo)
     read(66, '(I1)') global_fit_rd
