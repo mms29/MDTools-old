@@ -155,10 +155,10 @@ contains
     print*, finfo
     print*, 'HANDLE='
     print*, handle
-    call open_ctrlfile(fctrl, handle)
-    call read_ctrlfile_string(handle, 'Experiments', 'emfit_nma',  &
+    call open_ctrlfile(fctrl, 65)
+    call read_ctrlfile_string(65, 'Experiments', 'emfit_nma',  &
         finfo)
-    call close_ctrlfile(handle)
+    call close_ctrlfile(65)
     print*, 'FINFO2='
     print*, finfo
     open(unit=66, file=finfo)
