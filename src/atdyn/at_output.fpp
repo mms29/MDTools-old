@@ -73,13 +73,13 @@ module at_output_mod
   public  :: output_rpath
   public  :: output_vib
   public  :: output_gamd
+  public  :: write_restart_pdb
 
   private :: output_restart_md
   private :: output_restart_min
   private :: output_restart_remd
   private :: output_restart_rpath
   private :: output_restart_pdb
-  private :: write_restart_pdb
   private :: write_trajectory_dcd
   private :: write_trajectory_dcdvel
   private :: include_id_to_filename

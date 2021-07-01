@@ -66,9 +66,40 @@ module at_md_vverlet_mod
   private :: bussi_barostat_vv1
   private :: bussi_barostat_vv2
   private :: simulated_annealing_vverlet
+  private :: compute_normal_modes
+  private :: read_ctrl_nma
 
+  
 
 contains
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_normal_modes
+  !> @brief        compute_normal_modes
+  !! @authors      Remi Vuillemot
+  !! @param[inout] normalModeVec      : normal modes vector (3*Natoms*Nmodes)
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_normal_modes(normalModeVec)
+    real(wp), dimension (:,:,:), intent(inout) :: normalModeVec 
+
+    print*, "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHcompute_normal_modes"
+  end subroutine compute_normal_modes
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    read_ctrl_nma
+  !> @brief        read_ctrl_nma
+  !! @authors      Remi Vuillemot
+  !! @param[inout] nma_ctrl_file      : normal modes file
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine read_ctrl_nma(nma_file)
+    character(256),         intent(inout) :: nma_file
+
+    print*, "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHread_ctrl_nma"
+  end subroutine read_ctrl_nma
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -114,7 +145,7 @@ contains
     logical                   :: savefile
 
     ! <EDIT REMI>
-    integer :: nmodes, handle, first_mode, size_prefix, global_fit_rd
+    integer :: nmodes, handle, first_mode, size_prefix, global_fit_rd, ppos, exitstatus
     integer :: atm
     real(wp) :: global_dt, gamma_t, scale_v
     real(wp), dimension (:,:,:), allocatable :: normalModeVec 
@@ -125,7 +156,7 @@ contains
     real(wp), dimension (:), allocatable :: global_vel
     real(wp), dimension (:), allocatable :: global_force
     real(wp), dimension (:), allocatable :: global_random_force
-    character(256)            :: fmodes, fctrl, finfo, fprefix
+    character(256)            :: fmodes, fctrl, finfo, fprefix, fpath, ftmp, nrep
 
     character :: ctmp
     logical :: global_fit
@@ -150,47 +181,38 @@ contains
 
     ! <EDIT REMI>
     call getarg(1, fctrl)
-    print*, 'FCTRL='
-    print*, fctrl
-    print*, 'FINFO1='
-    print*, finfo
-    print*, 'FINFO3='
     finfo =  fctrl(1:len(trim(fctrl))-7) // "emfit_nma"
-    print*, finfo
+
+    ! print*, 'FCTRL='
+    ! print*, fctrl
+    ! print*, 'FINFO='
+    ! print*, finfo
     ! call open_ctrlfile(fctrl, handle)
     ! call read_ctrlfile_string(handle, 'Experiments', 'emfit_nma',  &
     !     finfo)
     ! call close_ctrlfile(handle)
-
+    
+    ! READ NMA CTRL FILE
     open(unit=66, file=finfo)
     read(66, '(I1)') global_fit_rd
-    print*, "GLOBALFIT ?"
-    print*, global_fit_rd
     if (global_fit_rd == 0) then
       global_fit = .true.
     else
       global_fit = .false.
     endif
-    print*, global_fit
     read(66, '(A)') fprefix
-    print*, 'FPREFIX='
-    size_prefix = 1
     do while (fprefix(size_prefix:size_prefix)/=' ') 
       size_prefix = size_prefix + 1
     end do
-    print*, fprefix(1:size_prefix)
-    print*, size_prefix
     read(66, '(I8)') nmodes
-    print*, 'NMODES='
-    print*, nmodes
     read(66, '(I8)') first_mode
     first_mode = first_mode-1
-    print*, 'FIRSTMODE='
-    print*, first_mode
     read(66, '(F8.2)') global_dt
-    print*, 'GLOBALDT='
     global_dt = global_dt*dt    
     print*, global_dt
+    close(66)
+    
+    ! ALLOCATE 
     allocate ( normalModeVec(3,natom,nmodes) ) 
     allocate ( global(nmodes) ) 
     allocate ( local(3, natom) ) 
@@ -199,22 +221,87 @@ contains
     allocate ( global_vel(nmodes) ) 
     allocate ( global_force(nmodes) ) 
     allocate ( global_random_force(nmodes) ) 
-    close(66)
-    do i = 1,nmodes
-      print*, i+first_mode
-      if (i+ first_mode<10) then
-        write(fmodes, '(A,I1)') fprefix(1:size_prefix-1),  i + first_mode
-      elseif (i+ first_mode>=100) then
-        write(fmodes, '(A,I3)') fprefix(1:size_prefix-1),  i + first_mode
-      else
-        write(fmodes, '(A,I2)') fprefix(1:size_prefix-1),  (i + first_mode)
+
+    if (global_fit) then
+      ! CREATE NMA DIRECTORY
+      ppos = scan(trim(output%pdbfile),"/run_r", BACK= .true.)+1
+      nrep = output%pdbfile(ppos:len(trim(output%pdbfile))-4)
+      fpath =  fctrl(1:len(trim(fctrl))-7) // "run_r"//trim(nrep)//"/"
+      call execute_command_line ("mkdir "// fpath , wait=.true., exitstat=exitstatus)
+
+      ! WRITE PDB
+      open(unit=66, file=trim(fpath)// "run.pdb")
+      call write_restart_pdb(66, molecule, dynvars%coord)
+      close(66)
+
+      ! ELNEMO
+      ftmp = trim(fpath)// "pdbmat.dat"
+      open(unit=66, file=ftmp)
+      write(66,*) "Coordinate FILENAME        = run.pdb"
+      write(66,*) "MATRIx FILENAME            = pdbmat.sdijf"
+      write(66,*) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
+      write(66,*) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
+      write(66,*) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
+      write(66,*) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
+      close(66)
+      ftmp = trim(fpath)// "diagrtb.dat"
+      open(unit=66, file=ftmp)
+      write(66,*) "MATRix filename            = pdbmat.sdijf"
+      write(66,*) "COORdinates filename       = run.pdb"
+      write(66,*) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+      write(ftmp,*)  nmodes+6
+      write(66,*) "Nb of VECTors required     = " // ftmp
+      write(66,*) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
+      write(66,*) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
+      write(66,*) "Nb of residues per BLOck   =         10 "
+      write(66,*) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
+      write(66,*) "Temporary files cleaning   =       ALL    ! ALL, NOne."
+      write(66,*) "MATRix FORMat              =       FREE   ! FREE, BINAry."
+      write(66,*) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
+      close(66)
+      call execute_command_line ("cd "// fpath // " ; ~/scipion3/software/em/nma-2.0/nma_elnemo_pdbmat ;~/scipion3/software/em/nma-2.0/nma_diagrtb", wait=.true., exitstat=exitstatus)
+      if (exitstatus /= 0) then 
+        call error_msg('Mode PB')
       endif
-      print*, 'FMODES='
-      print*, fmodes
-      open(unit=67, file=fmodes)
-      read(67,*)  normalModeVec(:,:, i)
-      close(67)
-    end do
+      ! CLEANING
+      call execute_command_line ("cd "// fpath // " ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+
+
+      ! READ MODES
+      ! do i = 1,nmodes
+      !   print*, i+first_mode
+      !   if (i+ first_mode<10) then
+      !     write(fmodes, '(A,I1)') fprefix(1:size_prefix-1),  i + first_mode
+      !   elseif (i+ first_mode>=100) then
+      !     write(fmodes, '(A,I3)') fprefix(1:size_prefix-1),  i + first_mode
+      !   else
+      !     write(fmodes, '(A,I2)') fprefix(1:size_prefix-1),  (i + first_mode)
+      !   endif
+      !   print*, 'FMODES='
+      !   print*, fmodes
+      !   open(unit=67, file=fmodes)
+      !   read(67,*)  normalModeVec(:,:, i)
+      !   close(67)
+      ! end do
+
+      ! READ MODES
+      ftmp = trim(fpath)// "diagrtb.eigenfacs"
+      open(unit=66, file=ftmp)
+      do i = 1,nmodes+6
+        read(66, '(A)') 
+        read(66, '(A)') 
+        if ((i>6) .and. (i <= nmodes+6)) then
+          do j = 1, natom
+            read(66, *)  normalModeVec(:,j, i-6)
+          end do
+        else
+          do j = 1, natom
+            read(66,'(A)')
+          end do
+        endif
+      end do
+      close(66)
+    endif
     ! <\EDIT REMI>
 
     if (dynamics%target_md) enefunc%rmsd_force = 1.0_wp / (dt*dt)
@@ -244,18 +331,6 @@ contains
       call error_msg('Vverlet_dynamics> Barostats are not allowed in ATDYN')
 
     ! <EDIT REMI> init velocities
-    do j =1, nmodes
-      global_vel(j) = 0.0_wp
-    end do
-    do i =1, natom
-      do j =1, nmodes
-        global_vel(j) =global_vel(j) + normalModeVec(1,i,j)* vel(1, i)
-        global_vel(j) =global_vel(j) + normalModeVec(2,i,j)* vel(2, i) 
-        global_vel(j) =global_vel(j) + normalModeVec(3,i,j)* vel(3, i)
-      end do
-    end do
-    print*, 'GLOBAL VEL'
-    print*, global_vel
     do i = 1,nmodes
       global(i) =0.0_wp
     end do
@@ -266,27 +341,39 @@ contains
         global_coord(j,i) = 0.0_wp
       end do
     end do
-    do j =1, nmodes
-      global_force(j) = 0.0_wp
-    end do
-    do atm = 1, natom
+    if (global_fit) then 
       do j =1, nmodes
-        global_force(j) = global_force(j) + normalModeVec(1, atm,j)* force(1,atm) * inv_mass(j)
-        global_force(j) = global_force(j) + normalModeVec(2, atm,j)* force(2,atm) * inv_mass(j)
-        global_force(j) = global_force(j) + normalModeVec(3, atm,j)* force(3,atm) * inv_mass(j)
+        global_vel(j) = 0.0_wp
       end do
-    end do
-    if (ensemble%tpcontrol == TpcontrolLangevin) then
+      do i =1, natom
+        do j =1, nmodes
+          global_vel(j) =global_vel(j) + normalModeVec(1,i,j)* vel(1, i)
+          global_vel(j) =global_vel(j) + normalModeVec(2,i,j)* vel(2, i) 
+          global_vel(j) =global_vel(j) + normalModeVec(3,i,j)* vel(3, i)
+        end do
+      end do
       do j =1, nmodes
-        global_random_force(j) = 0.0_wp
+        global_force(j) = 0.0_wp
       end do
       do atm = 1, natom
         do j =1, nmodes
-          global_random_force(j) = global_random_force(j) + normalModeVec(1, atm,j)* dynvars%random_force(1,atm) * inv_mass(j)
-          global_random_force(j) = global_random_force(j) + normalModeVec(2, atm,j)* dynvars%random_force(2,atm) * inv_mass(j)
-          global_random_force(j) = global_random_force(j) + normalModeVec(3, atm,j)* dynvars%random_force(3,atm) * inv_mass(j)
+          global_force(j) = global_force(j) + normalModeVec(1, atm,j)* force(1,atm) * inv_mass(j)
+          global_force(j) = global_force(j) + normalModeVec(2, atm,j)* force(2,atm) * inv_mass(j)
+          global_force(j) = global_force(j) + normalModeVec(3, atm,j)* force(3,atm) * inv_mass(j)
         end do
-      end do    
+      end do
+      if (ensemble%tpcontrol == TpcontrolLangevin) then
+        do j =1, nmodes
+          global_random_force(j) = 0.0_wp
+        end do
+        do atm = 1, natom
+          do j =1, nmodes
+            global_random_force(j) = global_random_force(j) + normalModeVec(1, atm,j)* dynvars%random_force(1,atm) * inv_mass(j)
+            global_random_force(j) = global_random_force(j) + normalModeVec(2, atm,j)* dynvars%random_force(2,atm) * inv_mass(j)
+            global_random_force(j) = global_random_force(j) + normalModeVec(3, atm,j)* dynvars%random_force(3,atm) * inv_mass(j)
+          end do
+        end do    
+      endif
     endif
     ! <\EDIT REMI>
 
@@ -513,9 +600,11 @@ contains
         end do
 
         !EDIT REMI
-        do j =1, nmodes
-          global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_force(j)
-        end do
+        if (global_fit) then
+          do j =1, nmodes
+            global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_force(j)
+          end do
+        endif
 
         ! Velocty constraint (RATTLE VV2)
         !   coord     is at t + dt, vel (unconstrained) is at t + dt
