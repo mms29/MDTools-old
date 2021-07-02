@@ -66,40 +66,10 @@ module at_md_vverlet_mod
   private :: bussi_barostat_vv1
   private :: bussi_barostat_vv2
   private :: simulated_annealing_vverlet
-  private :: compute_normal_modes
-  private :: read_ctrl_nma
-
-  
+ 
 
 contains
 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    compute_normal_modes
-  !> @brief        compute_normal_modes
-  !! @authors      Remi Vuillemot
-  !! @param[inout] normalModeVec      : normal modes vector (3*Natoms*Nmodes)
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine compute_normal_modes(normalModeVec)
-    real(wp), dimension (:,:,:), intent(inout) :: normalModeVec 
-
-    print*, "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHcompute_normal_modes"
-  end subroutine compute_normal_modes
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    read_ctrl_nma
-  !> @brief        read_ctrl_nma
-  !! @authors      Remi Vuillemot
-  !! @param[inout] nma_ctrl_file      : normal modes file
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine read_ctrl_nma(nma_file)
-    character(256),         intent(inout) :: nma_file
-
-    print*, "HHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHHread_ctrl_nma"
-  end subroutine read_ctrl_nma
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -209,7 +179,6 @@ contains
     first_mode = first_mode-1
     read(66, '(F8.2)') global_dt
     global_dt = global_dt*dt    
-    print*, global_dt
     close(66)
     
     ! ALLOCATE 
