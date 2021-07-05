@@ -196,7 +196,7 @@ contains
       ppos = scan(trim(output%pdbfile),"/run_r", BACK= .true.)+1
       nrep = output%pdbfile(ppos:len(trim(output%pdbfile))-4)
       fpath =  fctrl(1:len(trim(fctrl))-7) // "run_r"//trim(nrep)//"/"
-      call execute_command_line ("mkdir "// fpath , wait=.true., exitstat=exitstatus)
+      call execute_command_line ("mkdir "// fpath // " > /dev/null", wait=.true., exitstat=exitstatus)
 
       ! WRITE PDB
       open(unit=66, file=trim(fpath)// "run.pdb")
@@ -663,8 +663,8 @@ contains
     end do
 
     !EDIT REMI
-    print*, '///////////////// GLOBAL END //////////////////////'
-    print*, global
+    ! print*, '///////////////// GLOBAL END //////////////////////'
+    ! print*, global
     deallocate(normalModeVec) 
     deallocate(global) 
     deallocate(global_force) 
