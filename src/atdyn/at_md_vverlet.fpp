@@ -228,7 +228,7 @@ contains
       write(66,*) "MATRix FORMat              =       FREE   ! FREE, BINAry."
       write(66,*) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
       close(66)
-      call execute_command_line ("cd "// fpath // " ; ~/scipion3/software/em/nma-2.0/nma_elnemo_pdbmat ;~/scipion3/software/em/nma-2.0/nma_diagrtb", wait=.true., exitstat=exitstatus)
+      call execute_command_line ("cd "// fpath // " ; ~/scipion3/software/em/nma-2.0/nma_elnemo_pdbmat > pdbmat.log ;~/scipion3/software/em/nma-2.0/nma_diagrtb > diagrtb.log", wait=.true., exitstat=exitstatus)
       if (exitstatus /= 0) then 
         call error_msg('Mode PB')
       endif
