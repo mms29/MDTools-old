@@ -200,99 +200,98 @@ contains
       nrep = output%pdbfile(ppos:len(trim(output%pdbfile))-4)
       fpath =  fctrl(1:len(trim(fctrl))-7) // "run_r"//trim(nrep)//"/"
 
-      inquire(file=trim(fpath)// "run.pdb", exist=file_exists)
-      !READ PDB
-      if (file_exists) then
-        call input_pdb(trim(fpath)// "run.pdb", pdb)
-      else
-        call input_pdb(fctrl(1:len(trim(fctrl))-7) // "output.pdb", pdb)
-      end if
-      rmsdi = 0
-      do i = 1,natom
-        rmsdi = rmsdi + (coord(1,i) - pdb%atom_coord(1,i))**2 + (coord(2,i) - pdb%atom_coord(2,i))**2 + (coord(3,i) - pdb%atom_coord(3,i))**2
-      end do
-      rmsdi = sqrt(rmsdi/natom)
-      inquire(file=trim(fpath)// "diagrtb.eigenfacs", exist=file_exists)
+      ! inquire(file=trim(fpath)// "run.pdb", exist=file_exists)
+      ! !READ PDB
+      ! if (file_exists) then
+      !   call input_pdb(trim(fpath)// "run.pdb", pdb)
+      ! else
+      !   call input_pdb(fctrl(1:len(trim(fctrl))-7) // "output.pdb", pdb)
+      ! end if
+      ! rmsdi = 0
+      ! do i = 1,natom
+      !   rmsdi = rmsdi + (coord(1,i) - pdb%atom_coord(1,i))**2 + (coord(2,i) - pdb%atom_coord(2,i))**2 + (coord(3,i) - pdb%atom_coord(3,i))**2
+      ! end do
+      ! rmsdi = sqrt(rmsdi/natom)
+      ! inquire(file=trim(fpath)// "diagrtb.eigenfacs", exist=file_exists)
 
-      if (.NOT.file_exists .or. (rmsdi >5.0)) then
-        print*, "/////////////////////////////////////////////////////////////////"
-        print*, "Computing NMA"
+      ! if (.NOT.file_exists .or. (rmsdi >5.0)) then
+      print*, "/////////////////////////////////////////////////////////////////"
+      print*, "Computing NMA"
 
-        call execute_command_line ("mkdir "// fpath // " > /dev/null", wait=.true., exitstat=exitstatus)
+      call execute_command_line ("mkdir "// fpath // " > /dev/null", wait=.true., exitstat=exitstatus)
 
-        ! WRITE PDB
-        open(unit=66, file=trim(fpath)// "run.pdb")
-        call write_restart_pdb(66, molecule, dynvars%coord)
-        close(66)
+      ! WRITE PDB
+      open(unit=66, file=trim(fpath)// "run.pdb")
+      call write_restart_pdb(66, molecule, dynvars%coord)
+      close(66)
 
-        ! ELNEMO
-        ftmp = trim(fpath)// "pdbmat.dat"
-        open(unit=66, file=ftmp)
-        write(66,*) "Coordinate FILENAME        = run.pdb"
-        write(66,*) "MATRIx FILENAME            = pdbmat.sdijf"
-        write(66,*) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
-        write(66,*) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
-        write(66,*) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
-        write(66,*) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
-        close(66)
-        ftmp = trim(fpath)// "diagrtb.dat"
-        open(unit=66, file=ftmp)
-        write(66,*) "MATRix filename            = pdbmat.sdijf"
-        write(66,*) "COORdinates filename       = run.pdb"
-        write(66,*) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
-        write(ftmp,*)  nmodes+6
-        write(66,*) "Nb of VECTors required     = " // ftmp
-        write(66,*) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
-        write(66,*) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
-        write(66,*) "Nb of residues per BLOck   =         10 "
-        write(66,*) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
-        write(66,*) "Temporary files cleaning   =       ALL    ! ALL, NOne."
-        write(66,*) "MATRix FORMat              =       FREE   ! FREE, BINAry."
-        write(66,*) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
-        close(66)
-        call execute_command_line ("cd "// fpath // " ; ~/scipion3/software/em/nma-2.0/nma_elnemo_pdbmat > pdbmat.log ;~/scipion3/software/em/nma-2.0/nma_diagrtb > diagrtb.log", wait=.true., exitstat=exitstatus)
-        if (exitstatus /= 0) then 
-          call error_msg('Mode PB')
-        endif
-        ! CLEANING
-        call execute_command_line ("cd "// fpath // " ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
-
-
-        ! READ MODES
-        ! do i = 1,nmodes
-        !   print*, i+first_mode
-        !   if (i+ first_mode<10) then
-        !     write(fmodes, '(A,I1)') fprefix(1:size_prefix-1),  i + first_mode
-        !   elseif (i+ first_mode>=100) then
-        !     write(fmodes, '(A,I3)') fprefix(1:size_prefix-1),  i + first_mode
-        !   else
-        !     write(fmodes, '(A,I2)') fprefix(1:size_prefix-1),  (i + first_mode)
-        !   endif
-        !   print*, 'FMODES='
-        !   print*, fmodes
-        !   open(unit=67, file=fmodes)
-        !   read(67,*)  normalModeVec(:,:, i)
-        !   close(67)
-        ! end do
-
-        ! READ MODES
-        ftmp = trim(fpath)// "diagrtb.eigenfacs"
-        open(unit=66, file=ftmp)
-        do i = 1,nmodes+6
-          read(66, '(A)') 
-          read(66, '(A)') 
-          if ((i>6) .and. (i <= nmodes+6)) then
-            do j = 1, natom
-              read(66, *)  normalModeVec(:,j, i-6)
-            end do
-          else
-            do j = 1, natom
-              read(66,'(A)')
-            end do
-          endif
-        end do
-        close(66)
+      ! ELNEMO
+      ftmp = trim(fpath)// "pdbmat.dat"
+      open(unit=66, file=ftmp)
+      write(66,*) "Coordinate FILENAME        = run.pdb"
+      write(66,*) "MATRIx FILENAME            = pdbmat.sdijf"
+      write(66,*) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
+      write(66,*) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
+      write(66,*) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
+      write(66,*) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
+      close(66)
+      ftmp = trim(fpath)// "diagrtb.dat"
+      open(unit=66, file=ftmp)
+      write(66,*) "MATRix filename            = pdbmat.sdijf"
+      write(66,*) "COORdinates filename       = run.pdb"
+      write(66,*) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+      write(ftmp,*)  nmodes+6
+      write(66,*) "Nb of VECTors required     = " // ftmp
+      write(66,*) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
+      write(66,*) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
+      write(66,*) "Nb of residues per BLOck   =         10 "
+      write(66,*) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
+      write(66,*) "Temporary files cleaning   =       ALL    ! ALL, NOne."
+      write(66,*) "MATRix FORMat              =       FREE   ! FREE, BINAry."
+      write(66,*) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
+      close(66)
+      call execute_command_line ("cd "// fpath // " ; ~/scipion3/software/em/nma-2.0/nma_elnemo_pdbmat > pdbmat.log ;~/scipion3/software/em/nma-2.0/nma_diagrtb > diagrtb.log", wait=.true., exitstat=exitstatus)
+      if (exitstatus /= 0) then 
+        call error_msg('Mode PB')
       endif
+      ! CLEANING
+      call execute_command_line ("cd "// fpath // " ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+
+
+      ! READ MODES
+      ! do i = 1,nmodes
+      !   print*, i+first_mode
+      !   if (i+ first_mode<10) then
+      !     write(fmodes, '(A,I1)') fprefix(1:size_prefix-1),  i + first_mode
+      !   elseif (i+ first_mode>=100) then
+      !     write(fmodes, '(A,I3)') fprefix(1:size_prefix-1),  i + first_mode
+      !   else
+      !     write(fmodes, '(A,I2)') fprefix(1:size_prefix-1),  (i + first_mode)
+      !   endif
+      !   print*, 'FMODES='
+      !   print*, fmodes
+      !   open(unit=67, file=fmodes)
+      !   read(67,*)  normalModeVec(:,:, i)
+      !   close(67)
+      ! end do
+
+      ! READ MODES
+      ftmp = trim(fpath)// "diagrtb.eigenfacs"
+      open(unit=66, file=ftmp)
+      do i = 1,nmodes+6
+        read(66, '(A)') 
+        read(66, '(A)') 
+        if ((i>6) .and. (i <= nmodes+6)) then
+          do j = 1, natom
+            read(66, *)  normalModeVec(:,j, i-6)
+          end do
+        else
+          do j = 1, natom
+            read(66,'(A)')
+          end do
+        endif
+      end do
+      close(66)
     endif
     ! <\EDIT REMI>
 
