@@ -460,7 +460,7 @@ contains
         if (r_col6) then
           read(line, fmt='(21x,i6)',err=911) pdb%residue_no(iatm)
         else if (r_col5) then
-          read(line, fmt='(21x,i5)',err=911) pdb%residue_no(iatm)
+          read(line, fmt='(22x,i5)',err=911) pdb%residue_no(iatm)
         else
           read(line, fmt='(22x,i4)',err=911) pdb%residue_no(iatm)
         end if
