@@ -1,12 +1,13 @@
 GENESIS 1.1.6 modified to include NMMD.
 
 Installation: 
-
+```
 > cd /path/to/NMMD
 > ./configure
 > make install
 > cd ElNemo
 > make
+```
 
 Usage:
 bin/atdyn pathToNMMD boolNMMD numberModes dtNMFactor
