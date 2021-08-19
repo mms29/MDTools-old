@@ -14,7 +14,7 @@ make
 
 ## Usage:
 ```
-bin/atdyn pathToNMMD boolNMMD numberModes dtNMFactor
+/path/to/NMMD/bin/atdyn pathToNMMD boolNMMD numberModes dtNMFactor
 ```
 
 - `pathToNMMD` : path to NMMD ending with a `/` character (example : `/path/to/NMMD/`)
