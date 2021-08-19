@@ -153,7 +153,7 @@ contains
 
         call getarg(3, ftmp)
         read (ftmp, *) nmodes
-        if (nmodes == 0) then
+        if (nmodes == 1) then
             global_fit = .true.
         else
             global_fit = .false.
