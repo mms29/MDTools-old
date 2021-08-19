@@ -1,4 +1,4 @@
-# GENESIS 1.1.6 modified to include NMMD.
+# NMMD in GENESIS 1.1.6.
 
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
