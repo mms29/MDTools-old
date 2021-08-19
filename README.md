@@ -11,7 +11,9 @@ make
 ```
 
 ## Usage:
-`bin/atdyn pathToNMMD boolNMMD numberModes dtNMFactor`
+```
+bin/atdyn pathToNMMD boolNMMD numberModes dtNMFactor
+```
 
 - pathToNMMD : path to NMMD ending with a "/" character (example : /path/to/NMMD/)
 - boolNMMD : 1 to perform NMMD, 0 for standard MD
