@@ -881,7 +881,18 @@ contains
         insertion = .false.
         do j = 1, len_trim(cres_nb)
           if (cres_nb(j:j) >= 'A' .and. cres_nb(j:j) <= 'Z' .or.  &
-              cres_nb(j:j) >= 'a' .and. cres_nb(j:j) <= 'z') insertion = .true.
+              cres_nb(j:j) >= 'a' .and. cres_nb(j:j) <= 'z') then 
+              insertion = .true.
+              print*, psf%atom_no(i)
+              print*, psf%segment_name(i)
+              print*, cres_nb
+              print*, psf%residue_name(i)
+              print*, psf%atom_name(i)
+              print*, psf%atom_cls_name(i)
+              print*, psf%atom_no(i)
+              print*, "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM3"
+          endif
+
         end do
         if (insertion) &
            call error_msg('Read_Psf_Atom> Insertion code is not allowed. '//&

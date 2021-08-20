@@ -460,7 +460,9 @@ contains
         if (r_col6) then
           read(line, fmt='(21x,i6)',err=911) pdb%residue_no(iatm)
         else if (r_col5) then
-          read(line, fmt='(22x,i5)',err=911) pdb%residue_no(iatm)
+          print*, "error MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+          print*, line
+          read(line, fmt='(21x,i5)',err=911) pdb%residue_no(iatm)
         else
           read(line, fmt='(22x,i4)',err=911) pdb%residue_no(iatm)
         end if
@@ -866,10 +868,10 @@ contains
         end if
 
         ! check 4-column over residue number
-        c1 = line(22:22)
-        if (c1>='0' .and. c1<='9') then
-          r_col5 = .true.
-        end if
+        ! c1 = line(22:22)
+        ! if (c1>='0' .and. c1<='9') then
+        !   r_col5 = .true.
+        ! end if
 
         c1 = line(27:27)
         if (c1>='0' .and. c1<='9') then

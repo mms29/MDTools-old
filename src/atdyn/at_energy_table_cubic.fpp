@@ -1749,16 +1749,16 @@ contains
     num_nb15 = 0
 
     ! calculate energy and gradient
-    !
-    !$omp parallel                                                    & 
-    !$omp firstprivate(num_nb15)                                      &
-    !$omp private(id, my_id, ini_nb15, fin_nb15, i, k, j, m, dij, &
-    !$omp         rij2, R, L, L1, work, grad_coef, rtmp, qtmp,        &
-    !$omp         term_lj12, term_lj6, term_elec, lj12, lj6,          &
-    !$omp         h00, h01, h10, h11, force_local)                    &
-    !$omp reduction(+:force) reduction(+:virial) reduction(+:eelec)   &
-    !$omp reduction(+:evdw)
-    !
+    
+    ! $omp parallel                                                    & 
+    ! $omp firstprivate(num_nb15)                                      &
+    ! $omp private(id, my_id, ini_nb15, fin_nb15, i, k, j, m, dij, &
+    ! $omp         rij2, R, L, L1, work, grad_coef, rtmp, qtmp,        &
+    ! $omp         term_lj12, term_lj6, term_elec, lj12, lj6,          &
+    ! $omp         h00, h01, h10, h11, force_local)                    &
+    ! $omp reduction(+:force) reduction(+:virial) reduction(+:eelec)   &
+    ! $omp reduction(+:evdw)
+    
 
 #ifdef OMP
     id = omp_get_thread_num()
@@ -1844,7 +1844,7 @@ contains
       force(1:3,i) = force(1:3,i) + force_local(1:3)
 
     end do
-    !$omp end parallel
+    ! $omp end parallel
 
     return
 
