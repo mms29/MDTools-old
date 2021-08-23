@@ -39,7 +39,6 @@ module at_experiments_mod
     real(wp)                        :: emfit_sigma     = 2.5_wp
     real(wp)                        :: emfit_tolerance = 0.001_wp
     integer                         :: emfit_period    = 1
-    character(256)          :: emfit_nma       = ''
   end type s_exp_info
 
   type(s_experiments), target, save :: experiments
@@ -146,9 +145,6 @@ contains
 
     call read_ctrlfile_integer(handle, Section, 'emfit_period',    &
                               exp_info%emfit_period)
-
-    call read_ctrlfile_string (handle, Section, 'emfit_nma',       &
-                              exp_info%emfit_nma)
 
     call end_ctrlfile_section(handle)
 
