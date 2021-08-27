@@ -927,7 +927,7 @@ contains
       !$omp parallel do                           &
       !$omp private(m, n, dcc_dx, dcc_dy, dcc_dz) &
       !$omp reduction(+:force)
-      !
+      
       do m = 1, ifound
         n = list_local(m)
 
