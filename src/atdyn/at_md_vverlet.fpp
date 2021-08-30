@@ -382,13 +382,16 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
                     vel(2, j) = vel(2, j) + 0.5_wp*dt*force(2, j)*inv_mass(j)
                     vel(3, j) = vel(3, j) + 0.5_wp*dt*force(3, j)*inv_mass(j)
 
-! EDIT REMI
+! <EDIT REMI>
+
                     local(1, j) = local(1, j) + dt*vel(1, j)
                     local(2, j) = local(2, j) + dt*vel(2, j)
                     local(3, j) = local(3, j) + dt*vel(3, j)
+! <\EDIT REMI>
+
                 end do
 
-!EDIT REMI
+! <EDIT REMI> tpcontrol /= Langevin
                 if (global_fit) then
 
 ! v+1, x+1
@@ -412,6 +415,8 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
                         coord(1:3, j) = coord0(1:3, j) + local(1:3, j)
                     end do
                 end if
+! <\EDIT REMI>
+
 ! Coordinate constraint (RATTLE VV1)
 !
                 if (constraints%rigid_bond) then
@@ -426,7 +431,7 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
                 call langevin_thermostat_vv1(molecule, dynamics, ensemble, &
                                              boundary, constraints, dynvars)
                 gamma_t = ensemble%gamma_t*AKMA_PS
-
+! <EDIT REMI>
                 if (global_fit) then
 
                     scale_v = exp(-gamma_t*0.5_wp*global_dt)
@@ -464,6 +469,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                     end do
 !$omp end parallel do
                 end if
+! </EDIT REMI>
 
             end if
 
@@ -490,6 +496,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                     call langevin_thermostat_vv2(molecule, dynamics, ensemble, &
                                                  boundary, constraints, dynvars)
 
+! <EDIT REMI>
                     if (global_fit) then
 ! update forces
                         do j = 1, nmodes
@@ -527,7 +534,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                         vel(1:3, j) = vel(1:3, j)*scale_v
                     end do
 !$omp end parallel do
-
+! </EDIT REMI>
                 else
 
                     call langevin_barostat_vv2(molecule, dynamics, ensemble, &
@@ -546,12 +553,13 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                     vel(3, j) = vel(3, j) + 0.5_wp*dt*force(3, j)*inv_mass(j)
                 end do
 
-!EDIT REMI
+! <EDIT REMI>
                 if (global_fit) then
                 do j = 1, nmodes
                     global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_force(j)
                 end do
                 end if
+! </EDIT REMI>
 
 ! Velocty constraint (RATTLE VV2)
 !   coord     is at t + dt, vel (unconstrained) is at t + dt
@@ -638,7 +646,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
 
         end do
 
-!EDIT REMI
+! <EDIT REMI>
         print *, '<NMMD> ***** FINAL NORMAL MODE AMPLITUDES *****'
         print *, global
         deallocate (normalModeVec)
@@ -651,6 +659,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
         deallocate (global_coord)
         print *, '<NMMD> Done'
         print *, ''
+! </EDIT REMI>
 
 #ifdef KCOMP
 ! Stop performance check on K computer
