@@ -24,4 +24,5 @@ make
 
 ## Limitations:
 - NMMD is available only for the VVER integrator
+- NMMD is available only for BERENDSEN and LANGEVIN temperature control
 - SHAKE algorithm have to be turn off
