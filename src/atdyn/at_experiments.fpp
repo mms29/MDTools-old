@@ -924,9 +924,10 @@ contains
       fact2 = 1.0_wp / norm_sim
       fact3 = dot_exp_sim/norm_sim**3
 
-      !$omp parallel do                           &
-      !$omp private(m, n, dcc_dx, dcc_dy, dcc_dz) &
-      !$omp reduction(+:force)
+      ! edit remi
+      ! $omp parallel do                           &
+      ! $omp private(m, n, dcc_dx, dcc_dy, dcc_dz) &
+      ! $omp reduction(+:force)
       
       do m = 1, ifound
         n = list_local(m)
@@ -943,7 +944,7 @@ contains
         force(2,n) = force(2,n) + emfit_force(2,n)
         force(3,n) = force(3,n) + emfit_force(3,n)
       end do
-      !$omp end parallel do
+      ! $omp end parallel do
 
     end if
 

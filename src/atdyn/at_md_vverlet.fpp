@@ -284,45 +284,45 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
             global(i) = 0.0_wp
         end do
         do i = 1, natom
-        do j = 1, 3
-            local(j, i) = 0.0_wp
-            coord0(j, i) = coord(j, i)
-            global_coord(j, i) = 0.0_wp
-        end do
+            do j = 1, 3
+                local(j, i) = 0.0_wp
+                coord0(j, i) = coord(j, i)
+                global_coord(j, i) = 0.0_wp
+            end do
         end do
         if (global_fit) then
-        do j = 1, nmodes
-            global_vel(j) = 0.0_wp
-        end do
-        do i = 1, natom
-        do j = 1, nmodes
-            global_vel(j) = global_vel(j) + normalModeVec(1, i, j)*vel(1, i)
-            global_vel(j) = global_vel(j) + normalModeVec(2, i, j)*vel(2, i)
-            global_vel(j) = global_vel(j) + normalModeVec(3, i, j)*vel(3, i)
-        end do
-        end do
-        do j = 1, nmodes
-            global_force(j) = 0.0_wp
-        end do
-        do atm = 1, natom
-        do j = 1, nmodes
-            global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
-            global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
-            global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
-        end do
-        end do
-        if (ensemble%tpcontrol == TpcontrolLangevin) then
-        do j = 1, nmodes
-            global_random_force(j) = 0.0_wp
-        end do
-        do atm = 1, natom
-        do j = 1, nmodes
-            global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
-            global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
-            global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
-        end do
-        end do
-        end if
+            do j = 1, nmodes
+                global_vel(j) = 0.0_wp
+            end do
+            do i = 1, natom
+                do j = 1, nmodes
+                    global_vel(j) = global_vel(j) + normalModeVec(1, i, j)*vel(1, i)
+                    global_vel(j) = global_vel(j) + normalModeVec(2, i, j)*vel(2, i)
+                    global_vel(j) = global_vel(j) + normalModeVec(3, i, j)*vel(3, i)
+                end do
+            end do
+            do j = 1, nmodes
+                global_force(j) = 0.0_wp
+            end do
+            do atm = 1, natom
+                do j = 1, nmodes
+                    global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
+                    global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
+                    global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
+                end do
+            end do
+            if (ensemble%tpcontrol == TpcontrolLangevin) then
+                do j = 1, nmodes
+                    global_random_force(j) = 0.0_wp
+                end do
+                do atm = 1, natom
+                    do j = 1, nmodes
+                        global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
+                        global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
+                        global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
+                    end do
+                end do
+            end if
         end if
 ! <\EDIT REMI>
 
@@ -402,11 +402,11 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
 
 ! global -> global coords
                     do atm = 1, natom
-                    do j = 1, nmodes
-                        global_coord(1:3, atm) = 0.0_wp
-                        global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
-                    end do
-                    coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
+                        do j = 1, nmodes
+                            global_coord(1:3, atm) = 0.0_wp
+                            global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
+                        end do
+                        coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
                     end do
 
                 else
@@ -504,14 +504,14 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                             global_random_force(j) = 0.0_wp
                         end do
                         do atm = 1, natom
-                        do j = 1, nmodes
-                            global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
-                            global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
-                            global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
-                 global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
-                 global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
-                 global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
-                        end do
+                            do j = 1, nmodes
+                                global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
+                                global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
+                                global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
+                            end do
                         end do
 
                         gamma_t = ensemble%gamma_t*AKMA_PS
