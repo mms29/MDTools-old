@@ -114,7 +114,7 @@ contains
 
 ! <EDIT REMI>
         integer :: nmodes, ppos, exitstatus, atm
-        real(wp) :: global_dt, gamma_t, scale_v
+        real(wp) :: global_dt, gamma_t, scale_v, coordtmp
         real(wp), dimension(:, :, :), allocatable :: normalModeVec
         real(wp), dimension(:), allocatable :: global
         real(wp), dimension(:, :), allocatable :: local
@@ -182,53 +182,58 @@ contains
         print *, "<NMMD> Done"
         print *, ""
 
+        ppos = index(trim(output%pdbfile), ".", back=.true.)-1
+        fpath = output%pdbfile(:ppos) // "/"
+
         if (global_fit) then
+            inquire(file=fpath, exist=file_exists)
+            if (.not. file_exists) then
 
-! COMP NMA 
-            print *, "<NMMD> Computing NMA ..."
-            ppos = index(trim(output%pdbfile), ".", back=.true.)-1
-            fpath = output%pdbfile(:ppos) // "/"
-            call execute_command_line("mkdir "//fpath//" > /dev/null", wait=.true., exitstat=exitstatus)
+    ! COMP NMA 
+                print *, "<NMMD> Computing NMA ..."
 
-! WRITE PDB
-            open (unit=66, file=trim(fpath)//"run.pdb")
-            call write_restart_pdb(66, molecule, dynvars%coord)
-            close (66)
+                call execute_command_line("mkdir "//fpath//" > /dev/null", wait=.true., exitstat=exitstatus)
 
-! ELNEMO
-            ftmp = trim(fpath)//"pdbmat.dat"
-            open (unit=66, file=ftmp)
-            write (66, *) "Coordinate FILENAME        = run.pdb"
-            write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
-            write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
-            write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
-            write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
-            write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
-            close (66)
-            ftmp = trim(fpath)//"diagrtb.dat"
-            open (unit=66, file=ftmp)
-            write (66, *) "MATRix filename            = pdbmat.sdijf"
-            write (66, *) "COORdinates filename       = run.pdb"
-            write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
-            write (ftmp, *) nmodes + 6
-            write (66, *) "Nb of VECTors required     = "//ftmp
-            write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
-            write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
-            write (66, *) "Nb of residues per BLOck   =         10 "
-            write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
-            write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
-            write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
-            write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
-            close (66)
-ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
-            call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
-            if (exitstatus /= 0) then
-                call error_msg('Mode PB')
+    ! WRITE PDB
+                open (unit=66, file=trim(fpath)//"run.pdb")
+                call write_restart_pdb(66, molecule, dynvars%coord)
+                close (66)
+
+    ! ELNEMO
+                ftmp = trim(fpath)//"pdbmat.dat"
+                open (unit=66, file=ftmp)
+                write (66, *) "Coordinate FILENAME        = run.pdb"
+                write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
+                write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
+                write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
+                write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
+                write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
+                close (66)
+                ftmp = trim(fpath)//"diagrtb.dat"
+                open (unit=66, file=ftmp)
+                write (66, *) "MATRix filename            = pdbmat.sdijf"
+                write (66, *) "COORdinates filename       = run.pdb"
+                write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+                write (ftmp, *) nmodes + 6
+                write (66, *) "Nb of VECTors required     = "//ftmp
+                write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
+                write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
+                write (66, *) "Nb of residues per BLOck   =         10 "
+                write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
+                write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
+                write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
+                write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
+                close (66)
+    ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
+                call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
+                if (exitstatus /= 0) then
+                    call error_msg('Mode PB')
+                end if
+    ! CLEANING
+                call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+                print *, "<NMMD> Done"
+                print *, ""
             end if
-! CLEANING
-            call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
-            print *, "<NMMD> Done"
-            print *, ""
 
 ! READ MODES
             print *, "<NMMD> Reading Normal Modes ..."
@@ -251,6 +256,37 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
         end if
         print *, "<NMMD> Done"
         print *, ""
+
+    ! RESTART FILE for REUS
+        ftmp = trim(output%pdbfile(:ppos))//".nmmdrst"
+        inquire(file=ftmp, exist=file_exists)
+            if (file_exists) then
+                print *, "<NMMD> Reading Restart File ..."
+                open (unit=66, file=ftmp)
+                do i = 1, nmodes
+                    read(66, '(F10.2)') global(i)
+                end do
+                do i = 1, natom 
+                    read(66, '(F10.2, F10.2, F10.2)') local(:,i)
+                end do
+                do i = 1, natom 
+                    read(66, '(F10.2, F10.2, F10.2)') coord0(:,i)
+                end do
+                close(66)
+                print *, "<NMMD> Done"
+                print *, ""
+
+            else
+                do i = 1, nmodes
+                    global(i) = 0.0_wp
+                end do
+                do i = 1, natom
+                    do j = 1, 3
+                        local(j, i) = 0.0_wp
+                        coord0(j, i) = coord(j, i)
+                    end do
+                end do
+            end if
 ! <\EDIT REMI>
 
         if (dynamics%target_md) enefunc%rmsd_force = 1.0_wp/(dt*dt)
@@ -280,16 +316,6 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
             call error_msg('Vverlet_dynamics> Barostats are not allowed in ATDYN')
 
 ! <EDIT REMI> init velocities
-        do i = 1, nmodes
-            global(i) = 0.0_wp
-        end do
-        do i = 1, natom
-            do j = 1, 3
-                local(j, i) = 0.0_wp
-                coord0(j, i) = coord(j, i)
-                global_coord(j, i) = 0.0_wp
-            end do
-        end do
         if (global_fit) then
             do j = 1, nmodes
                 global_vel(j) = 0.0_wp
@@ -311,6 +337,7 @@ ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbma
                     global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
                 end do
             end do
+
             if (ensemble%tpcontrol == TpcontrolLangevin) then
                 do j = 1, nmodes
                     global_random_force(j) = 0.0_wp
@@ -505,12 +532,12 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                         end do
                         do atm = 1, natom
                             do j = 1, nmodes
-                                global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
-                                global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
-                                global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
+                                global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)
+                                global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)
+                                global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)
+                    global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)
                             end do
                         end do
 
@@ -639,6 +666,21 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
             end if
             end if
 
+            ! <EDIT REMI>
+            if (mod(i, 10) == 0) then
+
+                if (global_fit) then
+                    ftmp = trim(output%pdbfile(:ppos))//".nmmdamp"
+                    open (unit=66, file=ftmp, position="append")
+                    write(66, *) global
+                    close(66)
+                    ftmp = trim(output%pdbfile(:ppos))//".nmmdvel"
+                    open (unit=66, file=ftmp, position="append")
+                    write(66, *) global_vel
+                    close(66)
+                end if
+            endif
+
 ! Output energy(t + dt) and dynamical variables(t + dt)
 !
             call output_md(output, molecule, enefunc, dynamics, boundary, &
@@ -649,6 +691,18 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
 ! <EDIT REMI>
         print *, '<NMMD> ***** FINAL NORMAL MODE AMPLITUDES *****'
         print *, global
+        ftmp = trim(output%pdbfile(:ppos))//".nmmdrst"
+        open (unit=66, file=ftmp)
+        do i = 1, nmodes
+            write(66, '(F10.2)') global(i)
+        end do
+        do i = 1, natom 
+            write(66, '(F10.2, F10.2, F10.2)') local(:,i)
+        end do
+        do i = 1, natom 
+            write(66, '(F10.2, F10.2, F10.2)') coord0(:, i)
+        end do
+        close(66)
         deallocate (normalModeVec)
         deallocate (global)
         deallocate (global_force)
@@ -659,6 +713,7 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
         deallocate (global_coord)
         print *, '<NMMD> Done'
         print *, ''
+        
 ! </EDIT REMI>
 
 #ifdef KCOMP
