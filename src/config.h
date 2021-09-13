@@ -2,7 +2,7 @@
 /* src/config.h.in.  Generated from configure.ac by autoheader.  */
 
 /* c compiler version */
-#define COMPILE_CC_VER "gcc (GCC) 4.8.5 20150623 (Red Hat 4.8.5-39)"
+#define COMPILE_CC_VER "gcc (GCC) 4.8.5 20150623 (Red Hat 4.8.5-44)"
 
 /* c flags */
 #define COMPILE_CFLAGS "-O3 -ffast-math -march=native -fopenmp"
@@ -14,7 +14,7 @@
 #define COMPILE_FCFLAGS "-O3 -ffast-math -march=native -ffree-line-length-none -fopenmp "
 
 /* fortran compiler version */
-#define COMPILE_FC_VER "GNU Fortran (GCC) 4.8.5 20150623 (Red Hat 4.8.5-39)"
+#define COMPILE_FC_VER "GNU Fortran (GCC) 4.8.5 20150623 (Red Hat 4.8.5-44)"
 
 /* genesis version */
 #define COMPILE_GENESIS_VERSION "1.4.0 [2019-10-25 12:09:46 +0900]"

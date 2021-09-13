@@ -114,7 +114,7 @@ contains
 
 ! <EDIT REMI>
         integer :: nmodes, ppos, exitstatus, atm
-        real(wp) :: global_dt, gamma_t, scale_v, coordtmp
+        real(wp) :: global_mass, global_inv_mass, gamma_t, scale_v, coordtmp
         real(wp), dimension(:, :, :), allocatable :: normalModeVec
         real(wp), dimension(:), allocatable :: global
         real(wp), dimension(:, :), allocatable :: local
@@ -125,7 +125,7 @@ contains
         real(wp), dimension(:), allocatable :: global_random_force
         character(256)            :: fctrl, fpath, ftmp, nrep, elNemoPath
         character :: ctmp
-        logical :: global_fit, file_exists
+        logical :: file_exists
 ! <\EDIT REMI>
 
         integer :: icount
@@ -153,18 +153,10 @@ contains
 
         call getarg(3, ftmp)
         read (ftmp, *) nmodes
-        if (nmodes == 1) then
-            global_fit = .true.
-        else
-            global_fit = .false.
-        end if
 
         call getarg(4, ftmp)
-        read (ftmp, *) nmodes
-
-        call getarg(5, ftmp)
-        read (ftmp, *) global_dt
-        global_dt = dt*global_dt
+        read (ftmp, *) global_mass
+        global_inv_mass = 1.0_wp/global_mass
 
         print *, "<NMMD> Done"
         print *, ""
@@ -185,75 +177,73 @@ contains
         ppos = index(trim(output%pdbfile), ".", back=.true.)-1
         fpath = output%pdbfile(:ppos) // "/"
 
-        if (global_fit) then
-            inquire(file=fpath, exist=file_exists)
-            if (.not. file_exists) then
+        inquire(file=fpath, exist=file_exists)
+        if (.not. file_exists) then
 
-    ! COMP NMA 
-                print *, "<NMMD> Computing NMA ..."
+            ! COMP NMA 
+            print *, "<NMMD> Computing NMA ..."
 
-                call execute_command_line("mkdir "//fpath//" > /dev/null", wait=.true., exitstat=exitstatus)
+            call execute_command_line("mkdir "//fpath//" > /dev/null", wait=.true., exitstat=exitstatus)
 
-    ! WRITE PDB
-                open (unit=66, file=trim(fpath)//"run.pdb")
-                call write_restart_pdb(66, molecule, dynvars%coord)
-                close (66)
-
-    ! ELNEMO
-                ftmp = trim(fpath)//"pdbmat.dat"
-                open (unit=66, file=ftmp)
-                write (66, *) "Coordinate FILENAME        = run.pdb"
-                write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
-                write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
-                write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
-                write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
-                write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
-                close (66)
-                ftmp = trim(fpath)//"diagrtb.dat"
-                open (unit=66, file=ftmp)
-                write (66, *) "MATRix filename            = pdbmat.sdijf"
-                write (66, *) "COORdinates filename       = run.pdb"
-                write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
-                write (ftmp, *) nmodes + 6
-                write (66, *) "Nb of VECTors required     = "//ftmp
-                write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
-                write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
-                write (66, *) "Nb of residues per BLOck   =         10 "
-                write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
-                write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
-                write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
-                write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
-                close (66)
-    ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
-                call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
-                if (exitstatus /= 0) then
-                    call error_msg('Mode PB')
-                end if
-    ! CLEANING
-                call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
-                print *, "<NMMD> Done"
-                print *, ""
-            end if
-
-! READ MODES
-            print *, "<NMMD> Reading Normal Modes ..."
-            ftmp = trim(fpath)//"diagrtb.eigenfacs"
-            open (unit=66, file=ftmp)
-            do i = 1, nmodes + 6
-                read (66, '(A)')
-                read (66, '(A)')
-                if ((i > 6) .and. (i <= nmodes + 6)) then
-                do j = 1, natom
-                    read (66, *) normalModeVec(:, j, i - 6)
-                end do
-                else
-                do j = 1, natom
-                    read (66, '(A)')
-                end do
-                end if
-            end do
+            ! WRITE PDB
+            open (unit=66, file=trim(fpath)//"run.pdb")
+            call write_restart_pdb(66, molecule, dynvars%coord)
             close (66)
+
+            ! ELNEMO
+            ftmp = trim(fpath)//"pdbmat.dat"
+            open (unit=66, file=ftmp)
+            write (66, *) "Coordinate FILENAME        = run.pdb"
+            write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
+            write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
+            write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
+            write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
+            write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
+            close (66)
+            ftmp = trim(fpath)//"diagrtb.dat"
+            open (unit=66, file=ftmp)
+            write (66, *) "MATRix filename            = pdbmat.sdijf"
+            write (66, *) "COORdinates filename       = run.pdb"
+            write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+            write (ftmp, *) nmodes + 6
+            write (66, *) "Nb of VECTors required     = "//ftmp
+            write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
+            write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
+            write (66, *) "Nb of residues per BLOck   =         10 "
+            write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
+            write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
+            write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
+            write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
+            close (66)
+            ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
+            call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
+            if (exitstatus /= 0) then
+                call error_msg('Mode PB')
+            end if
+        ! CLEANING
+            call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+            print *, "<NMMD> Done"
+            print *, ""
         end if
+
+        ! READ MODES
+        print *, "<NMMD> Reading Normal Modes ..."
+        ftmp = trim(fpath)//"diagrtb.eigenfacs"
+        open (unit=66, file=ftmp)
+        do i = 1, nmodes + 6
+            read (66, '(A)')
+            read (66, '(A)')
+            if ((i > 6) .and. (i <= nmodes + 6)) then
+            do j = 1, natom
+                read (66, *) normalModeVec(:, j, i - 6)
+            end do
+            else
+            do j = 1, natom
+                read (66, '(A)')
+            end do
+            end if
+        end do
+        close (66)
         print *, "<NMMD> Done"
         print *, ""
 
@@ -316,41 +306,38 @@ contains
             call error_msg('Vverlet_dynamics> Barostats are not allowed in ATDYN')
 
 ! <EDIT REMI> init velocities
-        if (global_fit) then
+        do j = 1, nmodes
+            global_vel(j) = 0.0_wp
+        end do
+        do i = 1, natom
             do j = 1, nmodes
-                global_vel(j) = 0.0_wp
+                global_vel(j) = global_vel(j) + normalModeVec(1, i, j)*vel(1, i)
+                global_vel(j) = global_vel(j) + normalModeVec(2, i, j)*vel(2, i)
+                global_vel(j) = global_vel(j) + normalModeVec(3, i, j)*vel(3, i)
             end do
-            do i = 1, natom
-                do j = 1, nmodes
-                    global_vel(j) = global_vel(j) + normalModeVec(1, i, j)*vel(1, i)
-                    global_vel(j) = global_vel(j) + normalModeVec(2, i, j)*vel(2, i)
-                    global_vel(j) = global_vel(j) + normalModeVec(3, i, j)*vel(3, i)
-                end do
-            end do
+        end do
+        do j = 1, nmodes
+            global_force(j) = 0.0_wp
+        end do
+        do atm = 1, natom
             do j = 1, nmodes
-                global_force(j) = 0.0_wp
+                global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)
+                global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)
+                global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)
             end do
-            do atm = 1, natom
-                do j = 1, nmodes
-                    global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)*inv_mass(j)
-                    global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)*inv_mass(j)
-                    global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)*inv_mass(j)
-                end do
-            end do
+        end do
 
-            if (ensemble%tpcontrol == TpcontrolLangevin) then
-                do j = 1, nmodes
-                    global_random_force(j) = 0.0_wp
-                end do
-                do atm = 1, natom
-                    do j = 1, nmodes
-                        global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)*inv_mass(j)
-                        global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)*inv_mass(j)
-                        global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)*inv_mass(j)
-                    end do
-                end do
-            end if
-        end if
+            ! LANGEVIN
+        do j = 1, nmodes
+            global_random_force(j) = 0.0_wp
+        end do
+        do atm = 1, natom
+            do j = 1, nmodes
+                global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)
+                global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)
+                global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)
+            end do
+        end do
 ! <\EDIT REMI>
 
 #ifdef KCOMP
@@ -383,69 +370,41 @@ contains
 
             enefunc%rpath_sum_mf_flag = enefunc%rpath_flag
 
-! Save coordinates(t) and velocities(t)
-!
+
+            ! Save coordinates(t) and velocities(t)
+            !
             do j = 1, natom
-                coord_ref(1, j) = coord(1, j)
-                coord_ref(2, j) = coord(2, j)
-                coord_ref(3, j) = coord(3, j)
-                vel_ref(1, j) = vel(1, j)
-                vel_ref(2, j) = vel(2, j)
-                vel_ref(3, j) = vel(3, j)
+                coord_ref(1,j) = coord(1,j)
+                coord_ref(2,j) = coord(2,j)
+                coord_ref(3,j) = coord(3,j)
+                vel_ref(1,j) = vel(1,j)
+                vel_ref(2,j) = vel(2,j)
+                vel_ref(3,j) = vel(3,j)
             end do
 
-! Compute velocities(t + 1/2 dt) and coordinates(t + dt)
-!
+
+            ! Compute velocities(t + 1/2 dt) and coordinates(t + dt)
+            !
             if (ensemble%tpcontrol /= TpcontrolNoseHoover .and. &
-                ensemble%tpcontrol /= TpcontrolLangevin .and. &
-                ensemble%tpcontrol /= TpcontrolBussi) then
+                ensemble%tpcontrol /= TpcontrolLangevin   .and. &
+                ensemble%tpcontrol /= TpcontrolBussi      ) then
 
-! Newtonian dynamics
-!   v(t+1/2dt) = v(t) + 0.5dt*F(t)/m
-!   r(t+dt)    = r(t) + dt*v(t+1/2dt)
-!
+                ! Newtonian dynamics
+                !   v(t+1/2dt) = v(t) + 0.5dt*F(t)/m
+                !   r(t+dt)    = r(t) + dt*v(t+1/2dt)
+                !
                 do j = 1, natom
-                    vel(1, j) = vel(1, j) + 0.5_wp*dt*force(1, j)*inv_mass(j)
-                    vel(2, j) = vel(2, j) + 0.5_wp*dt*force(2, j)*inv_mass(j)
-                    vel(3, j) = vel(3, j) + 0.5_wp*dt*force(3, j)*inv_mass(j)
+                vel(1,j) = vel(1,j) + 0.5_wp*dt*force(1,j)*inv_mass(j)
+                vel(2,j) = vel(2,j) + 0.5_wp*dt*force(2,j)*inv_mass(j)
+                vel(3,j) = vel(3,j) + 0.5_wp*dt*force(3,j)*inv_mass(j)
 
-! <EDIT REMI>
-
-                    local(1, j) = local(1, j) + dt*vel(1, j)
-                    local(2, j) = local(2, j) + dt*vel(2, j)
-                    local(3, j) = local(3, j) + dt*vel(3, j)
-! <\EDIT REMI>
-
+                coord(1,j) = coord(1,j) + dt*vel(1,j)
+                coord(2,j) = coord(2,j) + dt*vel(2,j)
+                coord(3,j) = coord(3,j) + dt*vel(3,j)
                 end do
 
-! <EDIT REMI> tpcontrol /= Langevin
-                if (global_fit) then
-
-! v+1, x+1
-                    do j = 1, nmodes
-                        global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_force(j)
-                        global(j) = global(j) + global_dt*global_vel(j)
-                    end do
-
-! global -> global coords
-                    do atm = 1, natom
-                        do j = 1, nmodes
-                            global_coord(1:3, atm) = 0.0_wp
-                            global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
-                        end do
-                        coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
-                    end do
-
-                else
-! coord update
-                    do j = 1, natom
-                        coord(1:3, j) = coord0(1:3, j) + local(1:3, j)
-                    end do
-                end if
-! <\EDIT REMI>
-
-! Coordinate constraint (RATTLE VV1)
-!
+                ! Coordinate constraint (RATTLE VV1)
+                !
                 if (constraints%rigid_bond) then
                     call compute_constraints(ConstraintModeVVER1, dt, molecule, &
                                              dynvars, constraints)
@@ -454,48 +413,42 @@ contains
                 end if
 
             else
-
+! <EDIT REMI>
                 call langevin_thermostat_vv1(molecule, dynamics, ensemble, &
                                              boundary, constraints, dynvars)
                 gamma_t = ensemble%gamma_t*AKMA_PS
-! <EDIT REMI>
-                if (global_fit) then
+                scale_v = exp(-gamma_t*0.5_wp*dt)
 
-                    scale_v = exp(-gamma_t*0.5_wp*global_dt)
+                ! update global vel and amp
+                do j = 1, nmodes
+                    global_vel(j) = global_vel(j)*scale_v 
+                    global_vel(j) = global_vel(j) + 0.5_wp*dt*global_force(j) * global_inv_mass
+                    global_vel(j) = global_vel(j) + 0.5_wp*dt*global_random_force(j) * global_inv_mass
+
+                    global(j) = global(j) + dt*global_vel(j)
+                end do
+
+                !$omp parallel do default(none)                                 &
+                !$omp private(atm,j )                                          &
+                !$omp shared(natom, nmodes, coord, scale_v, vel, force, dt, inv_mass, dynvars, &
+                !$omp  local, global_coord, global, normalModeVec,coord0)
+                !
+                do atm = 1, natom
+
+                    ! local update vel and pos
+                    vel(1:3,atm) = vel(1:3,atm)*scale_v 
+                    vel(1:3,atm) = vel(1:3,atm) + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) 
+                    vel(1:3,atm) = vel(1:3,atm) + 0.5_wp*dt*dynvars%random_force(1:3,atm)*inv_mass(atm)
+                    local(1:3, atm) = local(1:3, atm) + vel(1:3, atm)*dt
+                    
+                    ! global -> global coords
+                    global_coord(1:3, atm) = 0.0_wp
                     do j = 1, nmodes
-                  global_vel(j) = global_vel(j)*scale_v + 0.5_wp*global_dt*global_force(j) + 0.5_wp*global_dt*global_random_force(j)
-                        global(j) = global(j) + global_dt*global_vel(j)
+                        global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
                     end do
-
-                    scale_v = exp(-gamma_t*0.5_wp*dt)
-!$omp parallel do default(none)                                 &
-!$omp private(atm,j )                                          &
-!$omp shared(natom, nmodes, coord, scale_v, vel, force, dt, inv_mass, dynvars, &
-!$omp  local, global_coord, global, normalModeVec,coord0)
-!
-                    do atm = 1, natom
-vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0.5_wp*dt*dynvars%random_force(1:3,atm)*inv_mass(atm)
-                        local(1:3, atm) = local(1:3, atm) + vel(1:3, atm)*dt
-                        global_coord(1:3, atm) = 0.0_wp
-                        do j = 1, nmodes
-                            global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
-                        end do
-                        coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
-                    end do
-!$omp end parallel do
-
-                else
-                    scale_v = exp(-gamma_t*0.5_wp*dt)
-!$omp parallel do default(none)                                 &
-!$omp private(j)                                          &
-!$omp shared(natom, coord, scale_v, vel, force, dt, inv_mass, dynvars)
-!
-                    do j = 1, natom
-        vel(1:3, j) = vel(1:3, j)*scale_v + 0.5_wp*dt*force(1:3, j)*inv_mass(j) + 0.5_wp*dt*dynvars%random_force(1:3, j)*inv_mass(j)
-                        coord(1:3, j) = coord(1:3, j) + vel(1:3, j)*dt
-                    end do
-!$omp end parallel do
-                end if
+                    coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
+                end do
+                !$omp end parallel do
 ! </EDIT REMI>
 
             end if
@@ -523,45 +476,43 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
                     call langevin_thermostat_vv2(molecule, dynamics, ensemble, &
                                                  boundary, constraints, dynvars)
 
-! <EDIT REMI>
-                    if (global_fit) then
-! update forces
+                    ! <EDIT REMI>
+                    ! update forces
+                    do j = 1, nmodes
+                        global_force(j) = 0.0_wp
+                        global_random_force(j) = 0.0_wp
+                    end do
+                    do atm = 1, natom
                         do j = 1, nmodes
-                            global_force(j) = 0.0_wp
-                            global_random_force(j) = 0.0_wp
+                            global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)
+                            global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)
+                            global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)
+                            global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)
+                            global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)
+                            global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)
                         end do
-                        do atm = 1, natom
-                            do j = 1, nmodes
-                                global_force(j) = global_force(j) + normalModeVec(1, atm, j)*force(1, atm)
-                                global_force(j) = global_force(j) + normalModeVec(2, atm, j)*force(2, atm)
-                                global_force(j) = global_force(j) + normalModeVec(3, atm, j)*force(3, atm)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(1, atm, j)*dynvars%random_force(1, atm)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(2, atm, j)*dynvars%random_force(2, atm)
-                    global_random_force(j) = global_random_force(j) + normalModeVec(3, atm, j)*dynvars%random_force(3, atm)
-                            end do
-                        end do
+                    end do
 
-                        gamma_t = ensemble%gamma_t*AKMA_PS
-                        scale_v = exp(-gamma_t*0.5_wp*global_dt)
-                        do j = 1, nmodes
-                            global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_random_force(j)
-                            global_vel(j) = global_vel(j)*scale_v
-                        end do
-
-                    end if
-
+                    ! update velocities 1/2dt
                     gamma_t = ensemble%gamma_t*AKMA_PS
                     scale_v = exp(-gamma_t*0.5_wp*dt)
-!$omp parallel do default(none)                                 &
-!$omp private(j)                                          &
-!$omp shared(natom, coord, scale_v, vel, force, dt, inv_mass, dynvars)
-!
+                    do j = 1, nmodes
+                        global_vel(j) = global_vel(j)*scale_v 
+                        global_vel(j) = global_vel(j) + 0.5_wp*dt*global_force(j) * global_inv_mass
+                        global_vel(j) = global_vel(j) + 0.5_wp*dt*global_random_force(j) * global_inv_mass
+
+                    end do
+                    !$omp parallel do default(none)                                 &
+                    !$omp private(j)                                          &
+                    !$omp shared(natom, coord, scale_v, vel, force, dt, inv_mass, dynvars)
+                    !
                     do j = 1, natom
                         vel(1:3, j) = vel(1:3, j) + 0.5_wp*dt*(force(1:3, j) + dynvars%random_force(1:3, j))*inv_mass(j)
                         vel(1:3, j) = vel(1:3, j)*scale_v
                     end do
-!$omp end parallel do
-! </EDIT REMI>
+                    !$omp end parallel do
+                    
+                ! </EDIT REMI>
                 else
 
                     call langevin_barostat_vv2(molecule, dynamics, ensemble, &
@@ -571,44 +522,36 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
 
             else
 
-! Compute velocities(t + dt)
-!   v(t+dt) = v(t+1/2dt) + 0.5dt*F(t+dt)/m
-!
+                ! Compute velocities(t + dt)
+                !   v(t+dt) = v(t+1/2dt) + 0.5dt*F(t+dt)/m
+                !
                 do j = 1, natom
-                    vel(1, j) = vel(1, j) + 0.5_wp*dt*force(1, j)*inv_mass(j)
-                    vel(2, j) = vel(2, j) + 0.5_wp*dt*force(2, j)*inv_mass(j)
-                    vel(3, j) = vel(3, j) + 0.5_wp*dt*force(3, j)*inv_mass(j)
+                vel(1,j) = vel(1,j) + 0.5_wp*dt*force(1,j)*inv_mass(j)
+                vel(2,j) = vel(2,j) + 0.5_wp*dt*force(2,j)*inv_mass(j)
+                vel(3,j) = vel(3,j) + 0.5_wp*dt*force(3,j)*inv_mass(j)
                 end do
 
-! <EDIT REMI>
-                if (global_fit) then
-                do j = 1, nmodes
-                    global_vel(j) = global_vel(j) + 0.5_wp*global_dt*global_force(j)
-                end do
-                end if
-! </EDIT REMI>
-
-! Velocty constraint (RATTLE VV2)
-!   coord     is at t + dt, vel (unconstrained) is at t + dt
-!   coord_ref is at t,      vel_ref             is at t
-!   compute constrained velocities(t+dt)
-!   add constraint virial(t+dt)
-!   Note that constraint virial(t) is added to virial(t+dt) in leapfrog
-!             which is correct?
-!
+                ! Velocty constraint (RATTLE VV2)
+                !   coord     is at t + dt, vel (unconstrained) is at t + dt
+                !   coord_ref is at t,      vel_ref             is at t
+                !   compute constrained velocities(t+dt)
+                !   add constraint virial(t+dt)
+                !   Note that constraint virial(t) is added to virial(t+dt) in leapfrog
+                !             which is correct?
+                !
                 if (constraints%rigid_bond) then
+        
+                call compute_constraints(ConstraintModeVVER2, &
+                                        dt, molecule, dynvars, constraints) 
+        
+                endif
 
-                    call compute_constraints(ConstraintModeVVER2, &
-                                             dt, molecule, dynvars, constraints)
-
-                end if
-
-! Control temperature VV2
-!
+                ! Control temperature VV2
+                !
                 if (ensemble%ensemble /= EnsembleNVE) then
-
-                    call control_temp_pres_vver2(molecule, dynamics, ensemble, dynvars)
-
+        
+                call control_temp_pres_vver2(molecule, dynamics, ensemble, dynvars)
+        
                 end if
             end if
 
@@ -668,17 +611,14 @@ vel(1:3,atm) = vel(1:3,atm)*scale_v + 0.5_wp*dt*force(1:3,atm)*inv_mass(atm) + 0
 
             ! <EDIT REMI>
             if (mod(i, 10) == 0) then
-
-                if (global_fit) then
-                    ftmp = trim(output%pdbfile(:ppos))//".nmmdamp"
-                    open (unit=66, file=ftmp, position="append")
-                    write(66, *) global
-                    close(66)
-                    ftmp = trim(output%pdbfile(:ppos))//".nmmdvel"
-                    open (unit=66, file=ftmp, position="append")
-                    write(66, *) global_vel
-                    close(66)
-                end if
+                ftmp = trim(output%pdbfile(:ppos))//".nmmdamp"
+                open (unit=66, file=ftmp, position="append")
+                write(66, *) global
+                close(66)
+                ftmp = trim(output%pdbfile(:ppos))//".nmmdvel"
+                open (unit=66, file=ftmp, position="append")
+                write(66, *) global_vel
+                close(66)
             endif
 
 ! Output energy(t + dt) and dynamical variables(t + dt)
