@@ -66,8 +66,113 @@ module at_md_vverlet_mod
     private :: bussi_barostat_vv1
     private :: bussi_barostat_vv2
     private :: simulated_annealing_vverlet
+    private :: compute_nma
+    private :: read_nma
 
 contains
+
+!======1=========2=========3=========4=========5=========6=========7=========8
+!
+!  Subroutine    compute_nma
+!> @brief        compute normal mode analysis using Elnemo
+!! @authors      RV
+!
+!======1=========2=========3=========4=========5=========6=========7=========8
+
+    subroutine compute_nma(molecule, dynvars, fpath, elNemoPath, nmodes)
+        type(s_molecule), intent(inout) :: molecule
+        type(s_dynvars), intent(inout) :: dynvars
+        character(256), intent(inout) :: fpath
+        character(256), intent(inout) :: elNemoPath
+        integer, intent(inout) :: nmodes
+
+
+        character(256) :: ftmp
+        integer :: exitstatus
+
+        ! COMP NMA 
+        print *, "<NMMD> Computing NMA ..."
+        ! WRITE PDB
+        open (unit=66, file=trim(fpath)//"run.pdb")
+        call write_restart_pdb(66, molecule, dynvars%coord)
+        close (66)
+
+        ! ELNEMO
+        ftmp = trim(fpath)//"pdbmat.dat"
+        open (unit=66, file=ftmp)
+        write (66, *) "Coordinate FILENAME        = run.pdb"
+        write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
+        write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
+        write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
+        write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
+        write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
+        close (66)
+        ftmp = trim(fpath)//"diagrtb.dat"
+        open (unit=66, file=ftmp)
+        write (66, *) "MATRix filename            = pdbmat.sdijf"
+        write (66, *) "COORdinates filename       = run.pdb"
+        write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+        write (ftmp, *) nmodes + 6
+        write (66, *) "Nb of VECTors required     = "//ftmp
+        write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
+        write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
+        write (66, *) "Nb of residues per BLOck   =         10 "
+        write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
+        write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
+        write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
+        write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
+        close (66)
+        ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
+        call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
+        if (exitstatus /= 0) then
+            call error_msg('Mode PB')
+        end if
+    ! CLEANING
+        call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+        print *, "<NMMD> Done"
+        print *, ""
+
+    end subroutine compute_nma
+
+!======1=========2=========3=========4=========5=========6=========7=========8
+!
+!  Subroutine    read_nma
+!> @brief        read normal modes
+!! @authors      RV
+!
+!======1=========2=========3=========4=========5=========6=========7=========8
+
+    subroutine read_nma(normalModeVec, fpath, natom, nmodes)
+        real(wp), dimension(:, :, :), intent(inout) :: normalModeVec
+        character(256), intent(inout) :: fpath
+        integer, intent(inout) :: nmodes
+        integer, intent(inout) :: natom
+
+
+        character(256) :: ftmp
+        integer :: i,j
+
+        print *, "<NMMD> Reading Normal Modes ..."
+        ftmp = trim(fpath)//"diagrtb.eigenfacs"
+        open (unit=66, file=ftmp)
+        do i = 1, nmodes + 6
+            read (66, '(A)')
+            read (66, '(A)')
+            if ((i > 6) .and. (i <= nmodes + 6)) then
+            do j = 1, natom
+                read (66, *) normalModeVec(:, j, i - 6)
+            end do
+            else
+            do j = 1, natom
+                read (66, '(A)')
+            end do
+            end if
+        end do
+        close (66)
+        print *, "<NMMD> Done"
+        print *, ""
+
+    end subroutine read_nma
 
 !======1=========2=========3=========4=========5=========6=========7=========8
 !
@@ -113,8 +218,8 @@ contains
         logical                   :: savefile
 
 ! <EDIT REMI>
-        integer :: nmodes, ppos, exitstatus, atm
-        real(wp) :: global_mass, global_inv_mass, gamma_t, scale_v, coordtmp
+        integer :: nmodes, ppos, atm, nnma, exitstatus
+        real(wp) :: global_mass, global_inv_mass, gamma_t, scale_v, coordtmp, global_lim
         real(wp), dimension(:, :, :), allocatable :: normalModeVec
         real(wp), dimension(:), allocatable :: global
         real(wp), dimension(:, :), allocatable :: local
@@ -125,7 +230,7 @@ contains
         real(wp), dimension(:), allocatable :: global_random_force
         character(256)            :: fctrl, fpath, ftmp, nrep, elNemoPath
         character :: ctmp
-        logical :: file_exists
+        logical :: file_exists, rstNMA
 ! <\EDIT REMI>
 
         integer :: icount
@@ -158,6 +263,9 @@ contains
         read (ftmp, *) global_mass
         global_inv_mass = 1.0_wp/global_mass
 
+        call getarg(5, ftmp)
+        read (ftmp, *) global_lim
+
         print *, "<NMMD> Done"
         print *, ""
 
@@ -179,80 +287,22 @@ contains
 
         inquire(file=fpath, exist=file_exists)
         if (.not. file_exists) then
-
-            ! COMP NMA 
-            print *, "<NMMD> Computing NMA ..."
-
             call execute_command_line("mkdir "//fpath//" > /dev/null", wait=.true., exitstat=exitstatus)
-
-            ! WRITE PDB
-            open (unit=66, file=trim(fpath)//"run.pdb")
-            call write_restart_pdb(66, molecule, dynvars%coord)
-            close (66)
-
-            ! ELNEMO
-            ftmp = trim(fpath)//"pdbmat.dat"
-            open (unit=66, file=ftmp)
-            write (66, *) "Coordinate FILENAME        = run.pdb"
-            write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
-            write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
-            write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
-            write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
-            write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
-            close (66)
-            ftmp = trim(fpath)//"diagrtb.dat"
-            open (unit=66, file=ftmp)
-            write (66, *) "MATRix filename            = pdbmat.sdijf"
-            write (66, *) "COORdinates filename       = run.pdb"
-            write (66, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
-            write (ftmp, *) nmodes + 6
-            write (66, *) "Nb of VECTors required     = "//ftmp
-            write (66, *) "EigeNVALues chosen         =       LOWE   ! LOWEst, HIGHest."
-            write (66, *) "Type of SUBStructuring     =       NONE   ! RESIdues, SECOndary, SUBUnits, DOMAins, NONE."
-            write (66, *) "Nb of residues per BLOck   =         10 "
-            write (66, *) "Origin of MASS values      =       CONS   ! CONStant, COORdinate, PDB."
-            write (66, *) "Temporary files cleaning   =       ALL    ! ALL, NOne."
-            write (66, *) "MATRix FORMat              =       FREE   ! FREE, BINAry."
-            write (66, *) "Output PRINting level      =          0   ! =1: More detailed; =2: Debug level."
-            close (66)
-            ftmp = "cd "// trim(fpath) // " ; "// trim(elNemoPath)//"ElNemo/nma_elnemo_pdbmat > pdbmat.log ; "// trim(elNemoPath)//"ElNemo/nma_diagrtb > diagrtb.log"
-            call execute_command_line(ftmp, wait=.true., exitstat=exitstatus)
-            if (exitstatus /= 0) then
-                call error_msg('Mode PB')
-            end if
-        ! CLEANING
-            call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
-            print *, "<NMMD> Done"
-            print *, ""
+            call compute_nma(molecule, dynvars, fpath, elNemoPath, nmodes)
         end if
 
         ! READ MODES
-        print *, "<NMMD> Reading Normal Modes ..."
-        ftmp = trim(fpath)//"diagrtb.eigenfacs"
-        open (unit=66, file=ftmp)
-        do i = 1, nmodes + 6
-            read (66, '(A)')
-            read (66, '(A)')
-            if ((i > 6) .and. (i <= nmodes + 6)) then
-            do j = 1, natom
-                read (66, *) normalModeVec(:, j, i - 6)
-            end do
-            else
-            do j = 1, natom
-                read (66, '(A)')
-            end do
-            end if
-        end do
-        close (66)
-        print *, "<NMMD> Done"
-        print *, ""
+        call read_nma(normalModeVec, fpath, natom, nmodes)
 
-    ! RESTART FILE for REUS
+
+    
         ftmp = trim(output%pdbfile(:ppos))//".nmmdrst"
         inquire(file=ftmp, exist=file_exists)
+        ! RESTART FILE for REUS
             if (file_exists) then
                 print *, "<NMMD> Reading Restart File ..."
                 open (unit=66, file=ftmp)
+                read(66, '(I6)') nnma
                 do i = 1, nmodes
                     read(66, '(F10.2)') global(i)
                 end do
@@ -267,6 +317,8 @@ contains
                 print *, ""
 
             else
+            ! Init parameters to zero
+                nnma = 1
                 do i = 1, nmodes
                     global(i) = 0.0_wp
                 end do
@@ -356,6 +408,30 @@ contains
 !
 
         do i = istart, iend
+
+            ! <EDIT REMI> 
+            rstNMA = .false.
+            do j = 1 , nmodes
+                if (global(j)>global_lim .or. global(j)< (-global_lim)) then
+                    rstNMA = .true.
+                endif
+            end do
+            if (rstNMA) then
+                call compute_nma(molecule, dynvars, fpath, elNemoPath, nmodes)
+                call read_nma(normalModeVec, fpath, natom, nmodes)
+                do j = 1, nmodes
+                    global(j) = 0.0_wp
+                end do
+                do atm = 1, natom
+                    do j = 1, 3
+                        local(j, atm) = 0.0_wp
+                        coord0(j, atm) = coord(j, atm)
+                    end do
+                end do
+                nnma = nnma + 1
+            endif
+
+        ! </EDIT REMI>
 
             call timer(TimerIntegrator, TimerOn)
 
@@ -631,8 +707,11 @@ contains
 ! <EDIT REMI>
         print *, '<NMMD> ***** FINAL NORMAL MODE AMPLITUDES *****'
         print *, global
+        print *, "        Number of NMA computation = "
+        print*, nnma
         ftmp = trim(output%pdbfile(:ppos))//".nmmdrst"
         open (unit=66, file=ftmp)
+        write(66, '(I6)') nnma
         do i = 1, nmodes
             write(66, '(F10.2)') global(i)
         end do
