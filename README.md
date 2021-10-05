@@ -20,6 +20,8 @@ make
 - `pathToNMMD` : path to NMMD ending with a `/` character (example : `/path/to/NMMD/`)
 - `numberModes` : The number of normal modes to use after skipping the 6 first modes (example : 4 will use modes from 7-10)
 - `massModes` : The normal mode mass (example : 1.0)
+- `thresholdModes` : Threshold of normal mode amplitude (example : 500.0)
+ 
 
 ## Limitations:
 - NMMD is available only for the VVER integrator
