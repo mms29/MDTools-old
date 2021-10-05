@@ -14,7 +14,7 @@ make
 
 ## Usage:
 ```
-/path/to/NMMD/bin/atdyn INP pathToNMMD boolNMMD numberModes dtNMFactor
+/path/to/NMMD/bin/atdyn INP pathToNMMD numberModes massModes thresholdModes
 ```
 - `INP` : path to INP file (see how to define the INP file in https://www.r-ccs.riken.jp/labs/cbrt/usage/)
 - `pathToNMMD` : path to NMMD ending with a `/` character (example : `/path/to/NMMD/`)
