@@ -219,7 +219,7 @@ contains
 
 ! <EDIT REMI>
         integer :: nmodes, ppos, atm, nnma, exitstatus
-        real(wp) :: global_mass, global_inv_mass, gamma_t, scale_v, coordtmp, global_lim
+        real(wp) :: global_mass, global_inv_mass, gamma_t, scale_v, veltmp, global_lim
         real(wp), dimension(:, :, :), allocatable :: normalModeVec
         real(wp), dimension(:), allocatable :: global
         real(wp), dimension(:, :), allocatable :: local
@@ -406,7 +406,6 @@ contains
 !   coord, vel, and force are at t = 0   , if restart off
 !   coord, vel, and force are at t = t+dt, if restart on
 !
-
         do i = istart, iend
 
             ! <EDIT REMI> 
@@ -470,13 +469,13 @@ contains
                 !   r(t+dt)    = r(t) + dt*v(t+1/2dt)
                 !
                 do j = 1, natom
-                vel(1,j) = vel(1,j) + 0.5_wp*dt*force(1,j)*inv_mass(j)
-                vel(2,j) = vel(2,j) + 0.5_wp*dt*force(2,j)*inv_mass(j)
-                vel(3,j) = vel(3,j) + 0.5_wp*dt*force(3,j)*inv_mass(j)
+                    vel(1,j) = vel(1,j) + 0.5_wp*dt*force(1,j)*inv_mass(j)
+                    vel(2,j) = vel(2,j) + 0.5_wp*dt*force(2,j)*inv_mass(j)
+                    vel(3,j) = vel(3,j) + 0.5_wp*dt*force(3,j)*inv_mass(j)
 
-                coord(1,j) = coord(1,j) + dt*vel(1,j)
-                coord(2,j) = coord(2,j) + dt*vel(2,j)
-                coord(3,j) = coord(3,j) + dt*vel(3,j)
+                    coord(1,j) = coord(1,j) + dt*vel(1,j)
+                    coord(2,j) = coord(2,j) + dt*vel(2,j)
+                    coord(3,j) = coord(3,j) + dt*vel(3,j)
                 end do
 
                 ! Coordinate constraint (RATTLE VV1)
@@ -501,7 +500,7 @@ contains
                     global_vel(j) = global_vel(j) + 0.5_wp*dt*global_force(j) * global_inv_mass
                     global_vel(j) = global_vel(j) + 0.5_wp*dt*global_random_force(j) * global_inv_mass
 
-                    global(j) = global(j) + dt*global_vel(j)
+                    global(j) = global(j) + dt*global_vel(j)!IMPEDIT
                 end do
 
                 !$omp parallel do default(none)                                 &
@@ -522,7 +521,7 @@ contains
                     do j = 1, nmodes
                         global_coord(1:3, atm) = global_coord(1:3, atm) + (global(j)*normalModeVec(1:3, atm, j))
                     end do
-                    coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)
+                    coord(1:3, atm) = coord0(1:3, atm) + local(1:3, atm) + global_coord(1:3, atm)!IMPEDIT
                 end do
                 !$omp end parallel do
 ! </EDIT REMI>
@@ -687,14 +686,45 @@ contains
 
             ! <EDIT REMI>
             if (mod(i, 10) == 0) then
-                ftmp = trim(output%pdbfile(:ppos))//".nmmdamp"
+
+                ftmp = trim(output%pdbfile(:ppos))//".nmmdq"
                 open (unit=66, file=ftmp, position="append")
                 write(66, *) global
                 close(66)
-                ftmp = trim(output%pdbfile(:ppos))//".nmmdvel"
-                open (unit=66, file=ftmp, position="append")
-                write(66, *) global_vel
-                close(66)
+
+                ! ! coord global
+                ! veltmp = 0.0_wp
+                ! do j =1, natom
+                !     veltmp = veltmp + (global_coord(1,j)**2 + global_coord(2,j)**2 +global_coord(3,j)**2) 
+                ! end do
+                ! ftmp = trim(output%pdbfile(:ppos))//".nmmdglobal"
+                ! open (unit=66, file=ftmp, position="append")
+                ! write(66, *) veltmp
+                ! close(66)
+
+                ! ! coord local
+                ! veltmp = 0.0_wp
+                ! do j =1, natom
+                !     veltmp = veltmp + (local(1,j)**2 + local(2,j)**2 +local(3,j)**2) 
+                ! end do
+                ! ftmp = trim(output%pdbfile(:ppos))//".nmmdlocal"
+                ! open (unit=66, file=ftmp, position="append")
+                ! write(66, *) veltmp
+                ! close(66)
+
+                ! ! total e
+                ! ftmp = trim(output%pdbfile(:ppos))//".nmmdenergy"
+                ! open (unit=66, file=ftmp, position="append")
+                ! write(66, *) dynvars%total_energy
+                ! close(66)
+                ! ftmp = trim(output%pdbfile(:ppos))//".nmmdpene"
+                ! open (unit=66, file=ftmp, position="append")
+                ! write(66, *) dynvars%total_pene
+                ! close(66)
+                ! ftmp = trim(output%pdbfile(:ppos))//".nmmdkene"
+                ! open (unit=66, file=ftmp, position="append")
+                ! write(66, *) dynvars%total_kene
+                ! close(66)
             endif
 
 ! Output energy(t + dt) and dynamical variables(t + dt)
