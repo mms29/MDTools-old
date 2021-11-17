@@ -102,7 +102,7 @@ contains
         open (unit=66, file=ftmp)
         write (66, *) "Coordinate FILENAME        = run.pdb"
         write (66, *) "MATRIx FILENAME            = pdbmat.sdijf"
-        write (66, *) "INTERACtion DISTance CUTOF = 20.000000 ! For defining the list of interacting atoms."
+        write (66, *) "INTERACtion DISTance CUTOF = 8.000000 ! For defining the list of interacting atoms."
         write (66, *) "INTERACtion FORCE CONStant = 10.000000 ! For specifying frequency units."
         write (66, *) "Origin of MASS values      =    CON ! CONstant, or from COOrdinate file."
         write (66, *) "Output PRINTing level      =      0 ! =1: more detailled. =2: debug level."
