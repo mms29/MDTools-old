@@ -128,7 +128,7 @@ contains
             call error_msg('Mode PB')
         end if
     ! CLEANING
-        call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run ", wait=.true., exitstat=exitstatus)
+        call execute_command_line("cd "//fpath//" ; rm -f pdbmat.dat_run diagrtb.dat_run pdbmat.sdijf ", wait=.true., exitstat=exitstatus)
         print *, "<NMMD> Done"
         print *, ""
 
