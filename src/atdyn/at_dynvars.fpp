@@ -145,11 +145,20 @@ contains
     ! setup random force
     !
     if (present(dynamics)) then
-      if (dynamics%integrator == IntegratorVVER .and. &
+      if ((dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) .and. &
           tpcontrol           == TpcontrolLangevin) then
         call alloc_dynvars(dynvars, DynvarsLangevin,natom)
       end if
     end if
+
+    ! setup nmmd
+    !
+    if (present(dynamics)) then
+      if (dynamics%integrator == IntegratorNMMD) then
+        call alloc_dynvars(dynvars, DynvarsNMMD, dynamics%nm_number)
+      end if
+    end if
+
 
     ! change step number
     !
@@ -456,7 +465,7 @@ contains
       ekin_old = 0.5_wp * ekin_old
       ekin_new = 0.5_wp * ekin_new
 
-    else if (dynamics%integrator == IntegratorVVER) then
+    else if (dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) then
 
       do j = 1, natom
         rmsg = rmsg + force(1,j)**2 + force(2,j)**2 + force(3,j)**2

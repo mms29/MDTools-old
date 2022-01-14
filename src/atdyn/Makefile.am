@@ -63,6 +63,7 @@ atdyn_SOURCES = \
 	at_output.fpp \
 	at_md_leapfrog.fpp \
 	at_md_vverlet.fpp \
+	at_nmmd.fpp \
 	at_minimize.fpp \
 	at_vibration.fpp \
 	at_remd.fpp \

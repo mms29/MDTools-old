@@ -15,6 +15,7 @@
 module at_dynamics_str_mod
 
   use constants_mod
+  use string_mod
 
   implicit none
   private
@@ -46,13 +47,25 @@ module at_dynamics_str_mod
     real(wp)            :: final_value
     logical             :: verbose
     logical             :: random_restart
+    integer             :: nm_number
+    real(wp)            :: nm_mass
+    real(wp)            :: nm_limit
+    real(wp)            :: elnemo_cutoff
+    integer             :: elnemo_rtb_block
+    character(MaxFilename)     :: elnemo_path
+    character(MaxFilename)     :: nm_prefix
   end type s_dynamics
+
+  type, public:: s_nmmd_dynamics
+
+end type s_nmmd_dynamics
 
   ! parameters
   integer,      public, parameter :: IntegratorLEAP = 1
   integer,      public, parameter :: IntegratorVVER = 2
+  integer,      public, parameter :: IntegratorNMMD = 3
 
-  character(*), public, parameter :: IntegratorTypes(2)  = (/'LEAP','VVER'/)
+  character(*), public, parameter :: IntegratorTypes(3)  = (/'LEAP','VVER','NMMD'/)
 
 
   ! subroutines
@@ -100,6 +113,13 @@ contains
     dynamics%initial_value        = 0.0_wp
     dynamics%final_value          = 0.0_wp
     dynamics%random_restart       = .true.
+    dynamics%nm_number            = 10
+    dynamics%nm_mass              = 10
+    dynamics%nm_limit             = 1000
+    dynamics%elnemo_path          = ''
+    dynamics%nm_prefix            = ''
+    dynamics%elnemo_cutoff        = 8.0_wp
+    dynamics%elnemo_rtb_block     = 10
 
     return
 

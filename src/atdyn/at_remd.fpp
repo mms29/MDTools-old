@@ -19,6 +19,7 @@ module at_remd_mod
   use at_energy_restraints_mod
   use at_md_leapfrog_mod
   use at_md_vverlet_mod
+  use at_nmmd_mod
   use at_dynamics_str_mod
   use at_dynvars_str_mod
   use at_dynvars_mod
@@ -1983,6 +1984,10 @@ contains
       else if (dynamics%integrator == IntegratorVVER) then
         call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                                pairlist, boundary, constraints, ensemble)
+      else if (dynamics%integrator == IntegratorNMMD) then
+        call nmmd_dynamics (output, molecule, enefunc, dynvars, dynamics, &
+                                pairlist, boundary, constraints, ensemble)
+
       end if
 
       ! perform remd

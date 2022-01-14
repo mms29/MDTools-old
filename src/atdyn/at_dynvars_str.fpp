@@ -33,6 +33,13 @@ module at_dynvars_str_mod
     real(wp),         allocatable :: force(:,:)
     real(wp),         allocatable :: random_force(:,:)
     real(wp),         allocatable :: temporary(:,:)
+    real(wp),         allocatable :: nm_amp(:)
+    real(wp),         allocatable :: nm_force(:)
+    real(wp),         allocatable :: nm_vel(:)
+    real(wp),         allocatable :: nm_random_force(:)
+    real(wp),         allocatable :: nm_coord(:,:)
+    real(wp),         allocatable :: md_coord(:,:)
+    real(wp),         allocatable :: nm_vectors(:,:,:)
     real(wp)                      :: virial(3,3)
     real(wp)                      :: virial_const(3,3)
     real(wp)                      :: virial_extern(3,3)
@@ -71,6 +78,7 @@ module at_dynvars_str_mod
   ! parameters
   integer,      public, parameter :: DynvarsGeneral  = 1
   integer,      public, parameter :: DynvarsLangevin = 2
+  integer,      public, parameter :: DynvarsNMMD = 3
 
   ! subroutines
   public :: init_dynvars
@@ -156,6 +164,7 @@ contains
     ! local variables
     integer                  :: alloc_stat
     integer                  :: dealloc_stat
+    integer                  :: natoms
 
 
     alloc_stat   = 0
@@ -205,6 +214,39 @@ contains
                stat = alloc_stat)
 
       dynvars%random_force(1:3,1:var_size) = 0.0_wp
+
+    case(DynvarsNMMD)
+      ! Check if allocated
+      natoms = size(dynvars%coord(1,:))
+      
+      if (allocated(dynvars%nm_amp)) then
+        if (size(dynvars%nm_amp(:)) == var_size) return
+        deallocate(dynvars%nm_amp,              &
+                dynvars%nm_force,            &
+                dynvars%nm_vel,              &
+                dynvars%nm_vectors,          &
+                dynvars%nm_random_force,     &
+                dynvars%nm_coord,            &
+                dynvars%md_coord)
+      end if
+
+      ! Allocate
+      allocate(   dynvars%nm_amp(var_size),              &
+                  dynvars%nm_force(var_size),            &
+                  dynvars%nm_vel(var_size),              &
+                  dynvars%nm_random_force(var_size),     &
+                  dynvars%nm_coord(3,natoms),          &
+                  dynvars%md_coord(3,natoms),          &
+                  dynvars%nm_vectors(3,natoms, var_size))
+
+      ! Initialize
+      dynvars%nm_amp                  (1:var_size) = 0.0_wp
+      dynvars%nm_force                (1:var_size) = 0.0_wp
+      dynvars%nm_vel                  (1:var_size) = 0.0_wp
+      dynvars%nm_random_force         (1:var_size) = 0.0_wp
+      dynvars%nm_coord                (1:3,1:natoms) = 0.0_wp
+      dynvars%md_coord                (1:3,1:natoms) = 0.0_wp
+      dynvars%nm_vectors              (1:3,1:natoms,1:var_size) = 0.0_wp
 
     case default
 
@@ -264,6 +306,19 @@ contains
                     stat = dealloc_stat)
       end if
 
+    
+    case(DynvarsNMMD)
+
+      if (allocated(dynvars%nm_amp)) then
+        deallocate(dynvars%nm_amp,              &
+                dynvars%nm_force,            &
+                dynvars%nm_vel,              &
+                dynvars%nm_vectors,          &
+                dynvars%nm_random_force,     &
+                dynvars%nm_coord,            &
+                dynvars%md_coord)
+      end if
+
     case default
 
       call error_msg('Dealloc_Dynvars> bad variable')
@@ -292,6 +347,7 @@ contains
 
     call dealloc_dynvars(dynvars, DynvarsGeneral )
     call dealloc_dynvars(dynvars, DynvarsLangevin)
+    call dealloc_dynvars(dynvars, DynvarsNMMD)
 
     return
 

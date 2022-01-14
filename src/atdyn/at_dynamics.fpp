@@ -18,6 +18,7 @@ module at_dynamics_mod
 
   use at_md_leapfrog_mod
   use at_md_vverlet_mod
+  use at_nmmd_mod
   use at_output_mod
   use at_restraints_mod
   use at_boundary_mod
@@ -38,6 +39,7 @@ module at_dynamics_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
+  use string_mod
 #ifdef MPI
   use mpi
 #endif
@@ -69,6 +71,15 @@ module at_dynamics_mod
     logical          :: steered_md       =  .false.
     real(wp)         :: initial_value    =  0.0_wp
     real(wp)         :: final_value      =  0.0_wp
+
+    ! NMMD
+    integer             :: nm_number            = 10
+    real(wp)            :: nm_mass              = 10
+    real(wp)            :: nm_limit             = 1000
+    character(MaxFilename)     :: elnemo_path   = ''
+    character(MaxFilename)     :: nm_prefix     = ''
+    real(wp)            :: elnemo_cutoff        = 8.0_wp
+    integer             :: elnemo_rtb_block     = 10
 
   end type s_dyn_info
 
@@ -104,7 +115,7 @@ contains
       case ('md')
 
         write(MsgOut,'(A)') '[DYNAMICS]'
-        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER]'
+        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER, NMMD]'
         write(MsgOut,'(A)') 'nsteps        = 100       # number of MD steps'
         write(MsgOut,'(A)') 'timestep      = 0.001     # timestep (ps)'
         write(MsgOut,'(A)') 'eneout_period = 10        # energy output period'
@@ -151,7 +162,7 @@ contains
       case ('md', 'remd', 'rpath')
 
         write(MsgOut,'(A)') '[DYNAMICS]'
-        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER]'
+        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER, NMMD]'
         write(MsgOut,'(A)') 'nsteps        = 100       # number of MD steps'
         write(MsgOut,'(A)') 'timestep      = 0.001     # timestep (ps)'
         write(MsgOut,'(A)') 'eneout_period = 10        # energy output period'
@@ -184,6 +195,8 @@ contains
     ! formal arguments
     integer,                 intent(in)    :: handle
     type(s_dyn_info),        intent(inout) :: dyn_info
+
+    real(wp) :: test
 
 
     ! read parameters from control file
@@ -228,6 +241,20 @@ contains
                                dyn_info%initial_value)
     call read_ctrlfile_real   (handle, Section, 'final_value',    &
                                dyn_info%final_value)
+    call read_ctrlfile_integer(handle, "NMMD", 'nm_number',    &
+                               dyn_info%nm_number)
+    call read_ctrlfile_real   (handle, "NMMD", 'nm_mass',    &
+                               dyn_info%nm_mass)
+    call read_ctrlfile_real   (handle, "NMMD", 'nm_limit',    &
+                               dyn_info%nm_limit)
+    call read_ctrlfile_string (handle, "NMMD", 'elnemo_path',    &
+                               dyn_info%elnemo_path)
+    call read_ctrlfile_string (handle, "NMMD", 'nm_prefix',    &
+                               dyn_info%nm_prefix)
+    call read_ctrlfile_real   (handle, "NMMD", 'elnemo_cutoff',    &
+                               dyn_info%elnemo_cutoff)
+    call read_ctrlfile_integer(handle, "NMMD", 'elnemo_rtb_block',    &
+                                dyn_info%elnemo_rtb_block)
 
     call end_ctrlfile_section(handle)
 
@@ -291,8 +318,20 @@ contains
       end if
 
       write(MsgOut,'(A)') ' '
-    end if
 
+      if (dyn_info%integrator == IntegratorNMMD) then
+        write(MsgOut,'(A)') 'Read_Ctrl_NMMD> Parameters of NMMD'
+        write(MsgOut,'(A20,I10)') '  nm_number       = ', dyn_info%nm_number
+        write(MsgOut,'(A20,F10.3)') '  nm_mass         = ', dyn_info%nm_mass
+        write(MsgOut,'(A20,F10.3)') '  nm_limit        = ', dyn_info%nm_limit
+        write(MsgOut,'(A20,A)') '  nm_prefix       = ', trim(dyn_info%nm_prefix)
+        write(MsgOut,'(A20,A)') '  elnemo_path     = ', trim(dyn_info%elnemo_path)
+        write(MsgOut,'(A20,F10.3)') '  elnemo_cutoff   = ', dyn_info%elnemo_cutoff
+        write(MsgOut,'(A20,I10)') '  elnemo_rtb_block= ', dyn_info%elnemo_rtb_block
+        write(MsgOut,'(A)') ' '
+  
+      endif
+    end if
 
     ! error check
     !
@@ -423,6 +462,13 @@ contains
     dynamics%steered_md       = dyn_info%steered_md
     dynamics%initial_value    = dyn_info%initial_value
     dynamics%final_value      = dyn_info%final_value
+    dynamics%nm_number        = dyn_info%nm_number    
+    dynamics%nm_mass          = dyn_info%nm_mass      
+    dynamics%nm_limit         = dyn_info%nm_limit     
+    dynamics%elnemo_path      = dyn_info%elnemo_path  
+    dynamics%nm_prefix        = dyn_info%nm_prefix    
+    dynamics%elnemo_cutoff    = dyn_info%elnemo_cutoff      
+    dynamics%elnemo_rtb_block = dyn_info%elnemo_rtb_block  
 
     iseed = dyn_info%iseed
     if (rst%rstfile_type == RstfileTypeUndef .or. &
@@ -551,6 +597,11 @@ contains
 
       call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                              pairlist, boundary, constraints, ensemble)
+
+    case (IntegratorNMMD)
+
+      call nmmd_dynamics (output, molecule, enefunc, dynvars, dynamics, &
+                              pairlist, boundary, constraints, ensemble)
 
     end select
 
