@@ -25,6 +25,7 @@ module at_experiments_mod
   use constants_mod
   use string_mod
   use timers_mod
+  use fileio_pdb_mod
 #ifdef MPI
   use mpi
 #endif
@@ -36,19 +37,12 @@ module at_experiments_mod
   type, public :: s_exp_info
     logical                         :: emfit           = .false.
     character(MaxFilename)          :: emfit_target    = ''
-    real(wp)                        :: emfit_sigma     = 2.5_wp
+    real(wp)                        :: emfit_sigma     = 2.0_wp
     real(wp)                        :: emfit_tolerance = 0.001_wp
     integer                         :: emfit_period    = 1
   end type s_exp_info
 
   type(s_experiments), target, save :: experiments
-  integer,                     save :: natom_local, emfit_icycle
-  real(wp),                    save :: corrcoeff_save
-  integer,        allocatable, save :: list_local(:)
-  integer,        allocatable, save :: icount(:), domain_index(:)
-  integer,        allocatable, save :: ig_min_local(:,:), ig_max_local(:,:)
-  integer,        allocatable, save :: num_atoms_local(:)
-  integer,        allocatable, save :: ig_lower(:,:), ig_upper(:,:)
   real(wp),       allocatable, save :: dot_exp_drhodx(:), dot_exp_drhody(:), dot_exp_drhodz(:)
   real(wp),       allocatable, save :: erfa(:,:), expa(:,:)
   real(wp),       allocatable, save :: derfa_x(:,:), derfa_y(:,:), derfa_z(:,:)
@@ -56,14 +50,34 @@ module at_experiments_mod
   real(wp),       allocatable, save :: dot_sim_drhodx(:), dot_sim_drhody(:), dot_sim_drhodz(:)
   real(wp),       allocatable, save :: emfit_force(:,:)
 
-  ! subroutines
-  public  :: show_ctrl_experiments
-  public  :: read_ctrl_experiments
-  public  :: setup_experiments
-  private :: setup_experiments_emfit
-  public  :: compute_energy_experimental_restraint
-  private :: compute_energy_experimental_restraint_emfit
+  real(wp),       allocatable, save :: exp_image(:,:) ! input exp image
+  real(wp),       allocatable, save :: sim_image(:,:) ! input exp image
 
+  real(wp),       			   save :: emfit_roll_ang, emfit_tilt_ang, emfit_yaw_ang,emfit_shift_x, emfit_shift_y
+  character(MaxFilename),      save :: emfit_exp_image,emfit_target_pdb
+  character(MaxFilename),      save :: emfit_mode, emfit_image_type, emfit_im_gen_mode
+  integer,       			   save :: image_size, emfit_image_size
+  logical, 					   save :: image_out
+  real(wp),       			   save :: emfit_pixel_size, pixel_size
+  logical, 					   save :: optimizer_mode, EMfit_image_mode
+  real*4, dimension(256),	   save :: file_header
+  real(wp),       			   save :: gradient_optimizer, image_gen_optimizer 
+  character(MaxFilename),      save :: MPI_mode
+  !define for image emfit
+  real(wp),       allocatable, save :: I_sim(:,:), I_exp(:,:)
+  ! subroutines
+  public  	:: show_ctrl_experiments
+  public  	:: read_ctrl_experiments
+  public  	:: setup_experiments
+  private 	:: setup_experiments_emfit
+  public  	:: compute_energy_experimental_restraint
+  private 	:: compute_energy_experimental_restraint_emfit_with_image
+  public  	:: Euler_angle2Matrix
+  public  	:: Euler_angle2Matrix_Inv
+  public	:: writeSPIDER
+  public 	:: readSPIDER
+  public	:: readSPIDERheader
+  public	:: creatSpiderHeader
 contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -92,7 +106,7 @@ contains
         write(MsgOut,'(A)') '[EXPERIMENTS]'
         write(MsgOut,'(A)') 'emfit           = NO          # EM fit'
         write(MsgOut,'(A)') '# emfit_target    = sample.sit  # EM data file'
-        write(MsgOut,'(A)') '# emfit_sigma     = 2.5         # resolution parameter of the simulated map'
+        write(MsgOut,'(A)') '# emfit_sigma     = 2.0         # resolution parameter of the simulated map'
         write(MsgOut,'(A)') '# emfit_tolerance = 0.001       # Tolerance for error'
         write(MsgOut,'(A)') '# emfit_period    = 1           # emfit force update period'
         write(MsgOut,'(A)') ''
@@ -129,13 +143,11 @@ contains
 
     ! read parameters from control file
     ! 
+	emfit_exp_image    = ''
     call begin_ctrlfile_section(handle, Section)
 
     call read_ctrlfile_logical(handle, Section, 'emfit',           &
                                exp_info%emfit)
-
-    call read_ctrlfile_string (handle, Section, 'emfit_target',    &
-                              exp_info%emfit_target)
 
     call read_ctrlfile_real   (handle, Section, 'emfit_sigma',     &
                               exp_info%emfit_sigma)
@@ -146,8 +158,31 @@ contains
     call read_ctrlfile_integer(handle, Section, 'emfit_period',    &
                               exp_info%emfit_period)
 
-    call end_ctrlfile_section(handle)
+    call read_ctrlfile_string (handle, Section, 'emfit_exp_image',    &
+                              emfit_exp_image)
 
+	call read_ctrlfile_real   (handle, Section, 'emfit_roll_angle', &
+                              emfit_roll_ang)
+
+	call read_ctrlfile_real   (handle, Section, 'emfit_tilt_angle', &
+                              emfit_tilt_ang)
+
+	call read_ctrlfile_real   (handle, Section, 'emfit_yaw_angle',	&
+                              emfit_yaw_ang)
+
+	call read_ctrlfile_real   (handle, Section, 'emfit_shift_x',	&
+								emfit_shift_x)
+
+	call read_ctrlfile_real   (handle, Section, 'emfit_shift_y',	&
+								emfit_shift_y)
+
+    call read_ctrlfile_integer(handle, Section, 'emfit_image_size',		&
+                              emfit_image_size)
+
+	call read_ctrlfile_real(handle, Section, 'emfit_pixel_size',		&
+				emfit_pixel_size)
+
+    call end_ctrlfile_section(handle)
 
     ! write parameters to MsgOut
     !
@@ -156,22 +191,29 @@ contains
       if (exp_info%emfit) then
 
         write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
-        write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
         write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
               '  emfit_sigma     = ', exp_info%emfit_sigma,        &
               '  emfit_tolerance = ', exp_info%emfit_tolerance
         write(MsgOut,'(a20,I10)')                                  &
               '  emfit_period    = ', exp_info%emfit_period
+		write(MsgOut,'(a20,F10.4)')                      		   &
+              '  emfit_roll_angle     = ', emfit_roll_ang 
+		write(MsgOut,'(a20,F10.4)')                      		   &
+              '  emfit_tilt_angle     = ', emfit_tilt_ang 
+		write(MsgOut,'(a20,F10.4)')                      		   &
+              '  emfit_yaw_angle     = ', emfit_yaw_ang
+		write(MsgOut,'(a20,I10)')                                  &
+              '  image_size    = ', emfit_image_size       			   
         write(MsgOut,'(a)') ''
 
       end if
 
     end if
-
+	
     return
 
   end subroutine read_ctrl_experiments
-
+  
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Function      setup_experiments
@@ -209,6 +251,8 @@ contains
 
       experiments%do_emfit = .true.
       call setup_experiments_emfit(exp_info, molecule)
+	
+	  EMfit_image_mode = .true.
 
     end if
 
@@ -229,117 +273,72 @@ contains
   subroutine setup_experiments_emfit(exp_info, molecule)
 
     ! formal arguments
-    type(s_exp_info),        intent(in)    :: exp_info
-    type(s_molecule),        intent(in)    :: molecule
+    type(s_exp_info),        intent(in)    	:: exp_info
+    type(s_molecule),        intent(in)    	:: molecule
 
     ! local variables
-    type(s_sit)             :: sit
-    integer                 :: i, j, k, n(3), max_nxyz
-    real(wp)                :: pi, r, y
+    type(s_sit)                 			:: sit
+    type(s_image)               			:: image_exp ! Alex
+    integer                     			:: i, j, k, n(3), max_nxyz, num_atoms
+    real(wp)                    			:: pi, r, y, sum1
+    real(wp)                   				:: A1(4,4)
+    real(wp),dimension(:,:),allocatable		:: coord_pdb
+    real(wp),dimension(:,:),allocatable		:: tmp_img
+    integer                     			:: size_at
+    integer                    				:: close_status
 
+    !read image and storge in the experiment Alex
+    ! image generation variables
+    !integer                     			:: image_size_image
+    character(MaxFilename)           		:: filename1_pdb
+    type(s_pdb)             				:: pdb1
+    integer									:: alloc_stat1
+	
+    !spider image read and write parameters
+    integer 								:: cmd_status
+    character(128) 							:: cmd_msg
+    character(128) 							:: command0
+    logical 								:: file_exists
 
-    ! read sitfile
-    !
-    call input_sit(exp_info%emfit_target, sit)
+    !###########***initialization of fitting with 2D image***##########
+	! clean all the previous temporary files
+    call execute_command_line('rm -f run.*') 	!this line is to remove the result of the previous experiment
+ 	call execute_command_line('rm -f images/sim/* images/exp/* images/dif/*') 	!image generate by the previous run will be deleted
+    !image_size = 128 						! xmipp value for this parameter is 84
+	
+	!initialization of INP parameters
+	image_out		 	= .FALSE.					!TRUE will allow to write experimental and simulated image in a folder
+	pixel_size 	=emfit_pixel_size
+	image_size = emfit_image_size
 
-    ! allocate array
-    !
-    n(1) = sit%nx
-    n(2) = sit%ny
-    n(3) = sit%nz
-    max_nxyz = maxval(n)
-    call alloc_experiments(experiments, ExperimentsEmfit, &
-                           sit%nx, sit%ny, sit%nz,        &
-                           molecule%num_atoms, max_nxyz)
-
-    experiments%emfit%sigma        = exp_info%emfit_sigma
+	experiments%emfit%sigma        = exp_info%emfit_sigma
     experiments%emfit%tolerance    = exp_info%emfit_tolerance
     experiments%emfit%emfit_period = exp_info%emfit_period
 
-    experiments%emfit%target_map(:,:,:) = sit%map_data(:,:,:)
-    experiments%emfit%nx = sit%nx
-    experiments%emfit%ny = sit%ny
-    experiments%emfit%nz = sit%nz
-    experiments%emfit%x0 = sit%x0
-    experiments%emfit%y0 = sit%y0
-    experiments%emfit%z0 = sit%z0
-    experiments%emfit%dx = sit%dx
-    experiments%emfit%dy = sit%dy
-    experiments%emfit%dz = sit%dz
 
-    ! need to calculate norm for force calculation
-    !
-    experiments%emfit%norm_exp = 0.0_wp
-    do i = 0, sit%nx - 1
-      do j = 0, sit%ny - 1
-        do k = 0, sit%nz - 1
-          experiments%emfit%norm_exp = experiments%emfit%norm_exp &
-                                     + experiments%emfit%target_map(i,j,k)**2
-        end do
-      end do
-    end do
-    experiments%emfit%norm_exp = sqrt(experiments%emfit%norm_exp)
+    allocate(exp_image(image_size,image_size))
+    allocate(sim_image(image_size,image_size))
+    allocate(tmp_img(image_size,image_size))
 
-    ! boundary of voxel i is [bound_x(i) bound_x(i+1)]
-    ! voxel from (0,0,0) to (nx-1, ny-1, nz-1)
-    !
-    do i = 0, sit%nx
-      experiments%emfit%bound_x(i) = sit%x0 + sit%dx * (dble(i) - 0.5_wp)
-    end do
-    do i = 0, sit%ny
-      experiments%emfit%bound_y(i) = sit%y0 + sit%dy * (dble(i) - 0.5_wp)
-    end do
-    do i = 0, sit%nz
-      experiments%emfit%bound_z(i) = sit%z0 + sit%dz * (dble(i) - 0.5_wp)
-    end do
+	call readSPIDER(emfit_exp_image, tmp_img)
+	print*, "READING IS OK "
 
-    ! determine_cutoff
-    !
-    pi = acos(-1.0_wp)
-    r  = 0.0_wp
-    y  = 0.0_wp
+	! print*, "/////////////////////////////////////////////////////////////////////////////////////////"
+	! do i=1, image_size
+	! 	do j=1, image_size
+	! 		exp_image(i,j) = tmp_img(image_size-i +1, image_size-j+1)
+	! 	end do
+	! end do
 
-    do while (1.0_wp - y > exp_info%emfit_tolerance)
-      y = erf(sqrt(3.0_wp/2.0_wp)*r) - sqrt(6.0_wp/pi)*r*exp(-3.0_wp*r*r/2.0_wp)
-      r = r + 0.01_wp
-    end do
+	exp_image=tmp_img
 
-    experiments%emfit%n_grid_cut_x = ceiling(r*exp_info%emfit_sigma/sit%dx)
-    experiments%emfit%n_grid_cut_y = ceiling(r*exp_info%emfit_sigma/sit%dy)
-    experiments%emfit%n_grid_cut_z = ceiling(r*exp_info%emfit_sigma/sit%dz)
+	open (unit=66, file="img.txt")
+	write(66,*) exp_image
+	close(66)
 
-    call dealloc_sit(sit)
 
-    ! for MPI parallelization
-    !
-    allocate(icount(nproc_city))
-    allocate(ig_min_local(nproc_city,3))
-    allocate(ig_max_local(nproc_city,3))
-    allocate(domain_index(molecule%num_atoms))
-    allocate(num_atoms_local(nproc_city))
-
-    ! force update
-    !
-    allocate(list_local (  molecule%num_atoms))
     allocate(emfit_force(3,molecule%num_atoms))
-    emfit_icycle = -1
-
-    ! write summary
-    !
-    if (main_rank) then
-      write(MsgOut,'(A)') 'Setup_Experiments_Emfit> Setup variables for EMFIT'
-      write(MsgOut,'(A20,F10.3)') '  radius/sigma    = ', r
-      write(MsgOut,'(A20,F10.3)') '  radius          = ', r*experiments%emfit%sigma
-      write(MsgOut,'(A20,F10.3)') '  dx              = ', experiments%emfit%dx
-      write(MsgOut,'(A20,F10.3)') '  dy              = ', experiments%emfit%dy
-      write(MsgOut,'(A20,F10.3)') '  dz              = ', experiments%emfit%dz
-      write(MsgOut,'(A,I10)') '  adjacent grids to calculate density along x = ', &
-                              experiments%emfit%n_grid_cut_x
-      write(MsgOut,'(A,I10)') '  adjacent grids to calculate density along y = ', &
-                              experiments%emfit%n_grid_cut_y
-      write(MsgOut,'(A,I10)') '  adjacent grids to calculate density along z = ', &
-                              experiments%emfit%n_grid_cut_z
-    end if
+	deallocate(tmp_img)
 
     return
 
@@ -373,11 +372,21 @@ contains
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eexp
     real(wp),                intent(inout) :: cv
-
-    if (experiments%do_emfit) then
-      call compute_energy_experimental_restraint_emfit &
+    
+    logical                                :: control_para
+	if(EMfit_image_mode) then
+    	control_para = .TRUE. !.TRUE. is used to perfom MDfit by images
+	else
+		control_para = .FALSE.
+	endif
+    if (experiments%do_emfit .and. control_para) then
+		call compute_energy_experimental_restraint_emfit_with_image &
              (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
-    end if
+    else
+		write(*,*)"this GENESIS package allows to run EMfit with image"
+		write(*,*)"set parameter emfit to YES and re-run the program"
+		stop
+    endif
 
     return
 
@@ -385,10 +394,10 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    compute_energy_experimental_restraint_emfit
-  !> @brief        calculate restraint energy from experimental data
-  !! @authors      OM, TM
-  !! @param[in]    enefunc : potential energy functions information
+  !  Subroutine    compute_energy_experimental_restraint_emfit_with_image
+  !> @brief        calculate restraint energy from experimental data, the data includes two set of images
+  !! @authors      Rémi Vuillemot
+  !! @param[in]    enefunc : potential energy functions information: this potential engergy function is extracted from CHARMM forcefield
   !! @param[in]    coord   : coordinates of target systems
   !! @param[in]    inum    : pointer for restraint function
   !! @param[in]    const   : force constants
@@ -399,559 +408,561 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine compute_energy_experimental_restraint_emfit(enefunc, coord, inum, &
-                                     calc_force, force, virial, e_emfit, cv)
-
-    ! formal arguments
-    type(s_enefunc), target, intent(inout) :: enefunc
-    real(wp),                intent(in)    :: coord(:,:)
-    integer,                 intent(in)    :: inum
-    logical,                 intent(in)    :: calc_force
-    real(wp),                intent(inout) :: force(:,:)
-    real(wp),                intent(inout) :: virial(3,3)
-    real(wp),                intent(inout) :: e_emfit
-    real(wp),                intent(inout) :: cv
-
-    ! local variables
-    integer           :: i, j, k, n, m, natom, group_id, ifound
-    integer           :: alloc_size, i1, j1, k1
-    integer           :: igx_min, igy_min, igz_min, igx_max, igy_max, igz_max
-    integer           :: sum_ig, ave_ig
-    integer           :: idomain, axis_length(3), iaxis
-    integer           :: itmp1, itmp2, icount1
-    integer           :: id, omp_get_thread_num
-    integer           :: max_natom_local
-    real(wp)          :: yzfactor, zfactor, max_length
-    real(wp)          :: drho_dx, drho_dy, drho_dz, before_allreduce(2), after_allreduce(2)
-    real(wp)          :: dcc_dx, dcc_dy, dcc_dz
-    real(wp)          :: norm_sim, dot_exp_sim
-    real(wp)          :: f, g, d, coeff_rho, coeff_drho
-    real(wp)          :: pi, vol, corrcoeff
-    real(wp)          :: dot_exp_drhodx_tmp, dot_exp_drhody_tmp, dot_exp_drhodz_tmp
-    real(wp)          :: dot_sim_drhodx_tmp, dot_sim_drhody_tmp, dot_sim_drhodz_tmp
-    real(wp)          :: emfit_force_norm, weight
-    real(wp)          :: inv_dx, inv_dy, inv_dz
-    real(wp)          :: fact1, fact2, fact3
-    logical           :: do_allocate
-    integer,  pointer :: nx, ny, nz
-    integer,  pointer :: n_grid_cut_x, n_grid_cut_y, n_grid_cut_z
-    integer,  pointer :: ig(:,:)
-    integer,  pointer :: numatoms(:), atom_id(:,:)
-    real(wp), pointer :: norm_exp            ! is calculated in setup_emfit just once
-    real(wp), pointer :: sigma
-    real(wp), pointer :: simulated_map(:,:,:), target_map(:,:,:)
-    real(wp), pointer :: bound_x(:), bound_y(:), bound_z(:)
-
-
-!    call timer(TimerEmfit, TimerOn)
-
-    sigma          => experiments%emfit%sigma
-    nx             => experiments%emfit%nx
-    ny             => experiments%emfit%ny
-    nz             => experiments%emfit%nz
-    ig             => experiments%emfit%ig
-    bound_x        => experiments%emfit%bound_x
-    bound_y        => experiments%emfit%bound_y
-    bound_z        => experiments%emfit%bound_z
-    norm_exp       => experiments%emfit%norm_exp
-    simulated_map  => experiments%emfit%simulated_map
-    target_map     => experiments%emfit%target_map
-    n_grid_cut_x   => experiments%emfit%n_grid_cut_x
-    n_grid_cut_y   => experiments%emfit%n_grid_cut_y
-    n_grid_cut_z   => experiments%emfit%n_grid_cut_z
-    inv_dx         =  1.0_wp/experiments%emfit%dx
-    inv_dy         =  1.0_wp/experiments%emfit%dy
-    inv_dz         =  1.0_wp/experiments%emfit%dz
-
-    numatoms       => enefunc%restraint_numatoms
-    atom_id        => enefunc%restraint_atomlist
-    group_id       =  enefunc%restraint_grouplist(1,inum)
-    weight         =  enefunc%restraint_const(1,inum)
-
-    natom = numatoms(group_id)
-    pi    = acos(-1.0_wp)
-    vol   = experiments%emfit%dx * experiments%emfit%dy * experiments%emfit%dz
-
-
-    ! perform emfit or not
-    !
-    emfit_icycle = emfit_icycle + 1
-    if (experiments%emfit%emfit_period /= 0) then
-      if (mod(emfit_icycle,experiments%emfit%emfit_period) /= 0) then
-        do m = 1, natom_local
-          n = list_local(m)
-          force(1:3,n) = force(1:3,n) + emfit_force(1:3,n)
-        end do
-        corrcoeff = corrcoeff_save
-        experiments%emfit%corrcoeff = corrcoeff
-        e_emfit = weight * (1.0_wp - corrcoeff)
-        cv = corrcoeff
-        return
-      end if
-    else
-      return
-    end if
-
-    ! coefficient for drho/d[xyz]
-    coeff_drho = - sigma**2 * pi / 6.0_wp / vol
-
-    ! coefficient for rho
-    !   - sign is missing in drho/dq equstions of BJ 2012
-    coeff_rho = (sigma**2 * pi / 6.0_wp)**(3.0_wp/2.0_wp) / vol
-
-    ! calculate which grid each atom is in
-    ! and the range of the grid used for calculation
-    !
-    igx_min = nx
-    igy_min = ny
-    igz_min = nz
-    igx_max = 0
-    igy_max = 0
-    igz_max = 0
-
-    !$omp parallel do                            &
-    !$omp private(m, n)                          &
-    !$omp reduction(max:igx_max,igy_max,igz_max) &
-    !$omp reduction(min:igx_min,igy_min,igz_min)
-    !
-    do m = 1, natom
-
-      ! calculate the index of the grid that each atom is located
-      !
-      n = atom_id(m,group_id)
-
-      ig(1,n) = int((coord(1,n) - experiments%emfit%x0)*inv_dx + 0.5_wp)
-      ig(2,n) = int((coord(2,n) - experiments%emfit%y0)*inv_dy + 0.5_wp)
-      ig(3,n) = int((coord(3,n) - experiments%emfit%z0)*inv_dz + 0.5_wp)
-
-      if (ig(1,n) > igx_max) igx_max = ig(1,n)
-      if (ig(2,n) > igy_max) igy_max = ig(2,n)
-      if (ig(3,n) > igz_max) igz_max = ig(3,n)
-
-      if (ig(1,n) < igx_min) igx_min = ig(1,n)
-      if (ig(2,n) < igy_min) igy_min = ig(2,n)
-      if (ig(3,n) < igz_min) igz_min = ig(3,n)
-
-      ! check if the calculation (grids around the atom) doesn't go outside the box
-      ! comparison like igx(n) + n_grid_cut_x >= nx doesn't work for integer
-      ! overflow, when igx is max integer
-      !
-      if (ig(1,n) < n_grid_cut_x .or. ig(1,n) >= nx - n_grid_cut_x .or. &
-          ig(2,n) < n_grid_cut_y .or. ig(2,n) >= ny - n_grid_cut_y .or. &
-          ig(3,n) < n_grid_cut_z .or. ig(3,n) >= nz - n_grid_cut_z ) then
-
-        write(MsgOut,'(A,I10)') 'Gaussian kernes is extending outside the map box for atom ', n
-        write(MsgOut,'(A,3F12.3)') 'Coordinate: ', coord(1,n), coord(2,n), coord(3,n)
-        write(MsgOut,*) 'grid index igx(n), igy(n), igz(n): ', ig(1,n), ig(2,n), ig(3,n)
-        write(MsgOut,*) 'grid index range, xmin(n), xmax(n), ymin(n), ymax(n), zmin(n), zmax(n) ', &
-          int(ig(1,n),8)-n_grid_cut_x, int(ig(1,n),8)+n_grid_cut_x, int(ig(2,n),8)-n_grid_cut_y,   &
-          int(ig(2,n),8)+n_grid_cut_y, int(ig(3,n),8)-n_grid_cut_z, int(ig(3,n),8)+n_grid_cut_z
-
-        call error_msg('Compute_Energy_Experimental_Restraint_Emfit> Gaussian kernel is extending outside the map box (see "Chapter: Trouble shooting" in the user manual)')
-
-      end if
-
-    end do
-    !$omp end parallel do
-
-
-    ! min/max grid index that needs to be calculated for the whole system
-    !
-    igx_min = igx_min - n_grid_cut_x
-    igy_min = igy_min - n_grid_cut_y
-    igz_min = igz_min - n_grid_cut_z
-    igx_max = igx_max + n_grid_cut_x
-    igy_max = igy_max + n_grid_cut_y
-    igz_max = igz_max + n_grid_cut_z
-
-
-    ! make partitions for domain decomposition
-    !
-    icount(1)         = natom
-    domain_index(:)   = 1
-    ig_max_local(1,1) = igx_max
-    ig_max_local(1,2) = igy_max
-    ig_max_local(1,3) = igz_max
-    ig_min_local(1,1) = igx_min
-    ig_min_local(1,2) = igy_min
-    ig_min_local(1,3) = igz_min
-
-    do i = 1, nproc_city - 1
-
-      ! select one domain which constains largest number of particle
-      !
-      idomain = maxloc(icount(1:i),dim=1)
-
-      ! select partitioning axis (longest axis in the domain)
-      !
-      ig_min_local(i+1,1:3)  = ig_min_local(idomain,1:3)
-      ig_max_local(i+1,1:3)  = ig_max_local(idomain,1:3)
-
-      axis_length(1:3) = ig_max_local(idomain,1:3) - ig_min_local(idomain,1:3)
-      iaxis = maxloc(axis_length(1:3),dim=1)
-
-      ! calculate the averaged coordinates of particles in the selected axis
-      ! and make partition in the selected axis
-      !
-      sum_ig = 0
-
-      !$omp parallel do   &
-      !$omp private(m, n) &
-      !$omp reduction(+:sum_ig)
-      !
-      do m = 1, natom
-        n = atom_id(m,group_id)
-        if (domain_index(n) == idomain) then
-          sum_ig = sum_ig + ig(iaxis,n)
-        end if
-      end do
-      !$omp end parallel do
-
-      ave_ig = aint(sum_ig/dble(icount(idomain)))
-      ig_max_local(idomain,iaxis) = ave_ig
-      ig_min_local(i + 1,  iaxis) = ave_ig + 1
-
-      ! update domain assignment information
-      !
-      icount1 = 0
-
-      !$omp parallel do          &
-      !$omp private (m, n)       &
-      !$omp reduction(+:icount1)
-      !
-      do m = 1, natom
-        n = atom_id(m,group_id)
-        if (domain_index(n) == idomain) then
-          if (ave_ig < ig(iaxis,n)) then
-            domain_index(n) = i + 1
-            icount1 = icount1 + 1
-          end if
-        end if
-      end do
-      !$omp end parallel do
-
-      icount(i+1)     = icount1
-      icount(idomain) = icount(idomain) - icount(i+1)
-
-    end do
-
-    igx_max = ig_max_local(my_city_rank+1,1)
-    igy_max = ig_max_local(my_city_rank+1,2)
-    igz_max = ig_max_local(my_city_rank+1,3)
-    igx_min = ig_min_local(my_city_rank+1,1)
-    igy_min = ig_min_local(my_city_rank+1,2)
-    igz_min = ig_min_local(my_city_rank+1,3)
-
-
-    ! make atom list in my domain
-    !
-    ifound = 0
-    do m = 1, natom
-      n = atom_id(m,group_id)
-      if (ig(1,n) < igx_min - n_grid_cut_x) cycle
-      if (ig(1,n) > igx_max + n_grid_cut_x) cycle
-      if (ig(2,n) < igy_min - n_grid_cut_y) cycle
-      if (ig(2,n) > igy_max + n_grid_cut_y) cycle
-      if (ig(3,n) < igz_min - n_grid_cut_z) cycle
-      if (ig(3,n) > igz_max + n_grid_cut_z) cycle
-      ifound = ifound + 1
-      list_local(ifound) = n
-    end do
-    natom_local = ifound
-
-!    call timer(TimerEmfit, TimerOff)
-
-    ! MPI allgather ifound
-    !
-#ifdef MPI
-    call mpi_allgather(ifound,          1, mpi_integer, &
-                       num_atoms_local, 1, mpi_integer, mpi_comm_city, ierror)
-#endif
-    max_natom_local = maxval(num_atoms_local(:))
-
-
-!    call timer(TimerEmfit, TimerOn)
-
-    ! allocate memory by ifound
-    !
-    if (allocated(dot_exp_drhodx)) then
-      do_allocate = .false.
-      if (max_natom_local > size(dot_exp_drhodx(:))) then
-        do_allocate = .true.
-        deallocate(dot_exp_drhodx, dot_exp_drhody, dot_exp_drhodz, &
-                   dot_sim_drhodx, dot_sim_drhody, dot_sim_drhodz, &
-                   ig_upper, ig_lower, erfa, expa,                 &
-                   derfa_x, derfa_y, derfa_z, dexpa_x, dexpa_y, dexpa_z)
-      end if
-    else
-      do_allocate = .true.
-    end if
-
-    if (do_allocate) then
-      alloc_size = int(1.05_wp*max_natom_local)
-      allocate(dot_exp_drhodx(    1:alloc_size))
-      allocate(dot_exp_drhody(    1:alloc_size))
-      allocate(dot_exp_drhodz(    1:alloc_size))
-      allocate(dot_sim_drhodx(    1:alloc_size))
-      allocate(dot_sim_drhody(    1:alloc_size))
-      allocate(dot_sim_drhodz(    1:alloc_size))
-      allocate(ig_upper      (1:3,1:alloc_size))
-      allocate(ig_lower      (1:3,1:alloc_size))
-      allocate(erfa    (-n_grid_cut_x:n_grid_cut_x+1,1:alloc_size))
-      allocate(expa    (-n_grid_cut_x:n_grid_cut_x+1,1:alloc_size))
-      allocate(derfa_x (-n_grid_cut_x:n_grid_cut_x+1,1:alloc_size))
-      allocate(derfa_y (-n_grid_cut_y:n_grid_cut_y+1,1:alloc_size))
-      allocate(derfa_z (-n_grid_cut_z:n_grid_cut_z+1,1:alloc_size))
-      allocate(dexpa_x (-n_grid_cut_x:n_grid_cut_x+1,1:alloc_size))
-      allocate(dexpa_y (-n_grid_cut_y:n_grid_cut_y+1,1:alloc_size))
-      allocate(dexpa_z (-n_grid_cut_z:n_grid_cut_z+1,1:alloc_size))
-    end if
-
-
-    !$omp parallel do     &
-    !$omp private (m, n)
-    !
-    do m = 1, ifound
-      n = list_local(m)
-      ig_lower(1,m) = ig(1,n) - n_grid_cut_x
-      ig_lower(2,m) = ig(2,n) - n_grid_cut_y
-      ig_lower(3,m) = ig(3,n) - n_grid_cut_z
-      ig_upper(1,m) = ig(1,n) + n_grid_cut_x
-      ig_upper(2,m) = ig(2,n) + n_grid_cut_y
-      ig_upper(3,m) = ig(3,n) + n_grid_cut_z
-
-      if (igx_max < ig_upper(1,m)) ig_upper(1,m) = igx_max
-      if (igy_max < ig_upper(2,m)) ig_upper(2,m) = igy_max
-      if (igz_max < ig_upper(3,m)) ig_upper(3,m) = igz_max
-      if (igx_min > ig_lower(1,m)) ig_lower(1,m) = igx_min
-      if (igy_min > ig_lower(2,m)) ig_lower(2,m) = igy_min
-      if (igz_min > ig_lower(3,m)) ig_lower(3,m) = igz_min
-    end do
-    !$omp end parallel do
-
-
-    ! calculate error and exp functions and differences for integral and save
-    ! only for the grid within the cutoff
-    !   f: coefficient for x for erf calculation
-    !   g: coefficient for y for exp calculation
-    !
-    f = sqrt(3.0_wp / (2.0_wp * sigma**2))
-    g = -3.0_wp / (2.0_wp * sigma**2)
-
-    !$omp parallel do         &
-    !$omp private(j, m, n, d)
-    !
-    do m = 1, ifound
-
-      n = list_local(m)
-
-      do j = -n_grid_cut_x, n_grid_cut_x+1
-        d = bound_x(ig(1,n)+j) - coord(1,n)
-        erfa(j,m) = erf(f*d)
-        expa(j,m) = exp(g*d*d)
-      end do
-      do j = -n_grid_cut_x, n_grid_cut_x
-        derfa_x(j,m) = erfa(j+1,m) - erfa(j,m)
-        dexpa_x(j,m) = expa(j+1,m) - expa(j,m)
-      end do
-
-      do j = -n_grid_cut_y, n_grid_cut_y+1
-        d = bound_y(ig(2,n)+j) - coord(2,n)
-        erfa(j,m) = erf(f*d)
-        expa(j,m) = exp(g*d*d)
-      end do
-      do j = -n_grid_cut_y, n_grid_cut_y
-        derfa_y(j,m) = erfa(j+1,m) - erfa(j,m)
-        dexpa_y(j,m) = expa(j+1,m) - expa(j,m)
-      end do
-
-      do j = -n_grid_cut_z, n_grid_cut_z+1
-        d = bound_z(ig(3,n)+j) - coord(3,n)
-        erfa(j,m) = erf(f*d)
-        expa(j,m) = exp(g*d*d)
-      end do
-      do j = -n_grid_cut_z, n_grid_cut_z
-        derfa_z(j,m) = erfa(j+1,m) - erfa(j,m)
-        dexpa_z(j,m) = expa(j+1,m) - expa(j,m)
-      end do
-
-    end do
-    !$omp end parallel do
-
-
-    ! calculate simulated density map
-    !
-    simulated_map(igx_min:igx_max, igy_min:igy_max, igz_min:igz_max) = 0.0_wp
-
-    !$omp parallel &
-    !$omp private(id, m, n, k, j, i, zfactor, yzfactor, i1, j1, k1)
-#ifdef OMP
-    id = omp_get_thread_num()
-#else
-    id = 0
-#endif
-    do m = 1, ifound
-      n = list_local(m)
-      do k = id+ig_lower(3,m), ig_upper(3,m), nthread
-        k1 = k - ig(3,n)
-        zfactor = coeff_rho*derfa_z(k1,m)
-        do j = ig_lower(2,m), ig_upper(2,m)
-          j1 = j - ig(2,n)
-          yzfactor = derfa_y(j1,m)*zfactor
-          do i = ig_lower(1,m), ig_upper(1,m)
-            i1 = i - ig(1,n)
-            simulated_map(i,j,k) = simulated_map(i,j,k) + derfa_x(i1,m)*yzfactor
-          end do
-        end do
-      end do
-      !$omp barrier
-    end do
-    !$omp end parallel
-
-
-    ! calculate two nominators for each atom first
-    !
-    dot_exp_drhodx(:) = 0.0_wp
-    dot_exp_drhody(:) = 0.0_wp
-    dot_exp_drhodz(:) = 0.0_wp
-
-    dot_sim_drhodx(:) = 0.0_wp
-    dot_sim_drhody(:) = 0.0_wp
-    dot_sim_drhodz(:) = 0.0_wp
-
-    !$omp parallel do schedule (dynamic)                                         &
-    !$omp private(i, j, k, m, n, drho_dx, drho_dy, drho_dz, fact1, fact2, fact3, &
-    !$omp         dot_exp_drhodx_tmp, dot_exp_drhody_tmp, dot_exp_drhodz_tmp,    &
-    !$omp         dot_sim_drhodx_tmp, dot_sim_drhody_tmp, dot_sim_drhodz_tmp,    &
-    !$omp         i1, j1, k1)
-    !
-    do m = 1, ifound
-
-      n = list_local(m)
-
-      dot_exp_drhodx_tmp = 0.0_wp
-      dot_exp_drhody_tmp = 0.0_wp
-      dot_exp_drhodz_tmp = 0.0_wp
-
-      dot_sim_drhodx_tmp = 0.0_wp
-      dot_sim_drhody_tmp = 0.0_wp
-      dot_sim_drhodz_tmp = 0.0_wp
-
-      do k = ig_lower(3,m), ig_upper(3,m)
-        k1 = k - ig(3,n)
-        do j = ig_lower(2,m), ig_upper(2,m)
-          j1 = j - ig(2,n)
-
-          fact1 = derfa_y(j1,m) * derfa_z(k1,m)
-          fact2 = dexpa_y(j1,m) * derfa_z(k1,m)
-          fact3 = dexpa_z(k1,m) * derfa_y(j1,m)
-
-          do i = ig_lower(1,m), ig_upper(1,m)
-            i1 = i - ig(1,n)
-
-            drho_dx = dexpa_x(i1,m) * fact1
-            drho_dy = derfa_x(i1,m) * fact2
-            drho_dz = derfa_x(i1,m) * fact3
-
-            dot_exp_drhodx_tmp = dot_exp_drhodx_tmp + target_map(i,j,k) * drho_dx
-            dot_exp_drhody_tmp = dot_exp_drhody_tmp + target_map(i,j,k) * drho_dy
-            dot_exp_drhodz_tmp = dot_exp_drhodz_tmp + target_map(i,j,k) * drho_dz
-
-            dot_sim_drhodx_tmp = dot_sim_drhodx_tmp + simulated_map(i,j,k) * drho_dx
-            dot_sim_drhody_tmp = dot_sim_drhody_tmp + simulated_map(i,j,k) * drho_dy
-            dot_sim_drhodz_tmp = dot_sim_drhodz_tmp + simulated_map(i,j,k) * drho_dz
-
-          end do
-        end do
-      end do
-
-      dot_exp_drhodx(m) = dot_exp_drhodx_tmp * coeff_drho
-      dot_exp_drhody(m) = dot_exp_drhody_tmp * coeff_drho
-      dot_exp_drhodz(m) = dot_exp_drhodz_tmp * coeff_drho
-
-      dot_sim_drhodx(m) = dot_sim_drhodx_tmp * coeff_drho
-      dot_sim_drhody(m) = dot_sim_drhody_tmp * coeff_drho
-      dot_sim_drhodz(m) = dot_sim_drhodz_tmp * coeff_drho
-
-    end do
-    !$omp end parallel do
-
-
-    norm_sim = 0.0_wp
-    dot_exp_sim = 0.0_wp
-
-    !$omp parallel do                                    &
-    !$omp private(i, j, k)                               &
-    !$omp reduction(+:norm_sim) reduction(+:dot_exp_sim)
-    !
-    do k = igz_min, igz_max
-      do j = igy_min, igy_max
-        do i = igx_min, igx_max
-          norm_sim = norm_sim + simulated_map(i,j,k)**2
-          dot_exp_sim = dot_exp_sim + target_map(i,j,k) * simulated_map(i,j,k)
-        end do
-      end do
-    end do
-    !$omp end parallel do
-
-!    call timer(TimerEmfit, TimerOff)
-
-#ifdef MPI
-    before_allreduce(1) = norm_sim
-    before_allreduce(2) = dot_exp_sim
-
-    call mpi_allreduce(before_allreduce, after_allreduce, 2,  &
-                       mpi_wp_real,  mpi_sum,                 &
-                       mpi_comm_city, ierror)
-
-    norm_sim    = after_allreduce(1)
-    dot_exp_sim = after_allreduce(2)
-#endif
-
-!    call timer(TimerEmfit, TimerOn)
-
-    norm_sim  = sqrt(norm_sim)
-    corrcoeff = dot_exp_sim / (norm_exp*norm_sim)
-    experiments%emfit%corrcoeff = corrcoeff
-    e_emfit = weight * (1.0_wp - corrcoeff)
-    cv = corrcoeff
-    corrcoeff_save = corrcoeff
-
-    if (calc_force) then
-
-      emfit_force(:,:) = 0.0_wp
-      fact1 = 1.0_wp / norm_exp
-      fact2 = 1.0_wp / norm_sim
-      fact3 = dot_exp_sim/norm_sim**3
-
-      ! edit remi
-      !$omp parallel do                           &
-      !$omp private(m, n, dcc_dx, dcc_dy, dcc_dz) &
-      !$omp reduction(+:force)
-      
-      do m = 1, ifound
-        n = list_local(m)
-
-        dcc_dx = fact1*(dot_exp_drhodx(m)*fact2 - dot_sim_drhodx(m)*fact3)
-        dcc_dy = fact1*(dot_exp_drhody(m)*fact2 - dot_sim_drhody(m)*fact3)
-        dcc_dz = fact1*(dot_exp_drhodz(m)*fact2 - dot_sim_drhodz(m)*fact3)
-
-        emfit_force(1,n) = weight*dcc_dx
-        emfit_force(2,n) = weight*dcc_dy
-        emfit_force(3,n) = weight*dcc_dz
-
-        force(1,n) = force(1,n) + emfit_force(1,n)
-        force(2,n) = force(2,n) + emfit_force(2,n)
-        force(3,n) = force(3,n) + emfit_force(3,n)
-      end do
-      !$omp end parallel do
-
-    end if
-
-!    call timer(TimerEmfit, TimerOff)
+  subroutine compute_energy_experimental_restraint_emfit_with_image(enefunc, coord, inum, &
+	calc_force, force, virial, eexp, cv)
+	! formal arguments
+	type(s_enefunc), target, intent(inout) 	:: enefunc
+	real(wp),                intent(in)    	:: coord(:,:)
+	integer,                 intent(in)    	:: inum
+	logical,                 intent(in)    	:: calc_force
+	real(wp),                intent(inout) 	:: force(:,:)
+	real(wp),                intent(inout) 	:: virial(3,3)
+	real(wp),                intent(inout) 	:: eexp
+	real(wp),                intent(inout) 	:: cv
+
+	integer                   :: i, j, a, n_atoms, n_pix, group_id, n, n_atoms_group, cutoff_pixel
+
+	real(wp) :: mu1,mu2, gaussian, sigma, norm, cutoff, threshold 	! Generate Image
+	real(wp) :: sum_sim2, sum_exp2, sum_simpexp, force_constant, dcc		! CC computation
+	real(wp) :: dpsim1, dpsim2,  dcc1, dcc2, const1, const2					! gradient computation
+    real(wp) :: rot_matrix(4,4),  inv_rot_matrix(4,4)
+	real(wp),dimension(:,:),allocatable	:: rot_coord
+	integer,dimension(:,:),allocatable	:: pixels
+	real(wp),dimension(:,:,:),allocatable	:: gaussians_saved
+
+	integer,  pointer ::numatoms(:), atom_id(:,:)
+
+	n_atoms = size(coord,2)
+	atom_id        => enefunc%restraint_atomlist
+	group_id       =  enefunc%restraint_grouplist(1,inum)
+	numatoms       => enefunc%restraint_numatoms
+	n_atoms_group = numatoms(group_id)
+
+
+	! ------------------------------------------------------------------------
+	! ALLOCATE
+	! ------------------------------------------------------------------------
+	allocate(rot_coord(3, n_atoms_group))
+	allocate(pixels(2, n_atoms_group))
+	allocate(gaussians_saved(image_size, image_size,n_atoms_group ))
+
+	! ------------------------------------------------------------------------
+	! ROTATE PDB
+	! ------------------------------------------------------------------------
+	call Euler_angle2Matrix(emfit_roll_ang, emfit_tilt_ang, emfit_yaw_ang, rot_matrix)
+	do a=1, n_atoms_group
+		n=  atom_id(a,group_id)
+		rot_coord(1:3,a)=matmul(rot_matrix(1:3,1:3),coord(1:3,n))
+		rot_coord(1,a) = rot_coord(1,a) - (emfit_shift_x * pixel_size)
+		rot_coord(2,a) = rot_coord(2,a) - (emfit_shift_y * pixel_size)
+	end do
+	inv_rot_matrix = transpose(rot_matrix)
+
+	
+	! ------------------------------------------------------------------------
+	! SELECT PIXELS TO INTEGRATE
+	! ------------------------------------------------------------------------
+	sigma = experiments%emfit%sigma
+
+	! distance in Angstrom where the gaussian is truncated
+	cutoff =  sqrt((-(2*(sigma**2))) * log(experiments%emfit%tolerance))  
+	cutoff_pixel = 	ceiling(cutoff/pixel_size)
+
+	! number of pixels considered per atom
+    n_pix = int(cutoff_pixel*2)  											
+
+    do a = 1, n_atoms_group
+        pixels(1,a) = 1+nint(rot_coord(1,a)/pixel_size + (image_size/2))-cutoff_pixel ! starting pixel
+        pixels(2,a) = 1+nint(rot_coord(2,a)/pixel_size + (image_size/2))-cutoff_pixel
+
+		! Check if the atom is extending outside the box
+		if (((pixels(1,a) <= 0) .or. (pixels(2,a) <= 0)) .or. &
+		 (((pixels(1,a)+n_pix) > image_size) .or. ((pixels(2,a)+n_pix) > image_size))) then
+		 write(MsgOut,'(A)') 'Gaussian kernel is extending outside the map box for atom '
+		 write(MsgOut,'(A,I10)') '   pix1 : ', pixels(1,a)
+		 write(MsgOut,'(A,I10)') '   pix2 : ', pixels(2,a)
+		 call error_msg('Gaussian kernel is extending outside the map box ')
+		endif
+	end do
+
+	! ------------------------------------------------------------------------
+	! GENERATE SIM IMAGE
+	! ------------------------------------------------------------------------
+
+	sim_image(:,:) = 0
+
+	!$omp parallel do default(none)                                 &
+	!$omp private(a,i,j , mu1, mu2, norm, gaussian)                   &
+	!$omp shared(pixels, n_pix,image_size, pixel_size, &
+	!$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id)
+	!
+
+	do a=1, n_atoms_group
+		do i=pixels(1,a), pixels(1,a) + n_pix
+			do j=pixels(2,a), pixels(2,a) + n_pix
+
+				mu1 = (i -1- (image_size / 2)) * pixel_size
+				mu2 = (j -1- (image_size / 2)) * pixel_size
+
+				norm = (rot_coord(1,a)-mu1)**2 + (rot_coord(2,a)-mu2)**2
+				gaussian = exp(-norm / (2 * (sigma ** 2)))
+				
+				sim_image(i,j) = sim_image(i,j) + gaussian
+
+				! save the gaussian to avoid computing them for the gradient
+				gaussians_saved(i,j,a) = gaussian    
+			end do
+		end do
+	end do
+
+	!$omp end parallel do
+
+	! ------------------------------------------------------------------------
+	! COMPUTE CC
+	! ------------------------------------------------------------------------
+
+	sum_sim2 = 0.0
+	sum_exp2 = 0.0
+	sum_simpexp = 0.0
+
+	do i=1, image_size
+		do j=1, image_size
+			sum_sim2 = sum_sim2 + sim_image(i,j) ** 2
+			sum_exp2 = sum_exp2 + exp_image(i,j) ** 2
+			sum_simpexp = sum_simpexp + exp_image(i,j) * sim_image(i,j)
+		end do
+	end do
+
+	cv= (sum_simpexp / sqrt(sum_sim2 * sum_exp2))
+	force_constant = enefunc%restraint_const(1,inum)
+	eexp = force_constant * (1.0_wp - cv)
+
+	! ------------------------------------------------------------------------
+	! GRADIENT COMPUTATION
+	! ------------------------------------------------------------------------
+	if (calc_force) then
+
+		const1 = 1/ sqrt(sum_sim2 * sum_exp2)
+		const2 = sum_simpexp / (sqrt(sum_exp2) * sum_sim2**(1.5_wp))
+		emfit_force(:,:) = 0.0_wp
+
+		!$omp parallel do default(none)                                 &
+		!$omp private(a,n, i, j,mu1, mu2, dpsim1, dpsim2,dcc1, dcc2)     &
+		!$omp shared(pixels, n_pix, image_size, pixel_size, &
+		!$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id,&
+		!$omp 	exp_image, const1, const2, force_constant,&
+		!$omp 	emfit_force,inv_rot_matrix, force)
+		!
+
+		do a= 1, n_atoms_group
+
+			n=  atom_id(a,group_id)
+			dcc1 = 0.0_wp
+			dcc2 = 0.0_wp
+
+			do i=pixels(1,a), pixels(1,a) + n_pix
+				do j=pixels(2,a), pixels(2,a) + n_pix
+
+					mu1 = (i -1- (image_size / 2)) * pixel_size
+					mu2 = (j -1- (image_size / 2)) * pixel_size
+
+					dpsim1 = -(rot_coord(1,a) - mu1) * gaussians_saved(i,j,a) / (sigma ** 2)
+					dpsim2 = -(rot_coord(2,a) - mu2) * gaussians_saved(i,j,a) / (sigma ** 2)
+
+					dcc1 = dcc1 + ((exp_image(i,j) * dpsim1 * const1) - ( sim_image(i,j) * dpsim1 * const2))
+					dcc2 = dcc2 + ((exp_image(i,j) * dpsim2 * const1) - ( sim_image(i,j) * dpsim2 * const2))
+				end do
+			enddo
+
+			emfit_force(1,n) = dcc1 * force_constant
+			emfit_force(2,n) = dcc2 * force_constant
+
+			force(1:3,n) = force(1:3,n) + matmul(inv_rot_matrix(1:3,1:3),emfit_force(1:3,n))
+		end do
+
+		!$omp end parallel do
+	end if
+
+
+	! ------------------------------------------------------------------------
+	! DEALLOCATE
+	! ------------------------------------------------------------------------
+
+	deallocate(rot_coord)
+	deallocate(pixels)
+	deallocate(gaussians_saved)
+
+	! open (unit=66, file="force.txt")
+	! write(66,*) force
+	! close(66)
+	! open (unit=66, file=trim(emfit_exp_image)//"_img.txt")
+	! write(66,*) sim_image
+	! close(66)
+	! call error_msg('Stop')
+
 
     return
+  end subroutine compute_energy_experimental_restraint_emfit_with_image
+  !
 
-  end subroutine compute_energy_experimental_restraint_emfit
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         Euler_angle2Matrix
+  !> @brief             convert three rotation angle roll, title and yaw in dgree into a roation matrix
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]         roll : angle in degree
+  !! @param[in]         pitch: angle in degree
+  !! @param[in]          yew : angle in degree
+  !! @param[inout]       A   : 4*4 matrix for rotation and translation
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine Euler_angle2Matrix(roll, tilt, yaw, A)
+ 	real(wp),                intent(in)    :: roll
+    real(wp),                intent(in)    :: tilt
+    real(wp),                intent(in)    :: yaw
+    real(wp),                intent(inout) :: A(4,4)
+
+	!local variables
+	real(wp) :: pi
+	!real(wp) :: a, b, g
+	real(wp) :: a1, b1, g1, sa, ca, sb, cb, sg, cg, cc, cs, sc, ss
+
+    !a = 45.0_wp 
+    !b = 90.0_wp
+	!g = 45.0_wp
+
+	pi = acos(-1.0_wp)
+	a1=pi*roll/180.0_wp
+	b1=pi*tilt/180.0_wp
+	g1=pi*yaw/180.0_wp
+
+	sa= sin(a1)
+	ca= cos(a1)
+
+	sb= sin(b1)
+	cb= cos(b1)
+
+	sg= sin(g1)
+	cg= cos(g1)
+
+	cc = cb * ca
+	cs = cb * sa
+	sc = sb * ca
+	ss = sb * sa
+	! finally in this section we will calculate the rotation matrix which will
+	! be saved in A. 
+	A(4,1:3)=0
+	A(1:3,4)=0
+	A(4,4)= 1
+	A(1, 1) =  cg * cc - sg * sa
+	A(1, 2) =  cg * cs + sg * ca
+	A(1, 3) = -cg * sb
+	A(2, 1) = -sg * cc - cg * sa
+	A(2, 2) = -sg * cs + cg * ca
+	A(2, 3) =  sg * sb
+	A(3, 1) =  sc
+	A(3, 2) =  ss
+	A(3, 3) =  cb
+	!write(*,*)"transation matrix:"
+	!write(*,*) A(1,1),A(1,2),A(1,3)
+	!write(*,*) A(2,1),A(2,2),A(2,3)
+	!write(*,*) A(3,1),A(3,2),A(3,3)
+  end subroutine Euler_angle2Matrix
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         Euler_angle2Matrix_Inv
+  !> @brief             convert three rotation angle roll, title and yaw in dgree into a roation matrix
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]          B   : 4*4 input matrix for rotation and translation 
+  !! @param[inout]       A   : 4*4 invers matrix
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine Euler_angle2Matrix_Inv(B,outflag, A )
+ 		real(wp),                intent(in)    :: B(4,4)
+		logical,                 intent(in)    :: outflag
+    	real(wp),                intent(inout) :: A(4,4)
+
+	!local variables
+	real(wp)					:: det1
+
+	if(outflag .eqv. .TRUE.) then
+		write(*,*)"transation matrix:"
+		write(*,*) B(1,1),B(1,2),B(1,3)
+		write(*,*) B(2,1),B(2,2),B(2,3)
+		write(*,*) B(3,1),B(3,2),B(3,3)
+	end if
+	det1 = B(2,2)*B(3,3)*B(1,1)+B(1,2)*B(2,3)*B(3,1)+B(2,1)*B(3,2)*B(1,3)&
+			-B(1,3)*B(2,2)*B(3,1)-B(1,2)*B(3,3)*B(2,1)-B(2,3)*B(3,2)*B(1,1)
+	A(4,1:3)= 	0
+	A(1:3,4)= 	0
+	A(4,4)  = 	1
+	A(1, 1) =  	(1.0_wp/det1)*(B(2,2)*B(3,3)-B(2,3)*B(3,2))
+	A(2, 1) =  	(1.0_wp/det1)*(B(3,1)*B(2,3)-B(2,1)*B(3,3))
+	A(3, 1) = 	(1.0_wp/det1)*(B(2,1)*B(3,2)-B(2,2)*B(3,1))
+	A(1, 2) = 	(1.0_wp/det1)*(B(1,3)*B(3,2)-B(1,2)*B(3,3))
+	A(2, 2) = 	(1.0_wp/det1)*(B(1,1)*B(3,3)-B(1,3)*B(3,1))
+	A(3, 2) =  	(1.0_wp/det1)*(B(3,1)*B(1,2)-B(1,1)*B(3,2))
+	A(1, 3) = 	(1.0_wp/det1)*(B(1,2)*B(2,3)-B(2,2)*B(1,3))
+	A(2, 3) =  	(1.0_wp/det1)*(B(2,1)*B(1,3)-B(1,1)*B(2,3))
+	A(3, 3) =  	(1.0_wp/det1)*(B(2,2)*B(1,1)-B(1,2)*B(2,1))
+	if(outflag .eqv. .TRUE.) then
+		write(*,*)"invers transation matrix:"
+		write(*,*) det1
+		write(*,*) A(1,1),A(1,2),A(1,3)
+		write(*,*) A(2,1),A(2,2),A(2,3)
+		write(*,*) A(3,1),A(3,2),A(3,3)
+	end if 
+  end subroutine Euler_angle2Matrix_Inv
+
+
+   !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         readSPIDER
+  !> @brief		takes filename as an input and read the image data from an image file in SPIDER format and return Image in the image plane as an output.
+  !!			the spider image (ex. Image.spi) can be displayed by showSPIDER function
+  !!			2D image data which will be returned as a SPIDER image shall be formated I(i,j,In) where i and j is pixel coordiante and In is the pixel intensity.
+  !!			3D data may be written as either a SPIDER volume (default) or as a stack of 2D images (requires optional 3rd argument='stack'). 
+  !!                    in this case we  are not dealing with 3D images. it is better to use situs for 3D purpose
+  !!			SPIDER files do have a specific file extension, *.spi.
+  !!			Examples
+  !!			readSPIDERfile('img001.dat', I)
+  !!			version 1.0 (Mar 2021) A. Mirzaei
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]         datasize        : size of the image data
+  !! @param[in]         stackarg        : stacking defined by the write function and imposed by the data type
+  !! @param[inout]      header          : spi file header generated for spi write function
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine readSPIDER(filenameSR, I)
+	character(MaxFilename),         intent(in)    	 :: filenameSR
+	real(wp),						intent(inout)    :: I(:,:)
+
+	
+	!local variable
+	real*4								:: nx
+	!real*4, dimension(256)				:: file_header
+	real*4, dimension(-int(image_size/2):int(image_size/2)-1,-int(image_size/2):int(image_size/2)-1)	:: image_out,image_in
+	character(MaxFilename)				:: filenameW
+	integer								:: integer_var,i1,j1,k1,l1
+	integer 							:: ios
+	integer								:: im_size, stop_condition
+	real(wp)							:: norm_image
+	write(*,*)"input experiment image:",filenameSR
+	open(UNIT=10, FILE=filenameSR, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
+	integer_var = 1
+	i1 = 1
+	l1=1
+	im_size =image_size
+	stop_condition = im_size*im_size+256
+	norm_image = 0_wp
+	do while (integer_var .GE. 0)
+		read(10,IOSTAT=integer_var) nx
+		if(i1 .LE. 256)then
+			file_header(i1)=nx
+			!print *, nx
+		else 
+			if(i1 .EQ. 257)then
+				write(*,*)"file header reading is finished"	
+				j1 = -int(im_size/2)-1
+				k1 = -int(im_size/2)
+			end if
+			!print *, nx, integer_var
+			if(j1 .LT. int(im_size/2)-1)then
+				j1= j1+1
+			else
+				j1=-int(im_size/2)
+				k1=k1+1
+			end if
+			if((k1 .LT. int(im_size/2)).and.(j1 .LT. int(im_size/2)))then
+				if(i1 .LT. stop_condition)then
+					image_out(j1,k1)= nx
+					norm_image= norm_image + nx*nx
+					l1=l1+1
+					!print *,i1,j1,k1, nx
+				end if
+				if(j1 == int(image_size/2)-2)then
+					!write(*,*)image_out(j1,k1)
+				end if
+			end if
+			if(integer_var .LT. 0)then
+				write(*,*)"end of file reached"
+				print *, i1, l1
+				exit
+			end if
+		end if
+		i1=i1+1
+	end do
+	close(10)
+	print *, i1, l1
+	
+	write(*,*)"pixel inside function (61,61)=", image_out(int(image_size/2)-2,int(image_size/2)-2)
+	write(*,*) "Spider file was successfully read and reported"
+	write(*,*) "norm of image inside read funciton: ",sqrt(norm_image)
+	!open(UNIT=20, FILE="exp000010.spi", FORM="UNFORMATTED", access="STREAM", status ='new', convert='little_endian',iostat=ios)
+	!print *, ios
+	!file_header(i)
+	!write(20)file_header
+	!write(20)image_out
+	!close(20)
+	I = real(image_out,8)
+	write(*,*)"########### image data is successfully returned at the end of read function ###############"
+  end subroutine readSPIDER
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         readSPIDERheader
+  !> @brief		takes filename as an input and read the image header of an image file in SPIDER format and return header 
+  !!			the spider header can be used by SPIDERread and SPIDERwrite functions
+  !!			header data of a SPIDER image will be returned as header(256) array 
+  !!			Examples
+  !!			readSPIDERfile('img001.dat', header)
+  !!			version 1.0 (Mar 2021) A. Mirzaei
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]         filenameSR      : SPIDER image name and directory
+  !! @param[inout]      header          : spi file header read out of SPIDER image
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine readSPIDERheader(filenameSR, header)
+	character(MaxFilename),         intent(in)    	 :: filenameSR
+	real*4,						    intent(inout)    :: header(:)
+
+	
+	!local variable
+	real*4								:: nx
+	real*4,dimension(1:256)				:: Spider_header
+	character(MaxFilename)				:: filenameW
+	integer								:: integer_var,i1,j1,k1,l1
+	integer 							:: ios, none_zero_mem
+	write(*,*)"input spider image name and directory:",filenameSR
+	open(UNIT=10, FILE=filenameSR, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
+	integer_var = 1
+	i1 = 1
+
+	do while (integer_var .GE. 0)
+		read(10,IOSTAT=integer_var) nx
+		if(i1 .LE. 256)then
+			 Spider_header(i1)=nx
+			!print *,i1, nx
+		else 
+			if(i1 .EQ. 257)then
+				write(*,*)"file header is finished"	
+				none_zero_mem = count( Spider_header/=0)
+			end if
+		end if
+		i1=i1+1
+	end do
+	close(10)
+	print *, i1,none_zero_mem
+	
+	if(none_zero_mem /= 0) then
+		write(*,*) "the header of the Spider image was successfully read and reported"
+	else
+		write(*,*) "the header of the Spider image was not successful, check your image file"
+		return
+	end if
+
+	header = Spider_header
+
+  end subroutine readSPIDERheader
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         writeSPIDER
+  !> @brief             takes filename, and Image in the image plane as an input and write the image data into an image file in SPIDER format.
+  !!			the spider image (ex. Image.spi) can be displayed by showSPIDER function
+  !!			2D image data which will be written as a SPIDER image shall be formated I(i,j,In) where i and j is pixel coordiante and In is the pixel intensity.
+  !!			3D data may be written as either a SPIDER volume (default) or as a stack of 2D images (requires optional 3rd argument='stack'). 
+  !!                    in this case we  are not dealing with 3D images.it is better to use situs for 3D purpose
+  !!			SPIDER files do have a specific file extension, *.spi.
+  !!			Examples
+  !!			writeSPIDER('img001.spi', I)
+  !!			version 1.0 (Mar 2021) A. Mirzaei
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]         filename        : filename for instance 'image.spi' (do not forget quotation around filename: '')
+  !! @param[in]         I               : Image data (image peixel in i and j coordiante)
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine writeSPIDER(filenameSR, I)
+	character(24),     	intent(in)    	:: filenameSR
+	real*4,				intent(inout)   :: I(:,:)
+
+	! local variable 
+	integer								:: i1,j1, x, y
+	real*4, dimension(-int(image_size/2):int(image_size/2)-1,-int(image_size/2):int(image_size/2)-1)			:: image_out
+	integer								:: im_size
+	integer 							:: ios
+
+
+	im_size = image_size
+	call creatSpiderHeader(I,file_header)
+	open(UNIT=20, FILE=filenameSR, FORM="UNFORMATTED", access="STREAM", status ='new', convert='little_endian',iostat=ios)
+	print *, ios
+	write(20)file_header
+	write(20)I
+
+	close(20)
+  end subroutine writeSPIDER
+	!======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         creatSpiderHeader
+  !> @brief             takes filename, and Image in the image plane as an input and write the image data into an image file in SPIDER format.
+  !!			the spider image (ex. Image.spi) can be displayed by showSPIDER function
+  !!			2D image data which will be written as a SPIDER image shall be formated I(i,j,In) where i and j is pixel coordiante and In is the pixel intensity.
+  !!			3D data may be written as either a SPIDER volume (default) or as a stack of 2D images (requires optional 3rd argument='stack'). 
+  !!                    in this case we  are not dealing with 3D images.it is better to use situs for 3D purpose
+  !!			SPIDER files do have a specific file extension, *.spi.
+  !!			Examples
+  !!			creatSpiderHeader(I, header)
+  !!			version 1.0 (Mar 2021) A. Mirzaei
+  !! @authors           Alex Mirzaei, IMPMC pars
+  !! @param[in]         filename        : filename for instance 'image.spi' (do not forget quotation around filename: '')
+  !! @param[in]         I               : Image data (image peixel in i and j coordiante)
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine creatSpiderHeader(I, header)
+	real*4,				intent(in)   	:: I(:,:)
+	real*4,				intent(inout)   :: header(:)
+
+	! local variable 
+	integer								:: i1,j1, x, y
+	real*4, dimension(256)				:: generated_header
+	integer								:: nsam,nrow,nslice
+	integer 							:: ios
+	real*4								:: labrec1,labbyt1,lenbyt1
+	
+	! header parameter initialization
+	header = 0.0
+	nsam = size(I,1)
+	nrow = size(I,2)
+	 
+	lenbyt1 = nsam*4
+	labrec1 = ceiling(1024/lenbyt1)
+	if(MOD(1024.0,lenbyt1).NE. 0)then
+		labrec1 = labrec1 + 1
+	end if
+	labbyt1 = labrec1 * lenbyt1 
+	nslice = 1.0
+	if(nslice == 1)then
+		write(*,*)"writing an image"
+		generated_header(5)		=1.0
+		generated_header(1)		=nslice
+		generated_header(2)		=nrow
+		generated_header(12)	=nsam
+		generated_header(13)	=labrec1
+		generated_header(22)	=labbyt1
+		generated_header(23) 	=lenbyt1
+	else
+		write(*,*)"writing a volume"
+		generated_header(5)		=3.0
+		generated_header(1)		=nslice
+		generated_header(2)		=nrow
+		generated_header(12)	=nsam
+		generated_header(13)	=labrec1
+		generated_header(22)	=labbyt1
+		generated_header(23) 	=lenbyt1
+	end if
+
+	!call creatSpiderHeader(file_header)
+	header = generated_header
+  end subroutine creatSpiderHeader
 
 end module at_experiments_mod

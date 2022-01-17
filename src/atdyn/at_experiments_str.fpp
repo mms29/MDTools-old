@@ -47,6 +47,7 @@ module at_experiments_str_mod
     integer,  allocatable :: ig(:,:)
     real(wp), allocatable :: target_map(:,:,:)      ! memory for target
     real(wp), allocatable :: simulated_map(:,:,:)   ! memory for simulated map
+    real(wp), allocatable :: experiment_image(:,:)   ! memory for experiment image added by Alex
     real(wp), allocatable :: bound_x(:), bound_y(:), bound_z(:)
   end type s_emfit
 

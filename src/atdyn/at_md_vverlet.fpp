@@ -582,8 +582,7 @@ contains
                     !$omp shared(natom, coord, scale_v, vel, force, dt, inv_mass, dynvars)
                     !
                     do j = 1, natom
-                        vel(1:3, j) = vel(1:3, j) + 0.5_wp*dt*(force(1:3, j) + dynvars%random_force(1:3, j))*inv_mass(j)
-                        vel(1:3, j) = vel(1:3, j)*scale_v
+                        vel(1:3, j) = vel(1:3, j)*scale_v + 0.5_wp*dt*(force(1:3, j) + dynvars%random_force(1:3, j))*inv_mass(j)
                     end do
                     !$omp end parallel do
                     
