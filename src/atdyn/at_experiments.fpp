@@ -198,38 +198,40 @@ contains
     !
     if (main_rank) then
 
-      if (exp_info%emfit_type == ExperimentsEmfit) then
+      if (exp_info%emfit) then
+        if (exp_info%emfit_type == ExperimentsEmfit) then
 
-        write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
-        write(MsgOut,'(a20)') '  emfit           = VOLUME'
-        write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
-        write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
-              '  emfit_sigma     = ', exp_info%emfit_sigma,        &
-              '  emfit_tolerance = ', exp_info%emfit_tolerance
-        write(MsgOut,'(a20,I10)')                                  &
-              '  emfit_period    = ', exp_info%emfit_period
-        write(MsgOut,'(a)') ' '
+          write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
+          write(MsgOut,'(a20)') '  emfit           = VOLUME'
+          write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
+                '  emfit_sigma     = ', exp_info%emfit_sigma,        &
+                '  emfit_tolerance = ', exp_info%emfit_tolerance
+          write(MsgOut,'(a20,I10)')                                  &
+                '  emfit_period    = ', exp_info%emfit_period
+          write(MsgOut,'(a)') ' '
 
-      else if (exp_info%emfit_type == ExperimentsEmfitImg) then
+        else if (exp_info%emfit_type == ExperimentsEmfitImg) then
 
-        write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting of images'
-        write(MsgOut,'(a20)') '  emfit           = IMAGE'
-        write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
-        write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
-              '  emfit_sigma     = ', exp_info%emfit_sigma,        &
-              '  emfit_tolerance = ', exp_info%emfit_tolerance
-        write(MsgOut,'(a20,I10, a20,F10.4)')                       &
-              '  emfit_period    = ', exp_info%emfit_period, &
-              '  emfit_yaw_angle = ', exp_info%emfit_yaw_angle
+          write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting of images'
+          write(MsgOut,'(a20)') '  emfit           = IMAGE'
+          write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
+                '  emfit_sigma     = ', exp_info%emfit_sigma,        &
+                '  emfit_tolerance = ', exp_info%emfit_tolerance
+          write(MsgOut,'(a20,I10, a20,F10.4)')                       &
+                '  emfit_period    = ', exp_info%emfit_period, &
+                '  emfit_yaw_angle = ', exp_info%emfit_yaw_angle
 
-        write(MsgOut,'(a20,F10.4,a20,F10.4)')&
-              '  emfit_roll_angle = ', exp_info%emfit_roll_angle, &
-              '  emfit_tilt_angle = ', exp_info%emfit_tilt_angle
-        write(MsgOut,'(a20,F10.4,a20,F10.4)')&      
-              '  emfit_shift_x    = ', exp_info%emfit_shift_x,  &
-              '  emfit_shift_y    = ', exp_info%emfit_shift_y
-        write(MsgOut,'(a)') ' '
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')&
+                '  emfit_roll_angle = ', exp_info%emfit_roll_angle, &
+                '  emfit_tilt_angle = ', exp_info%emfit_tilt_angle
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')&      
+                '  emfit_shift_x    = ', exp_info%emfit_shift_x,  &
+                '  emfit_shift_y    = ', exp_info%emfit_shift_y
+          write(MsgOut,'(a)') ' '
 
+        end if
       end if
 
     end if
@@ -263,7 +265,7 @@ contains
     experiments%do_emfit = .false.
     experiments%emfit_type = exp_info%emfit_type
 
-    if (exp_info%emfit_type == ExperimentsEmfit .or. exp_info%emfit_type == ExperimentsEmfitImg) then
+    if (exp_info%emfit) then
 
       do_emfit_res = .false.
       do i = 1, restraints%nfunctions
