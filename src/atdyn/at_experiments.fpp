@@ -1259,7 +1259,7 @@ contains
       !$omp private(a,n, i, j,mu, dpsim,dcc)     &
       !$omp shared(pixels, n_pix, image_size, pixel_size, &
       !$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id,&
-      !$omp 	exp_image, const1, const2, force_constant,&
+      !$omp 	exp_image, const1, const2, force_constant, n_atoms_group, &
       !$omp 	emfit_img_force,inv_rot_matrix, force, experiments)
       !
   
