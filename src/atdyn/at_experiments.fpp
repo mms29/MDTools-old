@@ -65,6 +65,7 @@ module at_experiments_mod
   real(wp),       allocatable, save :: dexpa_x(:,:), dexpa_y(:,:), dexpa_z(:,:)
   real(wp),       allocatable, save :: dot_sim_drhodx(:), dot_sim_drhody(:), dot_sim_drhodz(:)
   real(wp),       allocatable, save :: emfit_force(:,:)
+  character(MaxFilename)          :: emfit_target_test    = ''
 
   ! subroutines
   public  :: show_ctrl_experiments
@@ -460,6 +461,8 @@ contains
             experiments%emfit_img%image_size,molecule%num_atoms,0,0,0)
 
     call read_data_spi(exp_info%emfit_target, experiments%emfit_img%target_img)
+
+    emfit_target_test = exp_info%emfit_target
 
   end subroutine setup_experiments_emfit_img
 
@@ -1259,7 +1262,7 @@ contains
       !$omp private(a,n, i, j,mu, dpsim,dcc)     &
       !$omp shared(pixels, n_pix, image_size, pixel_size, &
       !$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id,&
-      !$omp 	exp_image, const1, const2, force_constant, n_atoms_group, &
+      !$omp 	exp_image, const1, const2, force_constant,&
       !$omp 	emfit_img_force,inv_rot_matrix, force, experiments)
       !
   
@@ -1287,7 +1290,15 @@ contains
   
       !$omp end parallel do
     end if
+
+    !open(UNIT=666, FILE=trim(emfit_target_test)//"sim_img.txt")
+    !write(666, *) sim_image
+    !close(666)
     
+    !open(UNIT=666, FILE=trim(emfit_target_test)//"exp_img.txt")
+    !write(666, *) exp_image
+    !close(666)
+
     return
   end subroutine compute_energy_experimental_restraint_emfit_img
   
@@ -1351,21 +1362,39 @@ contains
     integer,						intent(inout)    :: image_size
 
     !local variable
-    real(4)								:: nx
-    integer ::unit_no, status, i
+    real(4)								:: buffer
+	
+    integer ::unit_no, status, i, LENBYT, LABREC, LABBYT
 
     unit_no = get_unit_no()
     open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
 
-    do i= 1, 256
-      read(unit_no,IOSTAT=status) nx
+    LABBYT=256
+    i=1
+
+    do while(i<=LABBYT)
+      read(unit_no,IOSTAT=status) buffer
       if (status /= 0) &
         call error_msg("Read_Spider> Error while reading spider image")
       if (i==12) then
-        image_size = nint(nx)
-        close(unit_no)
-        return
+        image_size = nint(buffer)
+	
+	!LENBYT = image_size * 4
+	!LABREC = 1024 / LENBYT
+	!IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
+	!LABBYT = LABREC * LENBYT 
+	!print*, "LENBYT" 
+	!print*, LENBYT 
+	!print*, "LABREC" 
+	!print*, LABREC
+	!print*, "LABBYT" 
+	!print*, LABBYT
+        !close(unit_no)
+        !return
+      else if (i==22) then
+	LABBYT = ceiling(real(buffer)/4)
       endif
+      i=i+1
     end do
     close(unit_no)
     return
@@ -1385,26 +1414,31 @@ contains
     real(wp),						intent(inout)    :: target_image(:,:)
 
     !local variable
-    real(4)								:: nx
-    integer :: i,j, im_size,unit_no, status
+    real(4)								:: buffer
+    integer :: i,j, im_size,unit_no, status,LABBYT
 
     im_size = size(target_image(:,1))
 
     unit_no = get_unit_no()
     open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
-
-    do i= 1, 256
-      read(unit_no,IOSTAT=status) nx
+    
+    i=1
+    LABBYT=256
+    do while(i<=LABBYT)
+      read(unit_no,IOSTAT=status) buffer
       if (status /= 0) &
         call error_msg("Read_Spider> Error while reading spider image")
-      
+      if (i==22) then
+	LABBYT = ceiling(real(buffer)/4)
+      endif
+      i=i+1
     end do
 
     do i= 1, im_size
       do j= 1, im_size
-        read(unit_no,IOSTAT=status) nx
+        read(unit_no,IOSTAT=status) buffer
         if (status == 0) then
-          target_image(j,i) = real(nx,wp)
+          target_image(j,i) = real(buffer,wp)
         else
           call error_msg("Read_Spider> Error while reading spider image")
         endif
