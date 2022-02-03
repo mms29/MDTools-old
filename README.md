@@ -3,7 +3,7 @@
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
 
-Clone the NMMD repository to `/path/to/NMMD`. The repository contains a modified version of GENESIS 1.4.0 to perform NMMD and NMA analysis program called ElNemo.
+Clone the NMMD repository to `/path/to/NMMD`. The repository contains a modified version of GENESIS 1.4.0 to perform NMMD and a NMA program called ElNemo.
 To build GENESIS :
 ```
 cd /path/to/NMMD
@@ -21,7 +21,7 @@ make
 /path/to/NMMD/bin/atdyn INP
 ```
 
-The INP file is used as in GENESIS (see how to define the INP file in https://www.r-ccs.riken.jp/labs/cbrt/usage/). To use NMMD, you must chose the integrator=NMMD in the DYNAMICS section and add a section [NMMD] in to the INP file as follow :
+The INP file is used as in GENESIS (see how to define the INP file in https://www.r-ccs.riken.jp/labs/cbrt/usage/). To use NMMD, you must chose the `integrator=NMMD` in the `DYNAMICS` section and add a section `NMMD` to the INP file as follow :
 
 ```
 ...
