@@ -1378,21 +1378,8 @@ contains
         call error_msg("Read_Spider> Error while reading spider image")
       if (i==12) then
         image_size = nint(buffer)
-	
-	!LENBYT = image_size * 4
-	!LABREC = 1024 / LENBYT
-	!IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
-	!LABBYT = LABREC * LENBYT 
-	!print*, "LENBYT" 
-	!print*, LENBYT 
-	!print*, "LABREC" 
-	!print*, LABREC
-	!print*, "LABBYT" 
-	!print*, LABBYT
-        !close(unit_no)
-        !return
       else if (i==22) then
-	LABBYT = ceiling(real(buffer)/4)
+	      LABBYT = ceiling(real(buffer)/4)
       endif
       i=i+1
     end do
@@ -1429,7 +1416,7 @@ contains
       if (status /= 0) &
         call error_msg("Read_Spider> Error while reading spider image")
       if (i==22) then
-	LABBYT = ceiling(real(buffer)/4)
+	      LABBYT = ceiling(real(buffer)/4)
       endif
       i=i+1
     end do
