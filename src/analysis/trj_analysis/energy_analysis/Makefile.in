@@ -317,7 +317,7 @@ optional_base = at_input.o at_boundary.o at_boundary_str.o \
 								at_experiments_str.o at_experiments.o \
 								at_pairlist.o at_pairlist_str.o at_setup_mpi.o \
 								at_constraints.o at_constraints_str.o at_output.o \
-								at_md_leapfrog.o at_md_vverlet.o at_qmmm.o \
+								at_md_leapfrog.o at_md_vverlet.o at_nmmd.o at_qmmm.o \
 								at_ensemble.o at_ensemble_str.o \
 								at_dynamics.o at_dynamics_str.o
 
