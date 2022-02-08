@@ -1291,6 +1291,8 @@ contains
       !$omp end parallel do
     end if
 
+    force(3,:) = 0.0_wp
+
     !open(UNIT=666, FILE=trim(emfit_target_test)//"sim_img.txt")
     !write(666, *) sim_image
     !close(666)
