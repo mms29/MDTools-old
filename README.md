@@ -1,29 +1,24 @@
-# NMMD in GENESIS 1.4
+# EMFIT on 2D Images in GENESIS 1.4
 
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
 
-Clone the NMMD repository to `/path/to/NMMD`, then :
-```
-cd /path/to/NMMD
-./configure
-make install
-cd ElNemo
-make
-```
 
 ## Usage:
-```
-/path/to/NMMD/bin/atdyn INP pathToNMMD numberModes massModes thresholdModes
-```
-- `INP` : path to INP file (see how to define the INP file in https://www.r-ccs.riken.jp/labs/cbrt/usage/)
-- `pathToNMMD` : path to NMMD ending with a `/` character (example : `/path/to/NMMD/`)
-- `numberModes` : The number of normal modes to use after skipping the 6 first modes (example : 4 will use modes from 7-10)
-- `massModes` : The normal mode mass (example : 1.0)
-- `thresholdModes` : Threshold of normal mode amplitude (example : 500.0)
- 
 
-## Limitations:
-- NMMD is available only for the VVER integrator
-- NMMD is available only for LANGEVIN temperature control
-- SHAKE algorithm have to be turn off
+In the INP file : 
+```
+[EXPERIMENTS]
+emfit = YES                            # YES/NO
+emfit_type = IMAGE                     # VOLUME/IMAGE 
+emfit_target = path/to/image/file.spi  # 2D SPIDER file
+emfit_sigma = 2.0                      # sigma of 2D gaussian
+emfit_tolerance = 0.01                 # Gaussian truncation threshold
+emfit_period = 1                       # not used
+emfit_roll_angle = 0.0                 # Euler roll angle in degrees
+emfit_tilt_angle = 0.0                 # Euler tilt angle in degrees
+emfit_yaw_angle = 0.0                  # Euler yaw angle in degrees
+emfit_shift_x = 0.0                    # Shift in x direction in pixels
+emfit_shift_y = 0.0                    # Shift in y direction in pixels
+emfit_pixel_size = 1.0                 # Size of a pixel in Angstrom
+```
