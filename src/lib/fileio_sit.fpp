@@ -64,12 +64,8 @@ contains
 
     ! local variables
     integer                  :: unit_no
-    character(10)            :: file_ext
 
-
-    file_ext = trim(sit_filename(len(trim(sit_filename))-3:))
-
-    if (trim(file_ext) == ".sit") then
+    if (get_extension(sit_filename) == "sit") then
 
       ! open sitfile
       !
@@ -79,7 +75,7 @@ contains
       !
       call read_sit(unit_no, sit)
 
-    else if (trim(file_ext) == ".mrc") then
+    else if (get_extension(sit_filename) == "mrc") then
 
       ! open mrc file
       !
@@ -90,7 +86,7 @@ contains
       !
       call read_mrc(unit_no, sit)
 
-    else if (trim(file_ext) == ".vol" .or. trim(file_ext) == ".spi") then
+    else if (get_extension(sit_filename) == "vol" .or. get_extension(sit_filename) == "spi") then
 
       ! open spider file
       !
@@ -102,7 +98,7 @@ contains
       call read_spi(unit_no, sit)
 
     else
-      call error_msg('Setup_Experiments_Emfit> Can not read input volume : Unknown file type '//trim(file_ext))
+      call error_msg('Setup_Experiments_Emfit> Can not read input volume : Unknown file type '//get_extension(sit_filename))
     endif
 
     ! close sitfile
