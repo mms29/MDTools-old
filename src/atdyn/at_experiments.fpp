@@ -1291,13 +1291,10 @@ contains
       !$omp end parallel do
     end if
 
-    !open(UNIT=666, FILE=trim(emfit_target_test)//"sim_img.txt")
-    !write(666, *) sim_image
-    !close(666)
-    
-    !open(UNIT=666, FILE=trim(emfit_target_test)//"exp_img.txt")
-    !write(666, *) exp_image
-    !close(666)
+
+    if (mod(emfit_icycle,100) == 0) then 
+      call write_spi(trim(emfit_target_test)//"test.spi", sim_image)
+    endif
 
     return
   end subroutine compute_energy_experimental_restraint_emfit_img
@@ -1367,11 +1364,10 @@ contains
     integer ::unit_no, status, i, LENBYT, LABREC, LABBYT
 
     unit_no = get_unit_no()
-    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
+    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
 
     LABBYT=256
     i=1
-
     do while(i<=LABBYT)
       read(unit_no,IOSTAT=status) buffer
       if (status /= 0) &
@@ -1381,6 +1377,11 @@ contains
       else if (i==22) then
 	      LABBYT = ceiling(real(buffer)/4)
       endif
+
+
+
+      print*, i
+      print*, buffer
       i=i+1
     end do
     close(unit_no)
@@ -1436,5 +1437,77 @@ contains
     return
 
   end subroutine read_data_spi  
+
+     !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         write_spi
+  !> @brief		write Spider image format
+  !!			
+  !! @authors           Rémi Vuillemot
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine write_spi(filename, target_image)
+    character(MaxFilename),         intent(in)    	 :: filename
+    real(wp),						intent(inout)    :: target_image(:,:)
+
+    !local variable
+    integer :: i,j, unit_no, status
+    integer :: LABBYT, NX,LENBYT, LABREC
+
+    ! HEADER DATA
+    NX = size(target_image(:,1))
+    LENBYT = NX * 4
+    LABREC = 1024 / LENBYT
+    IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
+    LABBYT = LABREC * LENBYT 
+
+    unit_no = get_unit_no()
+    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", ACTION="WRITE", access="STREAM")
+
+
+    ! WRITE HEADER
+    ! 1 NZ
+    write(unit_no) real(1,4)
+    ! 2 NY
+    write(unit_no) real(NX,4)  
+    ! 3 IREC
+    write(unit_no) real(LABREC + NX,4)
+    ! 4
+    write(unit_no) real(0,4)
+    ! 5 IFORM
+    write(unit_no) real(1,4)
+    ! skip 6
+    do i =1, 6
+      write(unit_no) real(0,4)
+    enddo
+    ! 12 NX
+    write(unit_no) real(NX,4)
+    ! 13 LABREC
+    write(unit_no) real(LABREC,4)
+    ! skip 7
+    do i =1, 7
+      write(unit_no) real(0,4)
+    enddo
+    ! 21 SCALE
+    write(unit_no) real(1.0,4)
+    ! 22 LABBYT
+    write(unit_no) real(LABBYT,4)
+    ! 23 LENBYT
+    write(unit_no) real(LENBYT,4)
+    ! skip
+    do i =1, (LABBYT -23)
+      write(unit_no) real(0,4)
+    enddo
+
+    do i= 1, NX
+      do j= 1, NX
+        write(unit_no) real(target_image(j,i),4)
+      end do
+    end do
+
+    close(unit_no)
+    return
+
+  end subroutine write_spi  
 
 end module at_experiments_mod
