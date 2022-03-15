@@ -1124,6 +1124,7 @@ contains
     real(wp), pointer :: sim_image(:,:), exp_image(:,:)
     real(wp), pointer :: rot_coord(:,:), gaussians_saved(:,:,:), emfit_img_force(:,:)
     integer,pointer	:: pixels(:,:)
+    character(MaxFilename) :: outfile 
   
     n_atoms = size(coord,2)
     atom_id        => enefunc%restraint_atomlist
@@ -1292,8 +1293,12 @@ contains
     end if
 
 
+    ! ------------------------------------------------------------------------
+    ! WRITE OUTPUT IMAGE
+    ! ------------------------------------------------------------------------
+    outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.spi"
     if (mod(emfit_icycle,100) == 0) then 
-      call write_spi(trim(emfit_target_test)//"test.spi", sim_image)
+      call write_spi(outfile, sim_image)
     endif
 
     return
@@ -1360,7 +1365,6 @@ contains
 
     !local variable
     real(4)								:: buffer
-	
     integer ::unit_no, status, i, LENBYT, LABREC, LABBYT
 
     unit_no = get_unit_no()
@@ -1377,14 +1381,9 @@ contains
       else if (i==22) then
 	      LABBYT = ceiling(real(buffer)/4)
       endif
-
-
-
-      print*, i
-      print*, buffer
       i=i+1
     end do
-    close(unit_no)
+    call close_file(unit_no)
     return
 
   end subroutine read_header_spi  
@@ -1408,8 +1407,8 @@ contains
     im_size = size(target_image(:,1))
 
     unit_no = get_unit_no()
-    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='little_endian')
-    
+    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
+
     i=1
     LABBYT=256
     do while(i<=LABBYT)
@@ -1433,7 +1432,7 @@ contains
       end do
     end do
 
-    close(unit_no)
+    call close_file(unit_no)
     return
 
   end subroutine read_data_spi  
@@ -1453,6 +1452,8 @@ contains
     !local variable
     integer :: i,j, unit_no, status
     integer :: LABBYT, NX,LENBYT, LABREC
+    logical :: file_exists
+
 
     ! HEADER DATA
     NX = size(target_image(:,1))
@@ -1461,8 +1462,17 @@ contains
     IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
     LABBYT = LABREC * LENBYT 
 
-    unit_no = get_unit_no()
-    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", ACTION="WRITE", access="STREAM")
+
+    inquire(file=filename, exist=file_exists)
+    if (file_exists) then
+      unit_no = get_unit_no()
+      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="replace")
+  
+    else
+      unit_no = get_unit_no()
+      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="new")
+  
+    endif
 
 
     ! WRITE HEADER
@@ -1505,7 +1515,7 @@ contains
       end do
     end do
 
-    close(unit_no)
+    call close_file(unit_no)
     return
 
   end subroutine write_spi  
