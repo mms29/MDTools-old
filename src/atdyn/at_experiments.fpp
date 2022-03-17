@@ -1402,7 +1402,7 @@ contains
 
     !local variable
     real(4)								:: buffer
-    integer :: i,j, im_size,unit_no, status,LABBYT
+    integer :: i,j, im_size,unit_no, status,LABBYT, NX, LABREC, LENBYT
 
     im_size = size(target_image(:,1))
 
@@ -1418,6 +1418,16 @@ contains
       if (i==22) then
 	      LABBYT = ceiling(real(buffer)/4)
       endif
+      if (i==12) then
+	      NX = real(buffer)
+      endif
+      if (i==13) then
+	      LABREC = real(buffer)
+      endif
+      if (i==23) then
+	      LENBYT = real(buffer)
+      endif
+
       i=i+1
     end do
 
@@ -1460,7 +1470,7 @@ contains
     LENBYT = NX * 4
     LABREC = 1024 / LENBYT
     IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
-    LABBYT = LABREC * LENBYT 
+    LABBYT = LABREC * LENBYT
 
 
     inquire(file=filename, exist=file_exists)
@@ -1505,7 +1515,7 @@ contains
     ! 23 LENBYT
     write(unit_no) real(LENBYT,4)
     ! skip
-    do i =1, (LABBYT -23)
+    do i =1, (int(LABBYT/4) -23)
       write(unit_no) real(0,4)
     enddo
 
