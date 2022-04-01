@@ -815,18 +815,12 @@ contains
 
         call open_file(unit_no=unit_no, filename=nm_file, in_out=IOFileInput)
 
-        do i = 1, nmodes + 6
+        do i = 1, nmodes
             read (unit_no, '(A)')
             read (unit_no, '(A)')
-            if ((i > 6) .and. (i <= nmodes + 6)) then
-                do j = 1, natom
-                    read (unit_no, *) nm_vectors(:, j, i - 6)
-                end do
-            else
-                do j = 1, natom
+            do j = 1, natom
                     read (unit_no, '(A)')
-                end do
-            end if
+            end do
         end do
         call close_file (unit_no)
 
