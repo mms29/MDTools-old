@@ -53,12 +53,12 @@ module at_nmmd_mod
     private :: initial_nmmd
     private :: langevin_thermostat_vv1
     private :: langevin_thermostat_vv2
-    private :: compute_nma
+    !private :: compute_nma
     private :: read_nma
     private :: compute_energy_nmmd
-    private :: output_nmmd
-    private :: check_nma
-    private :: include_id_to_nm_prefix
+    !private :: output_nmmd
+    !private :: check_nma
+    !private :: include_id_to_nm_prefix
 
 contains
 
@@ -97,47 +97,24 @@ contains
         real(wp)                  :: simtim, dt
         integer                   :: i, j, natom
         integer                   :: nsteps, istart, iend
-
-        real(wp), pointer :: coord(:, :), coord_ref(:, :), vel(:, :)
-        real(wp), pointer :: force(:, :), mass(:), inv_mass(:)
-        real(wp), pointer :: nm_amp(:), nm_vel(:), nm_force(:), nm_random_force(:)
-        real(wp), pointer :: nm_coord(:,:), md_coord(:,:), nm_vectors(:,:,:)
         character                 :: num*9
         logical                   :: savefile
+        real(wp), pointer :: coord(:, :)
 
         integer :: nmodes, exitstatus
-        real(wp) :: nm_inv_mass
-        character(MaxFilename)            :: nm_prefix, elnemo_path, restart_file
         logical :: file_exists
 
         integer :: icount
 
-        mass => molecule%mass
-        inv_mass => molecule%inv_mass
         coord => dynvars%coord
-        coord_ref => dynvars%coord_ref
-        force => dynvars%force
-        vel => dynvars%velocity
         natom = molecule%num_atoms
         istart = dynamics%istart_step
         iend = dynamics%iend_step
         nsteps = dynamics%nsteps
-        dt = dynamics%timestep/AKMA_PS
         simtim = dynamics%initial_time
-        elnemo_path = dynamics%elnemo_path
         nmodes = dynamics%nm_number
-        nm_inv_mass = 1.0_wp/dynamics%nm_mass
-        nm_prefix = dynamics%nm_prefix
-        nm_amp                  =>dynvars%nm_amp
-        nm_vel                  =>dynvars%nm_vel
-        nm_force                =>dynvars%nm_force
-        nm_random_force         =>dynvars%nm_random_force
-        nm_coord                =>dynvars%nm_coord
-        md_coord                =>dynvars%md_coord
-        nm_vectors              =>dynvars%nm_vectors
+        dt = dynamics%timestep/AKMA_PS
 
-        ! Apply id to prefix in cas of REMD
-        call include_id_to_nm_prefix(nm_prefix)
 
         ! first-step MD
         !
@@ -225,7 +202,7 @@ contains
 
         end do
 
-        call output_nmmd(dynvars, dynamics, natom, nmodes)
+        !call output_nmmd(dynvars, dynamics, natom, nmodes)
 
         return
 
@@ -265,7 +242,7 @@ contains
 
         ! local variables
         real(wp)                  :: dt, simtim
-        integer                   :: i,j, natom, nmodes
+        integer                   :: i,j, natom, nmodes, nm_init_size
 
         real(wp), pointer :: coord(:, :), coord_ref(:, :)
         real(wp), pointer :: vel(:, :)
@@ -274,7 +251,7 @@ contains
         integer, pointer :: iseed
         character                 :: num*9
         logical                   :: savefile,file_exists
-        character(MaxFilename) :: restart_file, nm_prefix
+        character(MaxFilename) :: nm_file
 
         ! use pointers
         natom = molecule%num_atoms
@@ -285,23 +262,31 @@ contains
         vel => dynvars%velocity
         mass => molecule%mass
         iseed => dynamics%iseed
-        dt = dynamics%timestep/AKMA_PS
         simtim = dynamics%initial_time
         nm_vel                  =>dynvars%nm_vel
         nm_vectors              =>dynvars%nm_vectors
         dynvars%time = simtim
         dynvars%step = 0
-        nm_prefix = dynamics%nm_prefix
-        call include_id_to_nm_prefix(nm_prefix)
+        nm_file = dynamics%nm_file
 
-        ! Init NMA
-        call check_nma(dynvars, dynamics, molecule)
-        if (all (dynvars%nm_vectors==0.0_wp))then
-            call read_nma(dynvars%nm_vectors, nm_prefix, natom, nmodes)
-        endif
+        ! Read NMA vectors
+        call read_nma(nm_vectors, nm_file, natom, nmodes)
+
 
         ! Init parameters to zero
         coord_ref(1:3,1:natom) = coord(1:3,1:natom)
+
+        ! Initialize NMMD params
+        dynvars%nm_amp(1:nmodes) = 0.0_wp
+        dynvars%md_coord(1:3, 1:natom) = 0.0_wp
+
+        nm_init_size = split_num(dynamics%nm_init)
+        if (nm_init_size == nmodes) then
+            call split(nmodes, nmodes, dynamics%nm_init, dynvars%nm_amp)
+            write(MsgOut,'(A)') 'Initialize_NMA_Amp> Initialize NMA amplitudes'
+            write(MsgOut, '(A)') '  nm_init    = ' //dynamics%nm_init
+            write(MsgOut,'(A)') ''
+        end if
 
 
         ! generate initial velocities
@@ -433,7 +418,7 @@ contains
         type(s_dynvars), target, intent(inout) :: dynvars
 
         ! local variables
-        real(wp)                  :: dt, h_dt, nm_inv_mass
+        real(wp)                  :: dt, h_dt, nm_inv_mass, nm_dt
         real(wp)                  :: temperature, gamma_t, scale_v
         real(wp)                  :: factor, sigma, temp0
         real(wp)                  :: v1, v2, rsq, grandom(1:3)
@@ -453,6 +438,7 @@ contains
         ! use pointers
         !
         dt = dynamics%timestep/AKMA_PS
+        nm_dt = dynamics%nm_dt/AKMA_PS
         temp0 = ensemble%temperature
         gamma_t = ensemble%gamma_t*AKMA_PS
         natom = molecule%num_atoms
@@ -527,16 +513,17 @@ contains
 
         end if
 
-        scale_v = exp(-gamma_t*0.5_wp*dt)
+        scale_v = exp(-gamma_t*0.5_wp*nm_dt)
 
         ! thermostat nm
         nm_vel(1:nmodes) = nm_vel(1:nmodes)*scale_v 
 
         ! VV1 nm
-        nm_vel(1:nmodes) = nm_vel(1:nmodes)+ 0.5_wp*dt* (nm_force(1:nmodes)+nm_random_force(1:nmodes))* nm_inv_mass
-        nm_amp(1:nmodes) = nm_amp(1:nmodes) + dt*nm_vel(1:nmodes)
+        nm_vel(1:nmodes) = nm_vel(1:nmodes)+ 0.5_wp*nm_dt* (nm_force(1:nmodes)+nm_random_force(1:nmodes))* nm_inv_mass
+        nm_amp(1:nmodes) = nm_amp(1:nmodes) + nm_dt*nm_vel(1:nmodes)
 
 
+        scale_v = exp(-gamma_t*0.5_wp*dt)
         do i = 1, natom
 
             ! thermostat md
@@ -587,7 +574,7 @@ contains
         type(s_dynvars), target, intent(inout) :: dynvars
 
         ! local variables
-        real(wp)                  :: dt, inv_dt, temp0, nm_inv_mass
+        real(wp)                  :: dt, inv_dt, temp0, nm_inv_mass, nm_dt
         real(wp)                  :: factor, sigma
         real(wp)                  :: gamma_t
         real(wp)                  :: v1, v2, rsq, grandom(1:3), fcm(0:4)
@@ -606,6 +593,7 @@ contains
         nmodes = dynamics%nm_number
         nm_inv_mass= 1.0_wp/dynamics%nm_mass
         dt = dynamics%timestep/AKMA_PS
+        nm_dt = dynamics%nm_dt/AKMA_PS
         inv_dt = 1.0_wp/dt
         temp0 = ensemble%temperature
         gamma_t = ensemble%gamma_t*AKMA_PS
@@ -674,7 +662,7 @@ contains
         do j = 1, natom
             vel(1:3,j) = vel(1:3,j) + h_dt*(force(1:3,j)+random_f(1:3,j))*inv_mass(j)
         end do
-        nm_vel(1:nmodes) = nm_vel(1:nmodes) + h_dt*(nm_force(1:nmodes)+nm_random_force(1:nmodes))*nm_inv_mass
+        nm_vel(1:nmodes) = nm_vel(1:nmodes) + 0.5_wp*nm_dt*(nm_force(1:nmodes)+nm_random_force(1:nmodes))*nm_inv_mass
 
         ! termostat
         !
@@ -682,6 +670,7 @@ contains
         do j = 1, natom
             vel(1:3,j) = vel(1:3,j)*vel_scale
         end do
+        vel_scale = exp(-gamma_t* 0.5_wp*nm_dt)
         nm_vel(1:nmodes) = nm_vel(1:nmodes)*vel_scale 
 
         return
@@ -696,38 +685,38 @@ contains
     !
     !======1=========2=========3=========4=========5=========6=========7=========8
 
-    subroutine output_nmmd(dynvars, dynamics, natom, nmodes)
-        type(s_dynvars), intent(inout) :: dynvars
-        type(s_dynamics), intent(inout) :: dynamics
-        integer, intent(inout) :: natom
-        integer, intent(inout) :: nmodes
+    ! subroutine output_nmmd(dynvars, dynamics, natom, nmodes)
+    !     type(s_dynvars), intent(inout) :: dynvars
+    !     type(s_dynamics), intent(inout) :: dynamics
+    !     integer, intent(inout) :: natom
+    !     integer, intent(inout) :: nmodes
 
-        integer :: unit_no
-        character(MaxFilename)::restart_file, nm_prefix
-        logical :: file_exists
+    !     integer :: unit_no
+    !     character(MaxFilename)::restart_file, nm_prefix
+    !     logical :: file_exists
 
-        nm_prefix = dynamics%nm_prefix
-        call include_id_to_nm_prefix(nm_prefix)
+    !     nm_prefix = dynamics%nm_prefix
+    !     call include_id_to_nm_prefix(nm_prefix)
 
-        if (dynamics%crdout_period > 0) then
-            if (mod(dynvars%step,dynamics%crdout_period) == 0) then
+    !     if (dynamics%crdout_period > 0) then
+    !         if (mod(dynvars%step,dynamics%crdout_period) == 0) then
                 
-                ! Write nm amplitudes
-                inquire(file=trim(nm_prefix)//".nmmd", exist=file_exists)
-                if (file_exists) then
-                    call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputReplace)
-                else
-                    call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputNew)
-                endif
-                write(unit_no, *) dynvars%nm_amp
-                call close_file(unit_no)
+    !             ! Write nm amplitudes
+    !             inquire(file=trim(nm_prefix)//".nmmd", exist=file_exists)
+    !             if (file_exists) then
+    !                 call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputReplace)
+    !             else
+    !                 call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputNew)
+    !             endif
+    !             write(unit_no, *) dynvars%nm_amp
+    !             call close_file(unit_no)
 
-            endif
-        endif
+    !         endif
+    !     endif
 
-        return
+    !     return
         
-    end subroutine output_nmmd
+    ! end subroutine output_nmmd
 
     !======1=========2=========3=========4=========5=========6=========7=========8
     !
@@ -737,75 +726,75 @@ contains
     !
     !======1=========2=========3=========4=========5=========6=========7=========8
 
-    subroutine compute_nma(molecule, dynvars, dynamics)
-        type(s_molecule), intent(in) :: molecule
-        type(s_dynvars), intent(in) :: dynvars
-        type(s_dynamics),  intent(in) :: dynamics
+    ! subroutine compute_nma(molecule, dynvars, dynamics)
+    !     type(s_molecule), intent(in) :: molecule
+    !     type(s_dynvars), intent(in) :: dynvars
+    !     type(s_dynamics),  intent(in) :: dynamics
 
-        integer :: exitstatus, unit_no, nmodes
-        logical :: file_exists
-        character(MaxFilename)::nm_prefix
+    !     integer :: exitstatus, unit_no, nmodes
+    !     logical :: file_exists
+    !     character(MaxFilename)::nm_prefix
 
-        nmodes = dynamics%nm_number
-        nm_prefix = dynamics%nm_prefix
-        call include_id_to_nm_prefix(nm_prefix)
+    !     nmodes = dynamics%nm_number
+    !     nm_prefix = dynamics%nm_prefix
+    !     call include_id_to_nm_prefix(nm_prefix)
 
-        write(MsgOut,'(A)') 'Compute_NMA> Computing Normal Mode Analysis (ElNemo)'
-        ! WRITE PDB
-        open (unit=66, file=trim(nm_prefix)//"/run.pdb")
-        call write_restart_pdb(66, molecule, dynvars%coord)
-        close (66)
+    !     write(MsgOut,'(A)') 'Compute_NMA> Computing Normal Mode Analysis (ElNemo)'
+    !     ! WRITE PDB
+    !     open (unit=66, file=trim(nm_prefix)//"/run.pdb")
+    !     call write_restart_pdb(66, molecule, dynvars%coord)
+    !     close (66)
 
-        ! ELNEMO PDBMAT
-        inquire(file=trim(nm_prefix)//"/pdbmat.dat", exist=file_exists)
-        if (file_exists) then
-            call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/pdbmat.dat", in_out=IOFileOutputReplace)
-        else
-            call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/pdbmat.dat", in_out=IOFileOutputNew)
-        endif
-        write (unit_no, *) "Coordinate FILENAME        = run.pdb"
-        write (unit_no, *) "MATRIx FILENAME            = pdbmat.sdijf"
-        write (unit_no, '(A,F10.3)') "INTERACtion DISTance CUTOF = ", dynamics%elnemo_cutoff
-        write (unit_no, *) "INTERACtion FORCE CONStant = 10.000000"
-        write (unit_no, *) "Origin of MASS values      =    CON "
-        write (unit_no, *) "Output PRINTing level      =      0 "
-        call close_file (unit_no)
+    !     ! ELNEMO PDBMAT
+    !     inquire(file=trim(nm_prefix)//"/pdbmat.dat", exist=file_exists)
+    !     if (file_exists) then
+    !         call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/pdbmat.dat", in_out=IOFileOutputReplace)
+    !     else
+    !         call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/pdbmat.dat", in_out=IOFileOutputNew)
+    !     endif
+    !     write (unit_no, *) "Coordinate FILENAME        = run.pdb"
+    !     write (unit_no, *) "MATRIx FILENAME            = pdbmat.sdijf"
+    !     write (unit_no, '(A,F10.3)') "INTERACtion DISTance CUTOF = ", dynamics%elnemo_cutoff
+    !     write (unit_no, *) "INTERACtion FORCE CONStant = 10.000000"
+    !     write (unit_no, *) "Origin of MASS values      =    CON "
+    !     write (unit_no, *) "Output PRINTing level      =      0 "
+    !     call close_file (unit_no)
 
-        ! ELNEMO DIAGRTB
-        inquire(file=trim(nm_prefix)//"/diagrtb.dat", exist=file_exists)
-        if (file_exists) then
-            call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/diagrtb.dat", in_out=IOFileOutputReplace)
-        else
-            call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/diagrtb.dat", in_out=IOFileOutputNew)
-        endif
-        write (unit_no, *) "MATRix filename            = pdbmat.sdijf"
-        write (unit_no, *) "COORdinates filename       = run.pdb"
-        write (unit_no, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
-        write (unit_no, '(A, I10)') "Nb of VECTors required     = ", nmodes + 6
-        write (unit_no, *) "EigeNVALues chosen         =       LOWE "
-        write (unit_no, *) "Type of SUBStructuring     =       NONE "
-        write (unit_no, '(A,I10)') "Nb of residues per BLOck   =        ", dynamics%elnemo_rtb_block
-        write (unit_no, *) "Origin of MASS values      =       CONS "
-        write (unit_no, *) "Temporary files cleaning   =       ALL  "
-        write (unit_no, *) "MATRix FORMat              =       FREE "
-        write (unit_no, *) "Output PRINting level      =          0 "
-        call close_file (unit_no)
+    !     ! ELNEMO DIAGRTB
+    !     inquire(file=trim(nm_prefix)//"/diagrtb.dat", exist=file_exists)
+    !     if (file_exists) then
+    !         call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/diagrtb.dat", in_out=IOFileOutputReplace)
+    !     else
+    !         call open_file (unit_no=unit_no, filename=trim(nm_prefix)//"/diagrtb.dat", in_out=IOFileOutputNew)
+    !     endif
+    !     write (unit_no, *) "MATRix filename            = pdbmat.sdijf"
+    !     write (unit_no, *) "COORdinates filename       = run.pdb"
+    !     write (unit_no, *) "Eigenvector OUTPut filename= diagrtb.eigenfacs"
+    !     write (unit_no, '(A, I10)') "Nb of VECTors required     = ", nmodes + 6
+    !     write (unit_no, *) "EigeNVALues chosen         =       LOWE "
+    !     write (unit_no, *) "Type of SUBStructuring     =       NONE "
+    !     write (unit_no, '(A,I10)') "Nb of residues per BLOck   =        ", dynamics%elnemo_rtb_block
+    !     write (unit_no, *) "Origin of MASS values      =       CONS "
+    !     write (unit_no, *) "Temporary files cleaning   =       ALL  "
+    !     write (unit_no, *) "MATRix FORMat              =       FREE "
+    !     write (unit_no, *) "Output PRINting level      =          0 "
+    !     call close_file (unit_no)
 
-        ! ELNEMO RUN COMMAND
-        call execute_command_line(                                          &
-                "cd "// trim(nm_prefix) // " ; "                            &
-                // trim(dynamics%elnemo_path)//"/nma_elnemo_pdbmat > pdbmat.log ; "  &
-                // trim(dynamics%elnemo_path)//"/nma_diagrtb > diagrtb.log ;         &
-                rm -f pdbmat.dat_run diagrtb.dat_run pdbmat.sdijf"          &
-                , wait=.true., exitstat=exitstatus)
-        if (exitstatus /= 0) then
-            call error_msg('Mode PB')
-        end if
-        write(MsgOut,'(A)') ''
+    !     ! ELNEMO RUN COMMAND
+    !     call execute_command_line(                                          &
+    !             "cd "// trim(nm_prefix) // " ; "                            &
+    !             // trim(dynamics%elnemo_path)//"/nma_elnemo_pdbmat > pdbmat.log ; "  &
+    !             // trim(dynamics%elnemo_path)//"/nma_diagrtb > diagrtb.log ;         &
+    !             rm -f pdbmat.dat_run diagrtb.dat_run pdbmat.sdijf"          &
+    !             , wait=.true., exitstat=exitstatus)
+    !     if (exitstatus /= 0) then
+    !         call error_msg('Mode PB')
+    !     end if
+    !     write(MsgOut,'(A)') ''
 
-        return
+    !     return
 
-    end subroutine compute_nma
+    ! end subroutine compute_nma
 
     !======1=========2=========3=========4=========5=========6=========7=========8
     !
@@ -815,16 +804,16 @@ contains
     !
     !======1=========2=========3=========4=========5=========6=========7=========8
 
-    subroutine read_nma(nm_vectors, nm_prefix, natom, nmodes)
+    subroutine read_nma(nm_vectors, nm_file, natom, nmodes)
         real(wp), dimension(:, :, :), intent(inout) :: nm_vectors
-        character(MaxFilename), intent(in) :: nm_prefix
+        character(MaxFilename), intent(in) :: nm_file
         integer, intent(in) :: nmodes
         integer, intent(in) :: natom
 
         integer :: i,j, unit_no
 
 
-        call open_file(unit_no=unit_no, filename=trim(nm_prefix)//"/diagrtb.eigenfacs", in_out=IOFileInput)
+        call open_file(unit_no=unit_no, filename=nm_file, in_out=IOFileInput)
 
         do i = 1, nmodes + 6
             read (unit_no, '(A)')
@@ -843,7 +832,7 @@ contains
 
         write(MsgOut,'(A)') 'Read_NMA> Read NMA'
         write(MsgOut, '(A)') '  nm_file    = '
-        write(MsgOut, '(A)') '    '//trim(nm_prefix)//'/diagrtb.eigenfacs'
+        write(MsgOut, '(A)') '    '//nm_file
         write(MsgOut,'(A)') ''
         
         return
@@ -858,58 +847,73 @@ contains
     !
     !======1=========2=========3=========4=========5=========6=========7=========8
 
-    subroutine check_nma(dynvars, dynamics, molecule)
-        type(s_dynvars), intent(inout) :: dynvars
-        type(s_dynamics), intent(in) :: dynamics
-        type(s_molecule), intent(inout) :: molecule
+    ! subroutine check_nma(dynvars, dynamics, molecule)
+    !     type(s_dynvars), intent(inout) :: dynvars
+    !     type(s_dynamics), intent(in) :: dynamics
+    !     type(s_molecule), intent(inout) :: molecule
 
-        ! local vars
-        logical :: file_exists, rstNMA = .false.
-        integer j, natom, nmodes
-        character(MaxFilename)::nm_prefix
+    !     ! local vars
+    !     logical :: file_exists, rstNMA = .false.
+    !     integer j, natom, nmodes
+    !     character(MaxFilename)::nm_prefix
+    !     character(MaxFilename)::nm_file
+    !     character(MaxFilename)::nm_init
+    !     integer                  :: nm_init_size
 
-        nmodes = dynamics%nm_number
-        natom = molecule%num_atoms
-        nm_prefix = dynamics%nm_prefix
-        call include_id_to_nm_prefix(nm_prefix)
+    !     nmodes = dynamics%nm_number
+    !     natom = molecule%num_atoms
+    !     nm_prefix = dynamics%nm_prefix
+    !     call include_id_to_nm_prefix(nm_prefix)
+    !     nm_file = dynamics%nm_file
+    !     call include_id_to_nm_prefix(nm_file)
+    !     nm_init = dynamics%nm_init
 
 
-        ! check if NM amp is out of limit
-        do j = 1 , nmodes
-            if (dynvars%nm_amp(j)>dynamics%nm_limit .or. &
-                 dynvars%nm_amp(j)< (-dynamics%nm_limit)) then
-                rstNMA = .true.
-            endif
-        end do
+    !     ! check if the NM files exists
+    !     inquire(file=nm_file, exist=file_exists)
 
-        ! check if the NM files exists
-        inquire(file=nm_prefix, exist=file_exists)
+    !     if (nm_file /= '' .and. file_exists) then
+    !         call read_nma(dynvars%nm_vectors, nm_file, natom, nmodes)
 
-        ! Compute NMA if needed
-        if (rstNMA .or. (.not. file_exists)) then
+    !     else
+    !         ! check if NM amp is out of limit
+    !         do j = 1 , nmodes
+    !             if (dynvars%nm_amp(j)>dynamics%nm_limit .or. &
+    !                 dynvars%nm_amp(j)< (-dynamics%nm_limit)) then
+    !                 rstNMA = .true.
+    !             endif
+    !         end do
 
-            ! Create directory if needed
-            if (.not. file_exists) then
-                call execute_command_line("mkdir "//trim(nm_prefix)&
-                        //" > /dev/null", wait=.true.)
-            endif
+    !         ! check if the NM files exists
+    !         inquire(file=nm_prefix, exist=file_exists)
 
-            ! compute NMA
-            call compute_nma(molecule, dynvars, dynamics)
-            
-            ! Initialize NMMD params
-            dynvars%nm_amp(1:nmodes) = 0.0_wp
-            dynvars%md_coord(1:3, 1:natom) = 0.0_wp
-            dynvars%coord_ref(1:3, 1:natom) = dynvars%coord(1:3, 1:natom) 
+    !         ! Compute NMA if needed
+    !         if (rstNMA .or. (.not. file_exists)) then
 
-            ! Read modes
-            call read_nma(dynvars%nm_vectors, nm_prefix, natom, nmodes)
+    !             ! Create directory if needed
+    !             if (.not. file_exists) then
+    !                 call execute_command_line("mkdir "//trim(nm_prefix)&
+    !                         //" > /dev/null", wait=.true.)
+    !             endif
 
-        end if
+    !             ! compute NMA
+    !             call compute_nma(molecule, dynvars, dynamics)
+                
+    !             ! Initialize NMMD params
+    !             dynvars%nm_amp(1:nmodes) = 0.0_wp
+    !             dynvars%md_coord(1:3, 1:natom) = 0.0_wp
+    !             dynvars%coord_ref(1:3, 1:natom) = dynvars%coord(1:3, 1:natom) 
 
-        return
+    !             ! Read modes
+    !             nm_file = trim(nm_prefix)//"/diagrtb.eigenfacs"
+    !             call read_nma(dynvars%nm_vectors, nm_file, natom, nmodes)
 
-    end subroutine check_nma
+    !         end if
+    !     endif
+
+    !     return
+
+    ! end subroutine check_nma
 
     !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -920,68 +924,68 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine include_id_to_nm_prefix(filename)
+!   subroutine include_id_to_nm_prefix(filename)
 
-    ! formal arguments
-    character(MaxFilename),  intent(inout) :: filename
+!     ! formal arguments
+!     character(MaxFilename),  intent(inout) :: filename
 
-    ! local variables
-    integer                  :: comp, ndigit, id
-    integer                  :: i, j, ci1, ci2, cnumber
-    character(MaxFilename)   :: filename_ori
-    character(10)            :: frmt, cd, cid
+!     ! local variables
+!     integer                  :: comp, ndigit, id
+!     integer                  :: i, j, ci1, ci2, cnumber
+!     character(MaxFilename)   :: filename_ori
+!     character(10)            :: frmt, cd, cid
 
 
-    ! get replica id
-    !
-    id = my_country_no + 1
-    do i = 1, 100
-      comp = 10**i
-      if (id < comp) then
-        ndigit = i
-        exit
-      end if
-    end do
+!     ! get replica id
+!     !
+!     id = my_country_no + 1
+!     do i = 1, 100
+!       comp = 10**i
+!       if (id < comp) then
+!         ndigit = i
+!         exit
+!       end if
+!     end do
 
-    ! check filename
-    !
-    filename_ori = filename
+!     ! check filename
+!     !
+!     filename_ori = filename
 
-    ci1 = scan(filename, '{')
-    ci2 = scan(filename, '}')
+!     ci1 = scan(filename, '{')
+!     ci2 = scan(filename, '}')
 
-    if (ci1 == 0 .or. ci2 ==0) then
-      return
-    end if
+!     if (ci1 == 0 .or. ci2 ==0) then
+!       return
+!     end if
 
-    if (ci1 > 0 .and. ci2 > ci1) then
+!     if (ci1 > 0 .and. ci2 > ci1) then
 
-      write(cd,'(i10)') ndigit
-      frmt = '(i' // trim(adjustl(cd)) // '.' // trim(adjustl(cd)) // ')'
-      write(cid,frmt) id
+!       write(cd,'(i10)') ndigit
+!       frmt = '(i' // trim(adjustl(cd)) // '.' // trim(adjustl(cd)) // ')'
+!       write(cid,frmt) id
 
-      cnumber = len_trim(filename_ori)
-      if (cnumber + ndigit > MaxFilename) &
-         call error_msg('Error: too long filename'//filename_ori)
+!       cnumber = len_trim(filename_ori)
+!       if (cnumber + ndigit > MaxFilename) &
+!          call error_msg('Error: too long filename'//filename_ori)
 
-      j = 0
-      do i = 1, ci1 - 1
-        j = j + 1
-        filename(j:j) = filename_ori(i:i)
-      end do
-      do i = 1, ndigit
-        j = j + 1
-        filename(j:j) = cid(i:i)
-      end do
-      do i = ci2+1, MaxFilename
-        j = j + 1
-        filename(j:j) = filename_ori(i:i)
-      end do
+!       j = 0
+!       do i = 1, ci1 - 1
+!         j = j + 1
+!         filename(j:j) = filename_ori(i:i)
+!       end do
+!       do i = 1, ndigit
+!         j = j + 1
+!         filename(j:j) = cid(i:i)
+!       end do
+!       do i = ci2+1, MaxFilename
+!         j = j + 1
+!         filename(j:j) = filename_ori(i:i)
+!       end do
 
-    end if
+!     end if
 
-    return
+!     return
 
-  end subroutine include_id_to_nm_prefix
+!   end subroutine include_id_to_nm_prefix
 
 end module at_nmmd_mod
