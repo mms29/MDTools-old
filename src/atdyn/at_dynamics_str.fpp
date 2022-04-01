@@ -49,11 +49,6 @@ module at_dynamics_str_mod
     logical             :: random_restart
     integer             :: nm_number
     real(wp)            :: nm_mass
-    real(wp)            :: nm_limit
-    real(wp)            :: elnemo_cutoff
-    integer             :: elnemo_rtb_block
-    character(MaxFilename)     :: elnemo_path
-    character(MaxFilename)     :: nm_prefix
     character(MaxFilename)     :: nm_file
     character(MaxFilename)     :: nm_init
     real(wp)            :: nm_dt
@@ -118,11 +113,9 @@ contains
     dynamics%random_restart       = .true.
     dynamics%nm_number            = 10
     dynamics%nm_mass              = 10
-    dynamics%nm_limit             = 1000
-    dynamics%elnemo_path          = ''
-    dynamics%nm_prefix            = ''
-    dynamics%elnemo_cutoff        = 8.0_wp
-    dynamics%elnemo_rtb_block     = 10
+    dynamics%nm_file              = ''
+    dynamics%nm_init              = ''
+    dynamics%nm_dt                = 0.001_wp
 
     return
 
