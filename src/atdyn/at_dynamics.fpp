@@ -75,11 +75,10 @@ module at_dynamics_mod
     ! NMMD
     integer             :: nm_number            = 10
     real(wp)            :: nm_mass              = 10
-    real(wp)            :: nm_limit             = 1000
-    character(MaxFilename)     :: elnemo_path   = ''
-    character(MaxFilename)     :: nm_prefix     = ''
-    real(wp)            :: elnemo_cutoff        = 8.0_wp
-    integer             :: elnemo_rtb_block     = 10
+    character(MaxFilename)     :: nm_file       = ''
+    character(MaxFilename)     :: nm_init       = ''
+    real(wp)            :: nm_dt                =  0.001_wp
+
 
   end type s_dyn_info
 
@@ -245,16 +244,12 @@ contains
                                dyn_info%nm_number)
     call read_ctrlfile_real   (handle, "NMMD", 'nm_mass',    &
                                dyn_info%nm_mass)
-    call read_ctrlfile_real   (handle, "NMMD", 'nm_limit',    &
-                               dyn_info%nm_limit)
-    call read_ctrlfile_string (handle, "NMMD", 'elnemo_path',    &
-                               dyn_info%elnemo_path)
-    call read_ctrlfile_string (handle, "NMMD", 'nm_prefix',    &
-                               dyn_info%nm_prefix)
-    call read_ctrlfile_real   (handle, "NMMD", 'elnemo_cutoff',    &
-                               dyn_info%elnemo_cutoff)
-    call read_ctrlfile_integer(handle, "NMMD", 'elnemo_rtb_block',    &
-                                dyn_info%elnemo_rtb_block)
+    call read_ctrlfile_string (handle, "NMMD", 'nm_file',    &
+                                dyn_info%nm_file)
+    call read_ctrlfile_string (handle, "NMMD", 'nm_init',    &
+                                dyn_info%nm_init)
+    call read_ctrlfile_real   (handle, "NMMD", 'nm_dt',    &
+                                dyn_info%nm_dt)                            
 
     call end_ctrlfile_section(handle)
 
@@ -323,11 +318,9 @@ contains
         write(MsgOut,'(A)') 'Read_Ctrl_NMMD> Parameters of NMMD'
         write(MsgOut,'(A20,I10)') '  nm_number       = ', dyn_info%nm_number
         write(MsgOut,'(A20,F10.3)') '  nm_mass         = ', dyn_info%nm_mass
-        write(MsgOut,'(A20,F10.3)') '  nm_limit        = ', dyn_info%nm_limit
-        write(MsgOut,'(A20,A)') '  nm_prefix       = ', trim(dyn_info%nm_prefix)
-        write(MsgOut,'(A20,A)') '  elnemo_path     = ', trim(dyn_info%elnemo_path)
-        write(MsgOut,'(A20,F10.3)') '  elnemo_cutoff   = ', dyn_info%elnemo_cutoff
-        write(MsgOut,'(A20,I10)') '  elnemo_rtb_block= ', dyn_info%elnemo_rtb_block
+        write(MsgOut,'(A20,F10.3)') '  nm_dt        = ', dyn_info%nm_dt
+        write(MsgOut,'(A20,A)') '  nm_file       = ', trim(dyn_info%nm_file)
+        write(MsgOut,'(A20,A)') '  nm_init     = ', trim(dyn_info%nm_init)
         write(MsgOut,'(A)') ' '
   
       endif
@@ -464,11 +457,9 @@ contains
     dynamics%final_value      = dyn_info%final_value
     dynamics%nm_number        = dyn_info%nm_number    
     dynamics%nm_mass          = dyn_info%nm_mass      
-    dynamics%nm_limit         = dyn_info%nm_limit     
-    dynamics%elnemo_path      = dyn_info%elnemo_path  
-    dynamics%nm_prefix        = dyn_info%nm_prefix    
-    dynamics%elnemo_cutoff    = dyn_info%elnemo_cutoff      
-    dynamics%elnemo_rtb_block = dyn_info%elnemo_rtb_block  
+    dynamics%nm_file          = dyn_info%nm_file      
+    dynamics%nm_init          = dyn_info%nm_init  
+    dynamics%nm_dt            = dyn_info%nm_dt  
 
     iseed = dyn_info%iseed
     if (rst%rstfile_type == RstfileTypeUndef .or. &

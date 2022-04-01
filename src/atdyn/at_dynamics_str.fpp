@@ -54,6 +54,9 @@ module at_dynamics_str_mod
     integer             :: elnemo_rtb_block
     character(MaxFilename)     :: elnemo_path
     character(MaxFilename)     :: nm_prefix
+    character(MaxFilename)     :: nm_file
+    character(MaxFilename)     :: nm_init
+    real(wp)            :: nm_dt
   end type s_dynamics
 
   type, public:: s_nmmd_dynamics
