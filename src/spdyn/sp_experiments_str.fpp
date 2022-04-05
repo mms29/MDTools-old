@@ -56,7 +56,7 @@ module sp_experiments_str_mod
   end type s_experiments
 
   ! parameters for allocatable variables
-  integer, public, parameter      :: ExperimentsEmfit = 1
+  integer, public, parameter      :: ExperimentsEmfit  = 1
 
   ! subroutines
   public :: alloc_experiments

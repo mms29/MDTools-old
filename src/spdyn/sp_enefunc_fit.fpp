@@ -27,11 +27,16 @@ module sp_enefunc_fit_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! subroutines
@@ -770,7 +775,7 @@ contains
     before_reduce(4:6) = val2(1:3)
     before_reduce(7)   = val3
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(before_reduce, after_reduce, 7, mpi_real8, &
                        mpi_sum, mpi_comm_country, ierror)
 #else

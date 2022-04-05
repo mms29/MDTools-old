@@ -3,7 +3,7 @@
 !  Module   at_dynvars_mod
 !> @brief   define dynamic variables
 !! @authors Takaharu Mori (TM), Yuji Sugita (YS), Chigusa Kobayashi (CK),
-!!          Kiyoshi Yagi (KY)
+!!          Kiyoshi Yagi (KY), Cheng Tan (CT)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -37,6 +37,7 @@ module at_dynvars_mod
   integer, public, save :: DynvarsOut = 6 ! this is necessary for REMD output.
 
   logical,         save :: etitle = .true.
+  logical,         save :: vervose = .true.
 
   ! subroutines
   public  :: setup_dynvars
@@ -128,14 +129,15 @@ contains
 
     ! setup random system
     !
-    if (present(dynamics)) &
+    if (present(dynamics)) then
+
       call random_init(dynamics%iseed)
 
-    if (present(dynamics)) then
       if (allocated(rst%random) .and. dynamics%random_restart) then
         call random_stock_mpi_frombyte(mpi_comm_country, rst%random)
         call random_pull_stock
       end if
+
     end if
 
     ! setup forces
@@ -145,9 +147,11 @@ contains
     ! setup random force
     !
     if (present(dynamics)) then
-      if ((dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) .and. &
+      if ((dynamics%integrator == IntegratorVVER .or.      &
+           dynamics%integrator == IntegratorVVER_CG .or.   &
+           dynamics%integrator == IntegratorNMMD) .and. &
           tpcontrol           == TpcontrolLangevin) then
-        call alloc_dynvars(dynvars, DynvarsLangevin,natom)
+        call alloc_dynvars(dynvars, DynvarsLangevin,natom, nproc_country)
       end if
     end if
 
@@ -291,39 +295,55 @@ contains
     viri_const  => dynvars%virial_const
 
 
-    ! Compute velocities(t + dt)
-    !   v(t+dt) = 0.5*(v(t+3/2dt) + v(t+1/2dt))
-    !
-    if (dynamics%integrator == IntegratorLEAP) then
+    if ((dynamics%integrator /= IntegratorBDEM) .and.  &
+        (dynamics%integrator /= IntegratorBD2N) .and.  &
+        (dynamics%integrator /= IntegratorSDMP)) then
 
-      if (ensemble%tpcontrol == TpcontrolLangevin) then
-        scale_v = sqrt(1.0_wp+0.5_wp*gamma_t*dt)
+      ! Compute velocities(t + dt)
+      !   v(t+dt) = 0.5*(v(t+3/2dt) + v(t+1/2dt))
+      !
+      if (dynamics%integrator == IntegratorLEAP) then
+
+        if (ensemble%tpcontrol == TpcontrolLangevin) then
+          scale_v = sqrt(1.0_wp+0.5_wp*gamma_t*dt)
+        else
+          scale_v = 1.0_wp
+        end if
+
+        vel_full(1:3,1:natom) =                                          &
+              0.5_wp*(vel(1:3,1:natom) + vel_ref(1:3,1:natom))*scale_v
       else
-        scale_v = 1.0_wp
+        vel_full(1:3,1:natom) = vel(1:3,1:natom)
       end if
 
-      vel_full(1:3,1:natom) =                                          &
-              0.5_wp*(vel(1:3,1:natom) + vel_ref(1:3,1:natom))*scale_v
+
+      ! kinetic energy(t+dt) and temperature(t+dt)
+      ! 
+      kex = 0.0_wp
+      key = 0.0_wp
+      kez = 0.0_wp
+
+      do j = 1, natom
+        kex = kex + mass(j)*vel_full(1,j)*vel_full(1,j)
+        key = key + mass(j)*vel_full(2,j)*vel_full(2,j)
+        kez = kez + mass(j)*vel_full(3,j)*vel_full(3,j)
+      end do
+
+      ekin  = 0.5_wp * (kex + key + kez)
+      dynvars%total_kene  = ekin
+      dynvars%temperature = 2.0_wp*ekin/(molecule%num_deg_freedom*KBOLTZ)
+
     else
-      vel_full(1:3,1:natom) = vel(1:3,1:natom)
+
+      kex = 0.0_wp
+      key = 0.0_wp
+      kez = 0.0_wp
+
+      ekin  = 0.0_wp
+      dynvars%total_kene  = ekin
+      dynvars%temperature = ensemble%temperature
+
     end if
-
-
-    ! kinetic energy(t+dt) and temperature(t+dt)
-    ! 
-    kex = 0.0_wp
-    key = 0.0_wp
-    kez = 0.0_wp
-
-    do j = 1, natom
-      kex = kex + mass(j)*vel_full(1,j)*vel_full(1,j)
-      key = key + mass(j)*vel_full(2,j)*vel_full(2,j)
-      kez = kez + mass(j)*vel_full(3,j)*vel_full(3,j)
-    end do
-
-    ekin  = 0.5_wp * (kex + key + kez)
-    dynvars%total_kene  = ekin
-    dynvars%temperature = 2.0_wp*ekin/(molecule%num_deg_freedom*KBOLTZ)
 
 
     totresene = 0.0_wp
@@ -344,6 +364,15 @@ contains
                dynvars%energy%contact            + &
                dynvars%energy%noncontact         + &
                dynvars%energy%solvation          + &
+               dynvars%energy%base_stacking      + &
+               dynvars%energy%base_pairing       + &
+               dynvars%energy%cg_DNA_exv         + &
+               dynvars%energy%cg_IDR_HPS         + &
+               dynvars%energy%cg_IDR_KH          + &
+               dynvars%energy%cg_KH_inter_pro    + &
+               dynvars%energy%cg_exv             + &
+               dynvars%energy%PWMcos             + &
+               dynvars%energy%PWMcosns           + &
                totresene
 
     if (enefunc%dispersion_corr .ne. Disp_Corr_NONE) then
@@ -425,6 +454,7 @@ contains
       dynvars%internal_pressure = 0.0_wp
       dynvars%external_pressure = 0.0_wp
 
+      virial_sum(1:3,1:3) = 0.0_wp
     end if
 
     if (dynvars%volume /= 0.0_wp) then
@@ -465,7 +495,9 @@ contains
       ekin_old = 0.5_wp * ekin_old
       ekin_new = 0.5_wp * ekin_new
 
-    else if (dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) then
+    else if (dynamics%integrator == IntegratorVVER .or.       &
+             dynamics%integrator == IntegratorVVER_CG .or.    &
+             dynamics%integrator == IntegratorNMMD) then
 
       do j = 1, natom
         rmsg = rmsg + force(1,j)**2 + force(2,j)**2 + force(3,j)**2
@@ -541,6 +573,15 @@ contains
       ifm = ifm+1
     endif
 
+    if (enefunc%morph_flag) then
+      if (dynvars%iterations == 1) then
+        etitle = .true.
+      endif
+      write(category(ifm),frmt) 'ITERATION'
+      values(ifm) = dynvars%iterations
+      ifm = ifm+1
+    endif
+
     write(category(ifm),frmt) 'POTENTIAL_ENE'
     values(ifm) = dynvars%total_pene
     ifm = ifm+1
@@ -561,13 +602,13 @@ contains
       ifm = ifm+1
     endif
 
-    if (enefunc%num_bonds > 0) then
+    if (enefunc%num_bonds > 0 .or. enefunc%num_bonds_quartic > 0) then
       write(category(ifm),frmt) 'BOND'
       values(ifm) = dynvars%energy%bond
       ifm = ifm+1
     endif
 
-    if (enefunc%num_angles > 0 .or. enefunc%num_ureys > 0) then
+    if (enefunc%num_angles > 0 .or. enefunc%num_ureys > 0 .or. enefunc%num_angflex > 0) then
       write(category(ifm),frmt) 'ANGLE'
       values(ifm) = dynvars%energy%angle
       ifm = ifm+1
@@ -579,14 +620,15 @@ contains
       endif
     endif
 
-    if (enefunc%num_dihedrals > 0 .or. enefunc%num_rb_dihedrals > 0) then
+    if (enefunc%num_dihedrals > 0 .or. enefunc%num_rb_dihedrals > 0 .or. enefunc%num_dihedflex > 0) then
       write(category(ifm),frmt) 'DIHEDRAL'
       values(ifm) = dynvars%energy%dihedral
       ifm = ifm+1
     endif
 
     if (enefunc%forcefield /= ForcefieldCAGO .and.  &
-        enefunc%forcefield /= ForcefieldKBGO) then
+        enefunc%forcefield /= ForcefieldKBGO .and. &
+        enefunc%forcefield /= ForcefieldRESIDCG) then
 
       if (enefunc%num_impropers > 0 ) then
         write(category(ifm),frmt) 'IMPROPER'
@@ -605,6 +647,53 @@ contains
       endif
     endif
 
+    ! ~CG~ 3SPN.2C DNA
+    if (enefunc%forcefield == ForcefieldRESIDCG) then
+      if ( enefunc%num_base_stack > 0 ) then
+        write(category(ifm),frmt) 'BASE_STACK'
+        values(ifm) = dynvars%energy%base_stacking
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_DNA_base_pair_calc) then
+        write(category(ifm),frmt) 'BASE_PAIR'
+        values(ifm) = dynvars%energy%base_pairing
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_DNA_exv_calc ) then
+        write(category(ifm),frmt) 'DNA_exv'
+        values(ifm) = dynvars%energy%cg_DNA_exv
+        ifm = ifm+1
+      end if
+    end if
+    
+    if (enefunc%forcefield == ForcefieldRESIDCG) then
+      if ( enefunc%cg_IDR_HPS_calc ) then
+        write(category(ifm),frmt) 'IDR_HPS'
+        values(ifm) = dynvars%energy%cg_IDR_HPS
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_IDR_KH_calc ) then
+        write(category(ifm),frmt) 'IDR_KH'
+        values(ifm) = dynvars%energy%cg_IDR_KH
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_KH_calc ) then
+        write(category(ifm),frmt) 'pro_pro_KH'
+        values(ifm) = dynvars%energy%cg_KH_inter_pro
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_pwmcos_calc) then
+        write(category(ifm),frmt) 'PWMcos'
+        values(ifm) = dynvars%energy%PWMcos
+        ifm = ifm+1
+      end if
+      if ( enefunc%cg_pwmcosns_calc) then
+        write(category(ifm),frmt) 'PWMcosns'
+        values(ifm) = dynvars%energy%PWMcosns
+        ifm = ifm+1
+      end if
+    end if
+    
     if (enefunc%forcefield == ForcefieldAAGO .or. &
         enefunc%forcefield == ForcefieldCAGO .or. &
         enefunc%forcefield == ForcefieldKBGO) then
@@ -616,6 +705,41 @@ contains
       write(category(ifm),frmt) 'NON-NATIVE_CONT'
       values(ifm) = dynvars%energy%noncontact
       ifm = ifm+1
+
+      write(category(ifm),frmt) 'ELECT'
+      values(ifm) = dynvars%energy%electrostatic
+      ifm = ifm+1
+
+    else if (enefunc%forcefield == ForcefieldRESIDCG) then
+
+      write(category(ifm),frmt) 'NATIVE_CONTACT'
+      values(ifm) = dynvars%energy%contact
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'CG_EXV'
+      values(ifm) = dynvars%energy%cg_exv
+      ifm = ifm+1
+
+      if ( enefunc%cg_ele_calc) then
+        write(category(ifm),frmt) 'ELECT'
+        values(ifm) = dynvars%energy%electrostatic
+        ifm = ifm+1
+      end if
+
+    else if (enefunc%forcefield == ForcefieldSOFT) then
+
+      write(category(ifm),frmt) 'NATIVE_CONTACT'
+      values(ifm) = dynvars%energy%contact
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'NON-NATIVE_CONT'
+      values(ifm) = dynvars%energy%noncontact
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'ELECT'
+      values(ifm) = dynvars%energy%electrostatic
+      ifm = ifm+1
+
     else
 
       write(category(ifm),frmt) 'VDWAALS'
@@ -637,8 +761,22 @@ contains
         values(ifm) = dynvars%energy%solvation
         ifm = ifm+1
       endif
-
     endif
+
+    if (enefunc%morph_flag .and. .not. enefunc%morph_restraint_flag) then
+      write(category(ifm),frmt) 'DRMS1'
+      values(ifm) = dynvars%energy%drms(1)
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'DRMS2'
+      values(ifm) = dynvars%energy%drms(2)
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'MORPH'
+      values(ifm) = dynvars%energy%morph
+      ifm = ifm+1
+    endif
+
 
     if (enefunc%num_restraintfuncs >0) then
       ene_restraint =  &
@@ -668,6 +806,20 @@ contains
       write(category(ifm),frmt) 'TMD_CV'
       values(ifm) = enefunc%target_value
       ifm = ifm+1
+    endif
+
+    if (enefunc%num_basins > 1) then
+      do i = 1, enefunc%num_basins
+        write(category(ifm),frmt_res) 'MUL_BASIN', i
+        values(ifm) = dynvars%energy%basin_ratio(i)
+        ifm = ifm+1
+      end do
+      do i = 1, enefunc%num_basins
+        write(category(ifm),frmt_res) 'BASIN_ENE', i
+        values(ifm) = dynvars%energy%basin_energy(i)
+        ifm = ifm+1
+      end do
+
     endif
 
     if (present(ensemble)) then
@@ -771,7 +923,9 @@ contains
       end do
 
       write(DynvarsOut,'(A80)') ' --------------- --------------- --------------- --------------- ---------------'
-      etitle = .false.
+      if (nrep_per_proc == 1) vervose = .false.
+      if (.not. vervose) etitle = .false.
+      vervose = .false.
     end if
 
     write(DynvarsOut,'(A5,1x,I10,$)') 'INFO:', dynvars%step
@@ -819,6 +973,15 @@ contains
     real(wp),        pointer :: cmaps, disp_corr
     real(wp),        pointer :: vdwaals, elec
     real(wp),        pointer :: contact, noncontact
+    real(wp),        pointer :: base_stack
+    real(wp),        pointer :: base_pair
+    real(wp),        pointer :: cg_DNA_exv
+    real(wp),        pointer :: cg_IDR_HPS
+    real(wp),        pointer :: cg_IDR_KH
+    real(wp),        pointer :: cg_KH
+    real(wp),        pointer :: cg_exv
+    real(wp),        pointer :: PWMcos
+    real(wp),        pointer :: PWMcosns
 
 
     step        = 0
@@ -877,6 +1040,15 @@ contains
     urey_b     => dynvars%energy%urey_bradley
     dihedrals  => dynvars%energy%dihedral
     impropers  => dynvars%energy%improper
+    base_stack => dynvars%energy%base_stacking
+    base_pair  => dynvars%energy%base_pairing
+    cg_DNA_exv => dynvars%energy%cg_DNA_exv
+    cg_IDR_HPS => dynvars%energy%cg_IDR_HPS
+    cg_IDR_KH  => dynvars%energy%cg_IDR_KH
+    cg_KH      => dynvars%energy%cg_KH_inter_pro
+    cg_exv     => dynvars%energy%cg_exv
+    PWMcos     => dynvars%energy%PWMcos
+    PWMcosns   => dynvars%energy%PWMcosns
     elec       => dynvars%energy%electrostatic
     vdwaals    => dynvars%energy%van_der_waals
     cmaps      => dynvars%energy%cmap
@@ -921,11 +1093,39 @@ contains
       if (enefunc%dispersion_corr /= Disp_Corr_NONE) then
         write(DynvarsOut,'(A79)') 'DYNA  DISP:       Disp-Corr                                                    '
       endif
+      if (enefunc%num_base_stack > 0) then
+        write(DynvarsOut,'(A79)') 'DYNA DNA:     BASE_STACKING                                                    '
+      end if
+      if (enefunc%cg_DNA_base_pair_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA DNA:     BASE_PAIRING                                                     '
+      end if
+      if (enefunc%cg_DNA_exv_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA DNA:               EXV                                                    '
+      end if
+      if (enefunc%cg_IDR_HPS_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA IDR:               HPS                                                    '
+      end if
+      if (enefunc%cg_IDR_KH_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA IDR:                KH                                                    '
+      end if
+      if (enefunc%cg_KH_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA pro-pro:            KH                                                    '
+      end if
+      if (enefunc%cg_pwmcos_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA protein-DNA:  PWMcos                                                      '
+      end if
+      if (enefunc%cg_pwmcosns_calc) then
+        write(DynvarsOut,'(A79)') 'DYNA protein-DNA:  PWMcosns                                                    '
+      end if
 
       if (enefunc%forcefield == ForcefieldAAGO .or. &
           enefunc%forcefield == ForcefieldCAGO .or. &
+          enefunc%forcefield == ForcefieldRESIDCG .or. &
           enefunc%forcefield == ForcefieldKBGO) then
         write(DynvarsOut,'(A79)') 'DYNA GO:            CONTACT     NCONTACT                                       '
+        write(DynvarsOut,'(A79)') 'DYNA CG:                EXV                                                    '
+      else if (enefunc%forcefield == ForcefieldSOFT) then
+        write(DynvarsOut,'(A79)') 'DYNA SOFT:          CONTACT     NCONTACT        ELEC                           '
       else
         write(DynvarsOut,'(A79)') 'DYNA EXTERN:        VDWaals         ELEC       HBONds          ASP         USER'
       end if
@@ -936,7 +1136,9 @@ contains
 
       write(DynvarsOut,'(A79)') 'DYNA PRESS:            VIRE         VIRI       PRESSE       PRESSI       VOLUme'
       write(DynvarsOut,'(A79)') ' ----------       ---------    ---------    ---------    ---------    ---------'
-      etitle = .false.
+      if (nrep_per_proc == 1) vervose = .false.
+      if (.not. vervose) etitle = .false.
+      vervose = .false.
     end if
 
 
@@ -952,11 +1154,39 @@ contains
     if (enefunc%dispersion_corr /= Disp_Corr_NONE) then
       write(DynvarsOut,'(A14,F13.5)')    'DYNA DISP>    ', disp_corr
     end if
+    if (enefunc%num_base_stack > 0) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA DNA>     ', base_stack
+    end if
+    if (enefunc%cg_DNA_base_pair_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA DNA>     ', base_pair
+    end if
+    if (enefunc%cg_DNA_exv_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA DNA>     ', cg_DNA_exv
+    end if
+    if (enefunc%cg_IDR_HPS_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA IDR>     ', cg_IDR_HPS
+    end if
+    if (enefunc%cg_IDR_KH_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA IDR>     ', cg_IDR_KH
+    end if
+    if (enefunc%cg_KH_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA pro-pro> ', cg_KH
+    end if
+    if (enefunc%cg_pwmcos_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA PWMcos>  ', PWMcos
+    end if
+    if (enefunc%cg_pwmcosns_calc) then
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA PWMcosns>', PWMcosns
+    end if
 
     if (enefunc%forcefield == ForcefieldAAGO .or.  &
         enefunc%forcefield == ForcefieldCAGO .or.  &
+        enefunc%forcefield == ForcefieldRESIDCG .or.  &
         enefunc%forcefield == ForcefieldKBGO) then
       write(DynvarsOut,'(A14,2F13.5)')   'DYNA GO>      ', contact, noncontact
+      write(DynvarsOut,'(A14,F13.5)')    'DYNA CG>      ', cg_exv
+    else if (enefunc%forcefield == ForcefieldSOFT) then
+      write(DynvarsOut,'(A14,3F13.5)')   'DYNA SOFT>    ', contact, noncontact, elec
     else
       write(DynvarsOut,'(A14,5F13.5)')   'DYNA EXTERN>  ', vdwaals, elec, hbonds, asp, user
     end if
@@ -1004,6 +1234,15 @@ contains
 
     real(wp),        pointer :: edihed, eimprp
     real(wp),        pointer :: eelect, evdw
+    real(wp),        pointer :: ebase_stack
+    real(wp),        pointer :: ebase_pair
+    real(wp),        pointer :: ecg_DNA_exv
+    real(wp),        pointer :: ecg_IDR_HPS
+    real(wp),        pointer :: ecg_IDR_KH
+    real(wp),        pointer :: ecg_KH
+    real(wp),        pointer :: ecg_exv
+    real(wp),        pointer :: ePWMcos
+    real(wp),        pointer :: ePWMcosns
 
 
     ! restraint energy
@@ -1029,14 +1268,23 @@ contains
       end select
     end do
 
-    nstep     =  dynvars%step
-    ebond     =  dynvars%energy%bond  + restdist
-    eangle    =  dynvars%energy%angle + dynvars%energy%urey_bradley
-    edihed    => dynvars%energy%dihedral
-    eimprp    => dynvars%energy%improper
-    eelect    => dynvars%energy%electrostatic
-    evdw      => dynvars%energy%van_der_waals
-    eboundary =  posicon
+    nstep       =  dynvars%step
+    ebond       =  dynvars%energy%bond  + restdist
+    eangle      =  dynvars%energy%angle + dynvars%energy%urey_bradley
+    edihed      => dynvars%energy%dihedral
+    eimprp      => dynvars%energy%improper
+    eelect      => dynvars%energy%electrostatic
+    evdw        => dynvars%energy%van_der_waals
+    ebase_stack => dynvars%energy%base_stacking
+    ebase_pair  => dynvars%energy%base_pairing
+    ecg_DNA_exv => dynvars%energy%cg_DNA_exv
+    ecg_IDR_HPS => dynvars%energy%cg_IDR_HPS
+    ecg_IDR_KH  => dynvars%energy%cg_IDR_KH
+    ecg_KH      => dynvars%energy%cg_KH_inter_pro
+    ecg_exv     => dynvars%energy%cg_exv
+    ePWMcos     => dynvars%energy%PWMcos
+    ePWMcosns   => dynvars%energy%PWMcosns
+    eboundary   =  posicon
     
     kinetic   =  dynvars%total_kene
     total     =  dynvars%total_energy
@@ -1048,6 +1296,8 @@ contains
       write(DynvarsOut,'(A)') 'Output_Energy> NAMD_Style is used'
       write(DynvarsOut,'(A)') ' '
       write(DynvarsOut,'(A75)') 'ETITLE:      TS           BOND          ANGLE          DIHED          IMPRP'
+      write(DynvarsOut,'(A75)') '  BASE_STACKING   BASE_PAIRING        DNA_EXV         PWMCOS       PWMcosns'
+      write(DynvarsOut,'(A75)') '        IDR_HPS         IDR_KH     PRO_PRO_KH            EXV               '
       write(DynvarsOut,'(A75)') '          ELECT            VDW       BOUNDARY           MISC        KINETIC'
       write(DynvarsOut,'(A75)') '          TOTAL           TEMP         TOTAL2         TOTAL3        TEMPAVG'
       write(DynvarsOut,'(A75)') '       PRESSURE      GPRESSURE         VOLUME       PRESSAVG      GPRESSAVG'
@@ -1059,6 +1309,8 @@ contains
     ! write energy in NAMD-style
     !
     write(DynvarsOut,'(A7,I8,4F15.4)')'ENERGY:', nstep, ebond, eangle, edihed, eimprp
+    write(DynvarsOut,'(5F15.4)') ebase_stack, ebase_pair, ecg_DNA_exv, ePWMcos, ePWMcosns
+    write(DynvarsOut,'(4F15.4)') ecg_IDR_HPS, ecg_IDR_KH, ecg_KH, ecg_exv
     write(DynvarsOut,'(5F15.4)') eelect, evdw, eboundary, misc, kinetic
     write(DynvarsOut,'(5F15.4)') total, temp, total2, total3, tempavg
     write(DynvarsOut,'(5F15.4)') pressure, gpressure, volume, pressavg, gpressavg
@@ -1093,6 +1345,15 @@ contains
     real(wp)                 :: temperature, pressi, presse
     real(wp)                 :: disp_corr, pres_dc
     real(wp)                 :: noncontact, contact
+    real(wp)                 :: base_stack
+    real(wp)                 :: base_pair
+    real(wp)                 :: cg_DNA_exv
+    real(wp)                 :: cg_IDR_HPS
+    real(wp)                 :: cg_IDR_KH
+    real(wp)                 :: cg_KH
+    real(wp)                 :: cg_exv
+    real(wp)                 :: PWMcos
+    real(wp)                 :: PWMcosns
     integer                  :: i, step
 
 
@@ -1107,6 +1368,15 @@ contains
     elec        = dynvars%energy%electrostatic * CAL2JOU
     noncontact  = dynvars%energy%noncontact    * CAL2JOU
     contact     = dynvars%energy%contact       * CAL2JOU
+    base_stack  = dynvars%energy%base_stacking * CAL2JOU
+    base_pair   = dynvars%energy%base_pairing  * CAL2JOU
+    cg_DNA_exv  = dynvars%energy%cg_DNA_exv    * CAL2JOU
+    cg_IDR_HPS  = dynvars%energy%cg_IDR_HPS    * CAL2JOU
+    cg_IDR_KH   = dynvars%energy%cg_IDR_KH     * CAL2JOU
+    cg_KH       = dynvars%energy%cg_KH_inter_pro * CAL2JOU
+    cg_exv      = dynvars%energy%cg_exv        * CAL2JOU
+    PWMcos      = dynvars%energy%PWMcos        * CAL2JOU
+    PWMcosns    = dynvars%energy%PWMcosns      * CAL2JOU
 
     restdist = 0.0_wp
     posicon  = 0.0_wp
@@ -1156,14 +1426,65 @@ contains
     write(DynvarsOut,'(5ES15.5E2)') &
          bonds,angles,urey_b,dihedrals,impropers
 
+    if ( enefunc%forcefield == ForcefieldRESIDCG ) then
+      if ( enefunc%num_base_stack > 0 ) then
+        write(DynvarsOut,'(A15)') 'Base Stacking'
+        write(DynvarsOut,'(1ES15.5E2)') &
+            base_stack
+      end if
+      if ( enefunc%cg_DNA_base_pair_calc ) then
+        write(DynvarsOut,'(A15)') 'Base Pairing'
+        write(DynvarsOut,'(1ES15.5E2)') &
+            base_pair
+      end if
+      if ( enefunc%cg_DNA_exv_calc ) then
+        write(DynvarsOut,'(A15)') 'DNA exv'
+        write(DynvarsOut,'(1ES15.5E2)') cg_DNA_exv
+      end if
+      if ( enefunc%cg_IDR_HPS_calc ) then
+        write(DynvarsOut,'(A15)') 'IDR HPS'
+        write(DynvarsOut,'(1ES15.5E2)') cg_IDR_HPS
+      end if
+      if ( enefunc%cg_IDR_KH_calc ) then
+        write(DynvarsOut,'(A15)') 'IDR KH'
+        write(DynvarsOut,'(1ES15.5E2)') cg_IDR_KH
+      end if
+      if ( enefunc%cg_KH_calc ) then
+        write(DynvarsOut,'(A15)') 'pro-pro KH'
+        write(DynvarsOut,'(1ES15.5E2)') cg_KH
+      end if
+      if ( enefunc%cg_pwmcos_calc ) then
+        write(DynvarsOut,'(A15)') 'PWMcos'
+        write(DynvarsOut,'(1ES15.5E2)') PWMcos
+      end if
+      if ( enefunc%cg_pwmcosns_calc ) then
+        write(DynvarsOut,'(A15)') 'PWMcosns'
+        write(DynvarsOut,'(1ES15.5E2)') PWMcosns
+      end if
+      write(DynvarsOut,'(A15)') 'general exv'
+      write(DynvarsOut,'(1ES15.5E2)') cg_exv
+    end if
+
     if (enefunc%forcefield == ForcefieldAAGO .or. &
-             enefunc%forcefield == ForcefieldCAGO .or. &
-             enefunc%forcefield == ForcefieldKBGO) then
+        enefunc%forcefield == ForcefieldCAGO .or. &
+        enefunc%forcefield == ForcefieldRESIDCG .or. &
+        enefunc%forcefield == ForcefieldKBGO) then
       write(DynvarsOut,'(5A15)') &
            ' Contact  ', ' Noncontact    ', 'Position Rest.', 'Potential',   &
            'Kinetic En.'
       write(DynvarsOut,'(5ES15.5E2)') &
            contact,noncontact,posicon,energy,totke
+
+    else if (enefunc%forcefield == ForcefieldSOFT) then
+      write(DynvarsOut,'(5A15)') &
+           'Contact', 'Noncontact', 'Coulomb(SR)', 'Position Rest.', 'Potential'
+      write(DynvarsOut,'(5ES15.5E2)') &
+           contact,noncontact,elec,posicon,energy
+      write(DynvarsOut,'(1A15)') &
+           'Kinetic En.'
+      write(DynvarsOut,'(1ES15.5E2)') &
+           totke
+
     else if (enefunc%dispersion_corr == Disp_Corr_NONE) then
       write(DynvarsOut,'(5A15)') &
            'LJ (1-4,SR', ' Coulomb(1-4,SR', 'Position Rest.', 'Potential',   &

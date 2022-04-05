@@ -38,6 +38,7 @@ module at_minimize_mod
   use mpi_parallel_mod
   use constants_mod
   use at_qmmm_mod
+  use structure_check_mod
 
   implicit none
   private
@@ -58,22 +59,33 @@ module at_minimize_mod
     ! For SD
     real(wp)         :: force_scale_init    = 0.01_wp
     real(wp)         :: force_scale_max     = 0.1_wp
+!    real(wp)         :: force_scale_init = 0.00005_wp
+!    real(wp)         :: force_scale_max  = 0.0001_wp
 
     ! For LBFGS
     integer          :: ncorrection         = 10
     logical          :: lbfgs_bnd           = .true.
-    logical          :: lbfgs_bnd_qmonly    = .true.
+    logical          :: lbfgs_bnd_qmonly    = .false.
     real(wp)         :: lbfgs_bnd_maxmove   = 0.1_wp
 
     ! For LBFGS - micro-iteration
     logical          :: macro               = .false.
+    integer          :: start_micro         = 2
     integer          :: nsteps_micro        = 100
     real(wp)         :: tol_rmsg_micro      = -1.0_wp
     real(wp)         :: tol_maxg_micro      = -1.0_wp
     character(256)   :: macro_select_index  = ''
-    logical          :: init_lbfgs_micro    = .true.
+
+    ! For structure check
+    logical            :: check_structure      = .false.
+    logical            :: fix_ring_error       = .false.
+    logical            :: fix_chirality_error  = .false.
+    character(MaxLine) :: exclude_ring_grpid   = ''
+    character(MaxLine) :: exclude_chiral_grpid = ''
 
   end type s_min_info
+
+  integer, parameter     :: metric = 10
 
   ! subroutines
   public  :: show_ctrl_minimize
@@ -89,6 +101,7 @@ module at_minimize_mod
   public  :: micro_iter
   public  :: add_fixatm
   private :: delete_element
+  private :: calc_rmsg
 
 contains
 
@@ -138,11 +151,18 @@ contains
         write(MsgOut,'(A)') ' '
         write(MsgOut,'(A)') '# for micro-iteration'
         write(MsgOut,'(A)') '# macro        = NO    # do macro/micro iteration for QM/MM'
+        write(MsgOut,'(A)') '# start_micro  = 2     # step number to start micro iteration'
         write(MsgOut,'(A)') '# nsteps_micro = 100   # number of minimization steps in micro iteration'
         write(MsgOut,'(A)') '# tol_rmsg_micro = 2.7D-01  # tolerance for RMS gradient in micro iteration'
         write(MsgOut,'(A)') '# tol_maxg_micro = 4.1D-01  # tolerance for RMS gradient in micro iteration'
         write(MsgOut,'(A)') '# macro_select_index = 1 2  # atoms optimized in macro-iteration'
-!ky        write(MsgOut,'(A)') '# init_lbfgs_micro   = YES  # initialize LBFGS every micro iteration'
+        write(MsgOut,'(A)') ' '
+        write(MsgOut,'(A)') '# for structure check'
+        write(MsgOut,'(A)') '# check_structure      = NO   # check structure'
+        write(MsgOut,'(A)') '# fix_ring_error       = NO   # fix ring penetration'
+        write(MsgOut,'(A)') '# fix_chirality_error  = NO   # fix chirality error'
+        write(MsgOut,'(A)') '# exclude_ring_grpid   =      # exclusion list for ring error fix'
+        write(MsgOut,'(A)') '# exclude_chiral_grpid =      # exclusion list for chirality error fix'
         write(MsgOut,'(A)') ' '
 
 
@@ -235,7 +255,8 @@ contains
     ! LBFGS - micro-iteration
     call read_ctrlfile_logical(handle, Section, 'macro',                    &
                                min_info%macro)
-    min_info%nsteps_micro = min_info%nsteps
+    call read_ctrlfile_integer(handle, Section, 'start_micro',              &
+                               min_info%start_micro)
     call read_ctrlfile_integer(handle, Section, 'nsteps_micro',             &
                                min_info%nsteps_micro)
     call read_ctrlfile_real   (handle, Section, 'tol_rmsg_micro',           &
@@ -244,8 +265,18 @@ contains
                                min_info%tol_maxg_micro)
     call read_ctrlfile_string (handle, Section, 'macro_select_index',       &
                                min_info%macro_select_index)
-    call read_ctrlfile_logical(handle, Section, 'init_lbfgs_micro',         &
-                               min_info%init_lbfgs_micro)
+
+    ! For structure check
+    call read_ctrlfile_logical(handle, Section, 'check_structure',          &
+                               min_info%check_structure)
+    call read_ctrlfile_logical(handle, Section, 'fix_ring_error',           &
+                               min_info%fix_ring_error)
+    call read_ctrlfile_logical(handle, Section, 'fix_chirality_error',      &
+                               min_info%fix_chirality_error)
+    call read_ctrlfile_string (handle, Section, 'exclude_ring_grpid',       &
+                               min_info%exclude_ring_grpid)
+    call read_ctrlfile_string (handle, Section, 'exclude_chiral_grpid',     &
+                               min_info%exclude_chiral_grpid)
 
     call end_ctrlfile_section(handle)
 
@@ -281,6 +312,14 @@ contains
     !
     if (main_rank) then
       write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Parameters of MIN'
+
+      if (min_info%macro .and. min_info%start_micro < 2) then
+        write(MsgOut,'(A,I5)')  &
+        ' Warning: start_micro =', min_info%start_micro
+        write(MsgOut,'(A)')  &
+        ' Warning: start_micro must be larger than or equal to 2. It is re-set to 2.'  
+        min_info%start_micro = 2
+      end if
 
       write(MsgOut,'(A,A10,A,I10)')       &
             '  method                     = ', MinimizeMethodTypes(min_info%method), &
@@ -346,6 +385,8 @@ contains
       if (min_info%macro) then
         write(MsgOut, '(A,A,I10)')        &
             '  macro                      =        yes', &
+            '  start_micro                = ', min_info%start_micro
+        write(MsgOut, '(A,I10)')        &
             '  nsteps_micro               = ', min_info%nsteps_micro
         write(MsgOut,'(A,E10.2,A,E10.2)')         &
             '  tol_rmsg_micro             = ', min_info%tol_rmsg_micro, &
@@ -357,20 +398,29 @@ contains
           write(MsgOut,'(A)')             &
             '  macro_select_index         =  qmatm'
         end if
-!ky        if (min_info%init_lbfgs_micro) then
-!ky          write(MsgOut,'(A)')             &
-!ky            '  init_lbfgs_micro           =        yes'
-!ky        else
-        if (.not. min_info%init_lbfgs_micro) then
-          write(MsgOut,'(A)')             &
-            '  init_lbfgs_micro           =         no'
-        end if
 
       else
         write(MsgOut, '(A)')              &
             '  macro                      =         no'
 
       end if
+
+      if (min_info%check_structure) then
+        write(MsgOut,'(A,$)') '  check_structure            =        yes'
+      else
+        write(MsgOut,'(A,$)') '  check_structure            =         no'
+      end if
+      if (min_info%fix_ring_error) then
+        write(MsgOut,'(A)')   '  fix_ring_error             =        yes'
+      else
+        write(MsgOut,'(A)')   '  fix_ring_error             =         no'
+      end if
+      if (min_info%fix_chirality_error) then
+        write(MsgOut,'(A)')   '  fix_chirality_error        =        yes'
+      else
+        write(MsgOut,'(A)')   '  fix_chirality_error        =         no'
+      end if
+
 
       write(MsgOut,'(A)') ' '
     end if
@@ -381,38 +431,36 @@ contains
     if (main_rank) then
       found_error = .false.
 
-      if (min_info%eneout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%eneout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in eneout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, eneout_period) is not ZERO'
-        found_error = .true.
+      if (min_info%eneout_period > 0) then
+        if (mod(min_info%nsteps, min_info%eneout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in eneout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, eneout_period) is not ZERO'
+          found_error = .true.
+        end if
       end if
 
-      if (min_info%crdout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%crdout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in crdout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, crdout_period) is not ZERO'
-        found_error = .true.
+      if (min_info%crdout_period > 0) then
+        if (mod(min_info%nsteps, min_info%crdout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in crdout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, crdout_period) is not ZERO'
+          found_error = .true.
+        end if
       end if
 
-      if (min_info%rstout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%rstout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in rstout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, rstout_period) is not ZERO'
-        found_error = .true.
+      if (min_info%rstout_period > 0) then
+        if (mod(min_info%nsteps, min_info%rstout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in rstout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, rstout_period) is not ZERO'
+          found_error = .true.
+        end if
       end if
 
-      if (min_info%nbupdate_period > 0 .and.                      &
-          mod(min_info%nsteps, min_info%nbupdate_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in nbupdate_period'
-        write(MsgOut,'(A)') '  mod(nsteps, nbupdate_period) is not ZERO'
-        found_error = .true.
-      end if
-
-      if (min_info%method /= MinimizeMethodLBFGS .and. min_info%macro) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in macro'
-        write(MsgOut,'(A)') '  micro-iteration is available with Method=LBFGS only'
-        found_error = .true.
+      if (min_info%nbupdate_period > 0) then
+        if (mod(min_info%nsteps, min_info%nbupdate_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in nbupdate_period'
+          write(MsgOut,'(A)') '  mod(nsteps, nbupdate_period) is not ZERO'
+          found_error = .true.
+        end if
       end if
 
       if (found_error) then
@@ -473,6 +521,7 @@ contains
     minimize%tol_rmsg         = min_info%tol_rmsg
     minimize%tol_maxg         = min_info%tol_maxg
     minimize%verbose          = min_info%verbose
+    minimize%check_structure  = min_info%check_structure
 
     if (out_info%dcdfile /= '' .and. minimize%crdout_period <= 0) &
       minimize%crdout_period = minimize%nsteps
@@ -482,11 +531,32 @@ contains
     minimize%eneout           = .false.
     minimize%crdout           = .false.
     minimize%rstout           = .false.
+    minimize%eneout_short     = .false.
+
+    minimize%macro            = min_info%macro
+    if (.not. qmmm%do_qmmm) then
+      if (min_info%macro) then
+        if (main_rank) then
+          write(MsgOut,'(A)')  &
+            "Setup_Minimize> Warning: No QM/MM input is given. Turning off macro."
+          write(MsgOut,*)
+        end if
+        minimize%macro = .false.
+      end if
+      if (min_info%lbfgs_bnd_qmonly) &
+        minimize%lbfgs_bnd_qmonly = .false.
+    end if
 
     ! SD
     if (minimize%method == MinimizeMethodSD) then
       minimize%force_scale_init = min_info%force_scale_init
       minimize%force_scale_max  = min_info%force_scale_max
+
+      if (qmmm%do_qmmm .and. minimize%macro) then
+        call error_msg('Setup_Minimize> Error: macro/micro-iteration is not &
+                       &available for SD. Use method=LBFGS instead.')
+      end if
+
     end if
 
     ! LBFGS
@@ -516,22 +586,10 @@ contains
       minimize%lbfgs_bnd_maxmove = min_info%lbfgs_bnd_maxmove
 
       ! LBFGS - micro-iteration
-      minimize%macro            = min_info%macro
+      minimize%start_micro      = min_info%start_micro
       minimize%nsteps_micro     = min_info%nsteps_micro
       minimize%tol_rmsg_micro   = min_info%tol_rmsg_micro
       minimize%tol_maxg_micro   = min_info%tol_maxg_micro
-      minimize%init_lbfgs_micro = min_info%init_lbfgs_micro
-      minimize%init_lbfgs       = .true.
-
-      if (.not. qmmm%do_qmmm) then
-        if (minimize%macro) then
-          if (main_rank) write(MsgOut,'(A)')  &
-                  "Warning: No QM/MM input is given. Turning off macro."
-          minimize%macro = .false.
-        end if
-        if (minimize%lbfgs_bnd_qmonly) &
-          minimize%lbfgs_bnd_qmonly = .false.
-      end if
 
       if (minimize%macro) qmmm%qm_get_esp = .true.
 
@@ -917,30 +975,37 @@ contains
 
     ! MIN main loop
     !
-    select case (minimize%method)
+    if( minimize%nsteps > 0 ) then
+      select case (minimize%method)
 
-    case (MinimizeMethodSD)
+      case (MinimizeMethodSD)
 
-      call steepest_descent (output, molecule, enefunc, dynvars, minimize, &
-                             pairlist, boundary)
+        call steepest_descent (output, molecule, enefunc, dynvars, minimize, &
+                               pairlist, boundary)
 
-    case (MinimizeMethodLBFGS)
+      case (MinimizeMethodLBFGS)
 
-      if (.not. minimize%macro) then
-        call minimize_lbfgs (output, molecule, enefunc, dynvars, minimize, &
-                             pairlist, boundary)
-      else
-        call macro_iter (output, molecule, enefunc, dynvars, minimize, &
-                         pairlist, boundary)
-      end if
+        if (.not. minimize%macro) then
+          call minimize_lbfgs (output, molecule, enefunc, dynvars, minimize, &
+                               pairlist, boundary)
+        else
+          call macro_iter (output, molecule, enefunc, dynvars, minimize, &
+                           pairlist, boundary)
+        end if
 
-      call dealloc_minimize(minimize, MinimizeLBFGS)
+        call dealloc_minimize(minimize, MinimizeLBFGS)
 
-    end select
+      end select
+    end if
 
     ! close output files
     !
     call close_output(output)
+
+    ! check structure
+    !
+    call perform_structure_check(dynvars%coord, minimize%check_structure, &
+                                 .false., .false., .true.)
 
     return
 
@@ -976,75 +1041,79 @@ contains
     ! local variables
     real(wp)                  :: energy_ref, delta_energy
     real(wp)                  :: delta_r, delta_rini, delta_rmax
-    real(wp)                  :: rmsg, maxg, absg
-    integer                   :: i, j, jid, k, natom, natom_opt, no3, nsteps
+    real(wp)                  :: rmsg, maxg
+    integer                   :: maxg_id
+    integer                   :: i, j, jid, natom, natom_opt, nsteps
     integer, pointer          :: optatom_id(:)
 
-    real(wp),         pointer :: coord(:,:), coord_ref(:,:), force(:,:)
+    real(wp),         pointer :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
+    real(wp),         pointer :: force(:,:)
+    real(wp),         pointer :: force_omp(:,:,:)
 
-    character(256) :: folder,basename
-    character      :: num*5
-    logical        :: savefile
+    integer        :: outunit
+    logical        :: conv
 
+
+    ! output file
+    if (output%logout) then
+      outunit = output%logunit
+    else
+      outunit = MsgOut
+    end if
 
     ! use pointers
     !
     coord      => dynvars%coord
+    coord_pbc  => dynvars%coord_pbc
     coord_ref  => dynvars%coord_ref
     force      => dynvars%force
+    force_omp  => dynvars%force_omp
 
     nsteps     =  minimize%nsteps
     natom      =  molecule%num_atoms
-    natom_opt  = minimize%num_optatoms
+    natom_opt  =  minimize%num_optatoms
     optatom_id => minimize%optatom_id
-    no3       = natom_opt*3
 
+    ! initialize
+    !
     delta_rini = minimize%force_scale_init
     delta_rmax = minimize%force_scale_max
     delta_r    = delta_rini
-
-    ! qmmm settings
-    if(enefunc%qmmm%do_qmmm) &
-      enefunc%qmmm%savefile = .true. 
+    dynvars%step = 0
 
     ! Compute energy of the initial structure
     !
     call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                         enefunc%nonb_limiter,  &
                         dynvars%coord,         &
+                        dynvars%trans,         &
+                        dynvars%coord_pbc,     &
                         dynvars%energy,        &
                         dynvars%temporary,     &
                         dynvars%force,         &
+                        dynvars%force_omp,     &
                         dynvars%virial,        &
                         dynvars%virial_extern)
+    dynvars%total_pene = dynvars%energy%total
 
-    rmsg = 0.0_wp
-    maxg = 0.0_wp
-    do j = 1, natom_opt
-      jid  = optatom_id(j)
-      do k = 1, 3
-        rmsg = rmsg + force(k,jid)**2
-        absg = abs(force(k,jid))
-        if(absg > maxg) maxg = absg
-      end do
-    end do
-    rmsg = sqrt(rmsg/real(no3,wp))
-    dynvars%rms_gradient = rmsg
-    dynvars%max_gradient = maxg
+    call calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id)
 
+    ! print the initial energy
+    !
+    call output_min(output, molecule, enefunc, minimize, boundary, &
+                    delta_r, maxg_id, dynvars)
+
+    ! update structure
+    !
     do j = 1, natom_opt
       jid  = optatom_id(j)
       coord(1:3,jid) = coord(1:3,jid) + delta_r*force(1:3,jid)/rmsg
     end do
 
-    dynvars%step = 0
-    dynvars%total_pene = dynvars%energy%total
-
-    call output_dynvars(output, enefunc, dynvars)
-
 
     ! Main loop of the Steepest descent method
     !
+    conv = .false.
     do i = 1, nsteps
 
       dynvars%step = i
@@ -1063,11 +1132,16 @@ contains
                           .true.,                &
                           enefunc%nonb_limiter,  &
                           dynvars%coord,         &
+                          dynvars%trans,         &
+                          dynvars%coord_pbc,     &
                           dynvars%energy,        &
                           dynvars%temporary,     &
                           dynvars%force,         &
+                          dynvars%force_omp,     &
                           dynvars%virial,        &
                           dynvars%virial_extern)
+
+      dynvars%total_pene = dynvars%energy%total
 
       delta_energy = dynvars%energy%total - energy_ref
       if (delta_energy > 0) then
@@ -1078,32 +1152,21 @@ contains
 
       ! check RMSG and MAXG convergence
       !
-      rmsg = 0.0_wp
-      maxg = 0.0_wp
-      do j = 1, natom_opt
-        jid  = optatom_id(j)
-        do k = 1, 3
-          rmsg = rmsg + force(k,jid)**2
-          absg = abs(force(k,jid))
-          if(absg > maxg) maxg = absg
-        end do
-      end do
-      rmsg = sqrt(rmsg/real(no3,wp))
-      dynvars%rms_gradient = rmsg
-      dynvars%max_gradient = maxg
-
+      call calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id)
       if (rmsg <= minimize%tol_rmsg .and. maxg <= minimize%tol_maxg) then
-        minimize%eneout = .true.
-        minimize%crdout = .true.
-        minimize%rstout = .true.
-        call output_min(output, molecule, enefunc, minimize, boundary, &
-                        delta_r, dynvars)
-        if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
-          call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
-        if (main_rank) &
-          write(MsgOut, '(" Steepest Descent converged: RMSG sufficiently small")')
+        conv = .true.
         exit
+
+      else if (i == nsteps) then
+        conv = .false.
+        exit
+
       end if
+
+      ! output energy and dynamical variables
+      !
+      call output_min(output, molecule, enefunc, minimize, boundary, &
+                      delta_r, maxg_id, dynvars)
 
       ! update structure
       !
@@ -1117,25 +1180,39 @@ contains
       if (minimize%nbupdate_period > 0) then
         if (mod(i,minimize%nbupdate_period) == 0 .and. real_calc) then
 
-          call update_pairlist(enefunc, boundary, coord, pairlist)
+          call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                               coord_pbc, pairlist)
+
 
         end if
       end if
 
 
-      ! output energy and dynamical variables
-      !
-     call output_min(output, molecule, enefunc, minimize, boundary, &
-                     delta_r, dynvars)
-
-
     end do
 
-
-    ! Close output files
+    ! output final energy and dynamical variables
     !
-    call close_output(output)
+    minimize%eneout = .true.
+    minimize%crdout = .true.
+    minimize%rstout = .true.
+    call output_min(output, molecule, enefunc, minimize, boundary, &
+                    delta_r, maxg_id, dynvars)
+    if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
+      call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
 
+    if (replica_main_rank .and. minimize%eneout_period > 0) then
+      write(outunit, '(/,"Final energy = ", F20.10)') dynvars%energy%total
+      if (conv) then
+        write(outunit, '(/, &
+        " >>>>> Minimization converged: RMSG and MAXG sufficiently small.",/)')
+      else
+        write(outunit, '(/, &
+        " >>>>> STOP: Total number of iterations exceeds limit.",/)')
+      end if
+    end if
+    minimize%eneout = .false.
+    minimize%crdout = .false.
+    minimize%rstout = .false.
 
     return
 
@@ -1169,9 +1246,9 @@ contains
     type(s_boundary),          intent(inout) :: boundary
 
     ! local variables
-    integer                :: i, j, k, ii
+    integer                :: i, j
     real(wp)               :: energy1
-    real(wp)               :: rmsg, maxg, absg
+    real(wp)               :: rmsg, maxg
     integer                :: maxg_id
 
     integer                :: natom
@@ -1192,17 +1269,16 @@ contains
     logical                :: bnd, bnd_qmonly
     real(wp)               :: maxmove
 
-    real(wp)   , pointer   :: coord(:,:), coord_ref(:,:), force(:,:)
-
-    character(256) :: folder,basename
-    character      :: num*5
-    logical        :: savefile
+    real(wp)   , pointer   :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
+    real(wp)   , pointer   :: force(:,:)
+    real(wp)   , pointer   :: force_omp(:,:,:)
 
     integer                :: outunit
-
     real(wp)               :: delta_r
 
+
     ! output file
+    !
     if (output%logout) then
       outunit = output%logunit
     else
@@ -1210,23 +1286,28 @@ contains
     end if
 
     ! dummy variable for output_min
+    !
     delta_r = 0.0001_wp
 
     ! use pointers
     !
     coord      => dynvars%coord
+    coord_pbc  => dynvars%coord_pbc
     coord_ref  => dynvars%coord_ref
     force      => dynvars%force
+    force_omp  => dynvars%force_omp
 
     nsteps    =  minimize%nsteps
     natom     =  molecule%num_atoms
 
-    ! Extract indices of relaxed atoms
+    ! extract indices of relaxed atoms
+    !
     natom_opt = minimize%num_optatoms
     optatom_id => minimize%optatom_id
     no3       = natom_opt*3
 
     ! variables for LBFGS
+    !
     allocate(vec(no3), gradient(no3), lower(no3), upper(no3))
     allocate(list_bound(no3))
 
@@ -1271,9 +1352,10 @@ contains
       vec(i*3-2:i*3) = coord(1:3,optatom_id(i))
     end do
 
-    ! Start LBFGS iteration
+    ! start LBFGS iteration
     !
-    ncount = -1
+    ncount  = -1
+    energy1 = 0.0_wp
     do while(task(1:2) .eq. 'FG' .or. task(1:5) .eq. 'NEW_X' .or. &
              task(1:5) .eq. 'START')
 
@@ -1297,108 +1379,99 @@ contains
         end if
       end if
 
-      call setulb(no3, ncorr, vec, lower ,upper, list_bound, energy1,   &
-                  gradient, factr, pgtol, work_lbfgs, iwork_lbfgs,         &
+      call setulb(no3, ncorr, vec, lower ,upper, list_bound, energy1, &
+                  gradient, factr, pgtol, work_lbfgs, iwork_lbfgs,    &
                   task, iprint, csave, lsave, isave, dsave, 0)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(vec, no3, mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(work_lbfgs, nwork, mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(dsave, 29, mpi_wp_real, 0, mpi_comm_country, ierror)
+#endif
 
       if (minimize%verbose .and. replica_main_rank) then
         write(outunit,'("task is: ",A)') trim(task)
       end if
 
       if (task(1:2) .eq. 'FG') then
-        ncount = ncount + 1
+        ncount       = ncount + 1
         dynvars%step = ncount
 
+        ! update structure
+        !
         do i = 1, natom_opt
           coord(1:3,optatom_id(i))     = vec(i*3-2:i*3)
           coord_ref(1:3,optatom_id(i)) = coord(1:3,optatom_id(i))
         end do
 
-        ! calc energy and force
-
         ! update pairlist
+        !
         if (minimize%nbupdate_period > 0) then
           if (mod(ncount,minimize%nbupdate_period) == 0 .and. real_calc) then
 
-            call update_pairlist(enefunc, boundary, coord, pairlist)
+            call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                                 coord_pbc, pairlist)
+
 
           end if
         endif
 
+        ! calc energy and force
+        !
         call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                             enefunc%nonb_limiter,                     &
-                            coord, dynvars%energy, dynvars%temporary, &
-                            force, dynvars%virial, dynvars%virial_extern)
+                            coord, dynvars%trans, coord_pbc,          &
+                            dynvars%energy, dynvars%temporary,        &
+                            force, force_omp, dynvars%virial,         &
+                            dynvars%virial_extern)
 
-        energy1 = dynvars%energy%total
+        energy1            = dynvars%energy%total
         dynvars%total_pene = dynvars%energy%total
 
         ! check RMSG and MAXG convergence
-        rmsg = 0.0_wp
-        maxg = 0.0_wp
-        do i = 1, natom_opt
-          do j = 1, 3
-            rmsg = rmsg + force(j,optatom_id(i)) * force(j,optatom_id(i))
-            absg = abs(force(j,optatom_id(i)))
-            if(absg > maxg) then
-               maxg = absg
-               maxg_id = optatom_id(i)
-            end if
-          end do
-        end do
-        rmsg = sqrt(rmsg/real(no3,wp))
-        dynvars%rms_gradient = rmsg
-        dynvars%max_gradient = maxg
-
+        !
+        call calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id)
         if (rmsg <= minimize%tol_rmsg .and. maxg <= minimize%tol_maxg) then
-          minimize%eneout = .true.
-          minimize%crdout = .true.
-          minimize%rstout = .true.
-
-          ! output energy and dynamical variables
-          call output_min(output, molecule, enefunc, minimize, boundary, &
-                          delta_r, dynvars)
-          if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
-            call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
-
           task = 'STOP: RMSG and MAXG becomes sufficiently small'
           exit
+
+        else if (ncount == nsteps) then
+          task = 'STOP: Total number of iterations exceeds limit.'
+          exit
+
         end if
 
         ! output energy and dynamical variables
-        if (ncount /= 0) then
-          call output_min(output, molecule, enefunc, minimize, boundary, &
-                          delta_r, dynvars)
-        else
-          call output_dynvars(output, enefunc, dynvars)
-        end if
-
-        !dbg write(outunit,'("maxg = ",f20.8)') maxg
-        !dbg write(outunit,'(i6,x,a4,x,i6,x,a4,x,a6,x,a6)') &
-        !dbg     maxg_id, &
-        !dbg     molecule%segment_name(maxg_id), &
-        !dbg     molecule%residue_no(maxg_id),   &
-        !dbg     molecule%residue_name(maxg_id), &
-        !dbg     molecule%atom_name(maxg_id),    &
-        !dbg     molecule%atom_cls_name(maxg_id)
+        !
+        call output_min(output, molecule, enefunc, minimize, boundary, &
+                        delta_r, maxg_id, dynvars)
 
         ! update gradient
+        !
         do i = 1, natom_opt
           gradient(i*3-2:i*3) = -force(1:3,optatom_id(i))
         end do
 
       endif
 
-      if (ncount >= nsteps) then
-        task = 'STOP: Total number of iterations exceeds limit.'
-      end if
-
     end do
 
-    if (replica_main_rank) then
-      write(outunit, '("Final energy = ", F20.10)') energy1
+    ! output final energy and dynamical variables
+    !
+    minimize%eneout = .true.
+    minimize%crdout = .true.
+    minimize%rstout = .true.
+    call output_min(output, molecule, enefunc, minimize, boundary, &
+                    delta_r, maxg_id, dynvars)
+    if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
+      call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
+
+    if (replica_main_rank .and. minimize%eneout_period > 0) then
+      write(outunit, '(/,"Final energy = ", F20.10)') energy1
       write(outunit, '(/, " >>>>> ", A,/)') trim(task)
     end if
+    minimize%eneout = .false.
+    minimize%crdout = .false.
+    minimize%rstout = .false.
 
     deallocate(vec, gradient, list_bound, lower, upper)
     deallocate(iwork_lbfgs, work_lbfgs)
@@ -1436,7 +1509,7 @@ contains
 
     ! local variables
     integer                :: i, j, k, ii
-    real(wp)               :: energy1 = 0.0_wp
+    real(wp)               :: energy1
     real(wp)               :: rmsg, maxg, absg
     integer                :: maxg_id
 
@@ -1460,30 +1533,51 @@ contains
     logical                :: bnd, bnd_qmonly
     real(wp)               :: maxmove
 
-    real(wp)    , pointer  :: coord(:,:), coord_ref(:,:), force(:,:)
-
-    character(256) :: folder,basename
-    character      :: num*5
-    logical        :: savefile
+    real(wp)    , pointer  :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
+    real(wp)    , pointer  :: force(:,:)
+    real(wp)    , pointer  :: force_omp(:,:,:)
 
     real(wp)              :: energy0corr
     real(wp), allocatable :: coord0(:,:), force0corr(:,:)
     
+    integer               :: outunit
+    integer               :: step_save
+    integer               :: crdout_period_save, rstout_period_save
+    integer               :: eneout_period_save
+    logical               :: eneout_short_save
     real(wp)              :: delta_r
 
+    ! initialize
+    !
+    minimize%eneout = .false.
+    minimize%crdout = .false.
+    minimize%rstout = .false.
+
+    ! output file
+    !
+    if (output%logout) then
+      outunit = output%logunit
+    else
+      outunit = MsgOut
+    end if
+
     ! dummy variable for output_min
+    !
     delta_r = 0.0001_wp
 
     ! use pointers
     !
     coord     => dynvars%coord
+    coord_pbc => dynvars%coord_pbc
     coord_ref => dynvars%coord_ref
     force     => dynvars%force
+    force_omp => dynvars%force_omp
 
     nsteps    =  minimize%nsteps
     natom     =  molecule%num_atoms
 
-    ! Extract indices of relaxed atoms
+    ! extract indices of relaxed atoms
+    !
     natom_opt         =  minimize%num_optatoms
     optatom_id        => minimize%optatom_id
     natom_macro       =  minimize%num_optatoms_macro
@@ -1493,6 +1587,7 @@ contains
     optatom_micro_id  => minimize%optatom_micro_id
 
     ! variables for LBFGS
+    !
     allocate(vec(no3), gradient(no3), lower(no3), upper(no3))
     allocate(list_bound(no3))
 
@@ -1520,9 +1615,9 @@ contains
     task = 'START'
 
     ! set initial coordinates
-    ii = 0
+    ii = 1
     do i = 1, natom_macro
-       vec(ii+1:ii+3) = coord(1:3,optatom_macro_id(i))
+       vec(ii:ii+2) = coord(1:3,optatom_macro_id(i))
        ii = ii + 3
     end do
 
@@ -1532,9 +1627,10 @@ contains
     energy0corr = 0.0_wp
     force0corr  = 0.0_wp
 
-    ! Start macro-iteration
+    ! start macro-iteration
     !
-    ncount = -1
+    ncount  = -1
+    energy1 = 0.0_wp
     do while(task(1:2) .eq. 'FG' .or. task(1:5) .eq. 'NEW_X' .or. &
              task(1:5) .eq. 'START')
 
@@ -1549,107 +1645,117 @@ contains
       call setulb(no3, ncorr, vec, lower ,upper, list_bound, energy1, &
                   gradient, factr, pgtol, work_lbfgs, iwork_lbfgs,    &
                   task, iprint, csave, lsave, isave, dsave, 0)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(vec, no3, mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(work_lbfgs, nwork, mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(dsave, 29, mpi_wp_real, 0, mpi_comm_country, ierror)
+#endif
 
-      if (minimize%verbose .and. main_rank) then
-        write(MsgOut,'("task is: ",A)') trim(task)
+      if (minimize%verbose .and. replica_main_rank) then
+        write(outunit,'("task is: ",A)') trim(task)
       end if
 
       if (task(1:2) .eq. 'FG') then
-        ncount = ncount + 1
+        ncount       = ncount + 1
         dynvars%step = ncount
 
+        ! update structure
+        !
         do i = 1, natom_macro
           coord(1:3,optatom_macro_id(i))     = vec(i*3-2:i*3)
           coord_ref(1:3,optatom_macro_id(i)) = coord(1:3,optatom_macro_id(i))
         end do
 
         ! micro iteration
-        if (ncount > 1) then   !YA: Avoid wrong structure in first iteration
+        !   Skip micro-iteration during the first few iterations
+        if (ncount > minimize%start_micro) then
+
+          step_save          = dynvars%step
+          eneout_period_save = minimize%eneout_period
+          crdout_period_save = minimize%crdout_period
+          rstout_period_save = minimize%rstout_period
+
+          ! turn off coordinate output
+          minimize%crdout_period = 0
+          minimize%rstout_period = 0
+
+          if (minimize%eneout_period > 0) then
+            if (mod(dynvars%step,minimize%eneout_period) == 0) then
+              ! turn on short energy output
+              eneout_short_save  = minimize%eneout_short
+            else
+              ! turn off energy output
+              minimize%eneout_period = 0
+            end if
+          end if
+
+          ! turn on short energy output
+          minimize%eneout_short  = .true.
           call micro_iter(output, molecule, enefunc, dynvars, minimize, &
                pairlist, boundary, coord0, energy0corr, force0corr, ncount)
+
+          dynvars%step           = step_save
+          minimize%eneout_period = eneout_period_save
+          minimize%crdout_period = crdout_period_save
+          minimize%rstout_period = rstout_period_save
+          minimize%eneout_short  = eneout_short_save
+
         end if
 
-        ! calc energy and force
-
         ! update pairlist
+        !
         if (minimize%nbupdate_period > 0) then
           if (mod(ncount,minimize%nbupdate_period) == 0 .and. real_calc) then
 
-            call update_pairlist(enefunc, boundary, coord, pairlist)
+            call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                                 coord_pbc, pairlist)
+
 
           end if
         endif
 
-        ! qmmm settings
+        ! calc energy and force
+        !
         enefunc%qmmm%qm_classical = .false.
-
         call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                             enefunc%nonb_limiter,                     &
-                            coord, dynvars%energy, dynvars%temporary, &
-                            force, dynvars%virial, dynvars%virial_extern)
+                            coord, dynvars%trans, coord_pbc,          &
+                            dynvars%energy, dynvars%temporary,        &
+                            force, force_omp, dynvars%virial,         &
+                            dynvars%virial_extern)
 
         energy1 = dynvars%energy%total
         dynvars%total_pene = dynvars%energy%total
 
         ! check RMSG and MAXG convergence
-        rmsg = 0.0_wp
-        maxg = 0.0_wp
-        do i = 1, natom_opt
-          do j = 1, 3
-            rmsg = rmsg + force(j,optatom_id(i)) * force(j,optatom_id(i))
-            absg = abs(force(j,optatom_id(i)))
-            if(absg > maxg) then
-               maxg = absg
-               maxg_id = optatom_id(i)
-            end if
-          end do
-        end do
-        rmsg = sqrt(rmsg/real(3*natom_opt,wp))
-        dynvars%rms_gradient = rmsg
-        dynvars%max_gradient = maxg
+        !
+        call calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id)
 
         if (rmsg <= minimize%tol_rmsg .and. maxg <= minimize%tol_maxg) then
-          minimize%eneout = .true.
-          minimize%crdout = .true.
-          minimize%rstout = .true.
-
-          ! output energy and dynamical variables
-          call output_min(output, molecule, enefunc, minimize, boundary, &
-                          delta_r, dynvars)
-          if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
-            call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
-
           task = 'STOP: RMSG and MAXG becomes sufficiently small'
           exit
+
+        else if (ncount >= nsteps) then
+          task = 'STOP: Total number of iterations exceeds limit.'
+          exit
+
         end if
 
         ! output energy and dynamical variables
-        if (ncount /= 0) then
-          call output_min(output, molecule, enefunc, minimize, boundary, &
-                          delta_r, dynvars)
-        else
-          call output_dynvars(output, enefunc, dynvars)
-        end if
-
-        !dbg
-        !dbg write(MsgOut,'("maxg = ",f20.8)') maxg
-        !dbg write(MsgOut,'(i6,x,a4,x,i6,x,a4,x,a6,x,a6)') &
-        !dbg     maxg_id, &
-        !dbg     molecule%segment_name(maxg_id), &
-        !dbg     molecule%residue_no(maxg_id),   &
-        !dbg     molecule%residue_name(maxg_id), &
-        !dbg     molecule%atom_name(maxg_id),    &
-        !dbg     molecule%atom_cls_name(maxg_id)
-        !dbg
+        !
+        call output_min(output, molecule, enefunc, minimize, boundary, &
+                        delta_r, maxg_id, dynvars)
 
         ! update gradient
-        ii = 0
+        !
+        ii = 1
         do i = 1, natom_macro
-          gradient(ii+1:ii+3) = -force(1:3,optatom_macro_id(i))
+          gradient(ii:ii+2) = -force(1:3,optatom_macro_id(i))
           ii = ii+3
         end do
 
         ! energy and gradient correction terms for micro_iteration
+        !
         energy0corr = dynvars%energy%total
         do i = 1, natom_micro
           coord0(1:3,i)     = coord(1:3,optatom_micro_id(i))
@@ -1659,8 +1765,10 @@ contains
         enefunc%qmmm%qm_classical = .true.
         call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                             enefunc%nonb_limiter,                     &
-                            coord, dynvars%energy, dynvars%temporary, &
-                            force, dynvars%virial, dynvars%virial_extern)
+                            coord, dynvars%trans, coord_pbc,          &
+                            dynvars%energy, dynvars%temporary,        &
+                            force, force_omp, dynvars%virial,         &
+                            dynvars%virial_extern)
 
         energy0corr = energy0corr - dynvars%energy%total
         do i = 1, natom_micro
@@ -1669,20 +1777,25 @@ contains
 
       endif
 
-      if (ncount >= nsteps) then
-        task = 'STOP: Total number of iterations exceeds limit.'
-      end if
-
     end do
     
-    if (main_rank) then
-      write(MsgOut, '("Final energy = ", F20.10)') energy1
-      write(MsgOut, '(/, " >>>>> ", A,/)') trim(task)
+    ! output final energy and dynamical variables
+    !
+    minimize%eneout = .true.
+    minimize%crdout = .true.
+    minimize%rstout = .true.
+    call output_min(output, molecule, enefunc, minimize, boundary, &
+                    delta_r, maxg_id, dynvars)
+    if (enefunc%qmmm%do_qmmm .and. enefunc%qmmm%save_qminfo) &
+      call write_qminfo(enefunc%qmmm, dynvars%energy%qm_ene)
+
+    if (replica_main_rank .and. minimize%eneout_period > 0) then
+      write(outunit, '(/,"Final energy = ", F20.10)') energy1
+      write(outunit, '(/, " >>>>> ", A,/)') trim(task)
     end if
 
     deallocate(vec, gradient, list_bound, lower, upper)
     deallocate(iwork_lbfgs, work_lbfgs)
-
     deallocate(force0corr, coord0)
 
     return
@@ -1720,11 +1833,12 @@ contains
     real(wp),                  intent(in)    :: coord0(3,*)
     real(wp),                  intent(in)    :: energy0corr
     real(wp),                  intent(in)    :: force0corr(3,*)
-    integer,                   intent(in)    :: iter
+    integer, optional,         intent(in)    :: iter
 
     ! local variables
     integer                :: i, j, k
     real(wp)               :: rmsg, maxg, absg
+    integer                :: maxg_id
     logical                :: print_log
 
     integer                :: natom
@@ -1745,7 +1859,9 @@ contains
     logical                :: bnd, bnd_qmonly
     real(wp)               :: maxmove
 
-    real(wp)    , pointer  :: coord(:,:), coord_ref(:,:), force(:,:)
+    real(wp)    , pointer  :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
+    real(wp)    , pointer  :: force(:,:)
+    real(wp)    , pointer  :: force_omp(:,:,:)
 
     integer                :: indx
     integer                :: outunit
@@ -1762,28 +1878,37 @@ contains
 
     print_log = .false.
     if (replica_main_rank .and. minimize%eneout_period > 0) then
-      if (mod(iter,minimize%eneout_period) == 0 )  print_log = .true.
+      print_log = .true.
+      if (present(iter)) then
+        write(outunit, '(A28,i0,A7,/)') &
+          "+++++ Start micro iteration ", iter, " +++++ "
+      else
+        write(outunit, '(A,/)') &
+          "+++++ Start micro iteration +++++ "
+      end if
     end if
 
-    if (print_log) write(outunit, '(A28,i0,A7)') &
-      "+++++ Start micro iteration ", iter, " +++++ "
 
     ! dummy variable for output_min
+    !
     delta_r = 0.0001_wp
 
     ! use pointers
     !
     coord     => dynvars%coord
+    coord_pbc => dynvars%coord_pbc
     coord_ref => dynvars%coord_ref
     force     => dynvars%force
+    force_omp => dynvars%force_omp
 
     nsteps  =  minimize%nsteps_micro
     natom   =  molecule%num_atoms
 
-    ! Extract indices of relaxed atoms
-    natom_opt  = minimize%num_optatoms_micro
+    ! extract indices of relaxed atoms
+    !
+    natom_opt  =  minimize%num_optatoms_micro
     optatom_id => minimize%optatom_micro_id
-    no3        = natom_opt*3
+    no3        =  natom_opt*3
 
     ! variables for LBFGS
     csave       =  minimize%csave_micro
@@ -1819,45 +1944,15 @@ contains
 
     task = 'START'
 
-!ky   to be deprecated.
-!    if (minimize%init_lbfgs_micro) then
-!      task = 'START'
-!
-!    else
-!      if (minimize%init_lbfgs) then
-!        task = 'START'
-!        minimize%init_lbfgs = .false.
-!
-!      else
-!        task = 'NEW_X'
-!
-!        if(energy1 < dsave(2)) then
-!          ! Set gradient
-!          do i = 1, natom_opt
-!           gradient(i*3-2:i*3) = -force(1:3,optatom_id(i))
-!          end do
-!
-!        else
-!          ! Initialize lbfgs if the energy is increased
-!          task = 'START'
-!          if (replica_main_rank) then
-!            write(outunit,'(5X,"E1, dsave(2), E1-dsave(2) = ",3F20.8)') &
-!              energy1, dsave(2), energy1 - dsave(2)
-!          endif
-!
-!        endif
-!
-!      end if
-!    end if
-
     ! set initial coordinates
     do i = 1, natom_opt
        vec(i*3-2:i*3)     = coord(1:3,optatom_id(i))
     end do
 
-    ! Start micro-iteration
+    ! start micro-iteration
     !
-    ncount = 0
+    ncount  = 0
+    energy1 = 0.0_wp
     do while(task(1:2) .eq. 'FG' .or. task(1:5) .eq. 'NEW_X' .or. &
              task(1:5) .eq. 'START')
 
@@ -1872,13 +1967,22 @@ contains
       call setulb(no3, ncorr, vec, lower ,upper, list_bound, energy1, &
                    gradient, factr, pgtol, work_lbfgs, iwork_lbfgs,   &
                    task, iprint, csave, lsave, isave, dsave, 0)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(vec, no3, mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(work_lbfgs, size(work_lbfgs), mpi_wp_real, 0, mpi_comm_country, ierror)
+      call mpi_bcast(dsave, 29, mpi_wp_real, 0, mpi_comm_country, ierror)
+#endif
 
       if (minimize%verbose .and. print_log) then
         write(outunit,'("task is: ",A)') trim(task)
       end if
       
       if (task(1:2) .eq. 'FG') then
-        ncount = ncount + 1
+        ncount       = ncount + 1
+        dynvars%step = ncount
+
+        ! update structure
+        !
         do i = 1, natom_opt
           coord(1:3,optatom_id(i))     = vec(i*3-2:i*3) 
           coord_ref(1:3,optatom_id(i)) = coord(1:3,optatom_id(i))
@@ -1888,19 +1992,25 @@ contains
         if (minimize%nbupdate_period > 0) then
           if (mod(ncount,minimize%nbupdate_period) == 0 .and. real_calc) then
 
-            call update_pairlist(enefunc, boundary, coord, pairlist)
+            call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                                 coord_pbc, pairlist)
+
 
           end if
         endif
 
         ! calc energy and force
+        !
         enefunc%qmmm%qm_classical = .true.
         call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                             enefunc%nonb_limiter,                     &
-                            coord, dynvars%energy, dynvars%temporary, &
-                            force, dynvars%virial, dynvars%virial_extern)
+                            coord, dynvars%trans, coord_pbc,          &
+                            dynvars%energy, dynvars%temporary,        &
+                            force, force_omp, dynvars%virial,         &
+                            dynvars%virial_extern)
 
         ! correction to energy and force
+        !
         gdx = 0.0_wp
         do i = 1, natom_opt
           indx = optatom_id(i)
@@ -1910,63 +2020,48 @@ contains
           force(1:3,indx) = force(1:3,indx) + force0corr(1:3,i)
         end do
 
-        energy1 = dynvars%energy%total + energy0corr + gdx
+        dynvars%energy%total = dynvars%energy%total + energy0corr + gdx
+        energy1 = dynvars%energy%total
 
         ! check RMSG and MAXG convergence
-        rmsg = 0.0_wp
-        maxg = 0.0_wp
-        do i = 1, natom_opt
-          do j = 1, 3
-            rmsg = rmsg + force(j,optatom_id(i)) * force(j,optatom_id(i))
-            absg = abs(force(j,optatom_id(i)))
-            if(absg > maxg) then
-               maxg = absg
-            end if
-          end do
-        end do
-        rmsg = sqrt(rmsg/real(3*natom_opt,wp))
-        dynvars%rms_gradient = rmsg
-        dynvars%max_gradient = maxg
+        !
+        call calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id, .true.)
 
         if (rmsg <= minimize%tol_rmsg_micro .and. &
             maxg <= minimize%tol_maxg_micro) then
-          if (print_log) then
-            write(outunit, '(5X,"micro iter. ",i4, &
-              " E1 = ", F20.8, "  RMSG = ", F12.4, "  MAXG = ", F12.4)')  &
-              ncount, energy1, rmsg, maxg
-          end if
           task = "STOP: RMSG and MAXG becomes sufficiently small."
           exit
+
+        else if (ncount >= nsteps) then
+          task = 'STOP: Total number of iterations exceeds limit.'
+          exit
+
         end if
 
         ! output energy and dynamical variables
-        if (print_log) then
-          if (minimize%verbose) then
-            call output_min(output, molecule, enefunc, minimize, boundary, &
-                            delta_r, dynvars)
-          else
-            if (mod(ncount,minimize%eneout_period) == 0 .or. ncount == 1) then
-              write(outunit, '(5X,"micro iter. ",i4, &
-                " E1 = ", F20.8, "  RMSG = ", F12.4, "  MAXG = ", F12.4)')  &
-                ncount, energy1, rmsg, maxg
-            end if
-          end if
-        end if
+        !
+        call output_min(output, molecule, enefunc, minimize, boundary, &
+                        delta_r, maxg_id, dynvars)
 
         ! update gradient
+        !
         do i = 1, natom_opt
           gradient(i*3-2:i*3) = -force(1:3,optatom_id(i))
         end do
 
       endif
 
-      if (ncount >= nsteps) then
-        task = 'STOP: Total number of iterations exceeds limit.'
-      end if
-
     end do
     
-    if (print_log) write(outunit, '("+++++ ", A,"+++++"/)') trim(task)
+    ! output final energy and dynamical variables
+    !
+    minimize%eneout = .true.
+    call output_min(output, molecule, enefunc, minimize, boundary, &
+                    delta_r, maxg_id, dynvars)
+    if (print_log) then
+      write(outunit, '(/,"+++++ ", A,"+++++"/)') trim(task)
+    end if
+    minimize%eneout = .false.
 
     return
 
@@ -2134,5 +2229,67 @@ contains
     deallocate(del,tmp)
 
   end subroutine delete_element
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    calc_rmsg
+  !> @brief        Calculate the RMSG of target atoms for minimization
+  !> @authors      KY
+  !! @param[inout] minimize : minimize information
+  !! @param[inout] dynvars  : dynamic variables information
+  !! @param[inout] rmsg     : RMSG    
+  !! @param[inout] maxg     : MAXG
+  !! @param[inout] maxg_id  : The atom ID of MAXG
+  !! @param[in]    micro    : true, if micro-iteration
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine calc_rmsg(minimize, dynvars, rmsg, maxg, maxg_id, micro)
+
+    ! formal arguments
+    type(s_minimize), target, intent(inout) :: minimize
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    real(wp),                 intent(inout) :: rmsg, maxg
+    integer,                  intent(inout) :: maxg_id
+    logical, optional,        intent(in)    :: micro
+
+    ! local variables
+    integer  :: i, j, natom_opt
+    real(wp) :: absg
+
+    real(wp), pointer :: force(:,:)
+    integer,  pointer :: optatom_id(:)
+
+    force      => dynvars%force
+
+    if(present(micro)) then
+        if(micro) then
+            natom_opt  =  minimize%num_optatoms_micro
+            optatom_id => minimize%optatom_micro_id
+        end if
+    else
+      natom_opt  =  minimize%num_optatoms
+      optatom_id => minimize%optatom_id
+    end if
+
+    rmsg = 0.0_wp
+    maxg = 0.0_wp
+
+    do i = 1, natom_opt
+      do j = 1, 3
+        rmsg = rmsg + force(j,optatom_id(i)) * force(j,optatom_id(i))
+        absg = abs(force(j,optatom_id(i)))
+        if(absg > maxg) then 
+          maxg    = absg
+          maxg_id = optatom_id(i)
+        end if
+      end do
+    end do
+    rmsg = sqrt(rmsg/real(natom_opt*3,wp))
+
+    dynvars%rms_gradient = rmsg
+    dynvars%max_gradient = maxg
+
+  end subroutine calc_rmsg
 
 end module at_minimize_mod

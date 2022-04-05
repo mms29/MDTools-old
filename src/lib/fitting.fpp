@@ -22,6 +22,7 @@ module fitting_mod
   use fileio_control_mod
   use mpi_parallel_mod
   use constants_mod
+  use mpi_parallel_mod
 
   implicit none
   private

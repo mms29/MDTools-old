@@ -31,6 +31,7 @@ module ra_option_mod
   type, public :: s_opt_info
     logical                         :: check_only     = .false.
     logical                         :: allow_backup   = .false.
+    logical                         :: mass_weight    = .false.
     integer                         :: analysis_atom  = 1
   end type s_opt_info
 
@@ -94,6 +95,9 @@ contains
     call read_ctrlfile_integer(handle, Section, &
                               'analysis_atom', opt_info%analysis_atom)
 
+    call read_ctrlfile_logical(handle, Section, &
+                              'mass_weight', opt_info%mass_weight)
+
     call end_ctrlfile_section(handle)
 
 
@@ -109,6 +113,11 @@ contains
       write(MsgOut,'(A20,A3)') '  allow backup    = ', 'yes'
     else
       write(MsgOut,'(A20,A2)') '  allow backup    = ', 'no'
+    end if
+    if (opt_info%mass_weight) then
+      write(MsgOut,'(A20,A3)') '  mass_weight     = ', 'yes'
+    else
+      write(MsgOut,'(A20,A2)') '  mass_weight     = ', 'no'
     end if
     write(MsgOut,'(A20,A5,I0)') &
                     '  analysis atom   = ', 'group', opt_info%analysis_atom
@@ -141,6 +150,7 @@ contains
     ! check only
     !
     option%check_only   = opt_info%check_only
+    option%mass_weight  = opt_info%mass_weight
 
     ! backup output file
     !

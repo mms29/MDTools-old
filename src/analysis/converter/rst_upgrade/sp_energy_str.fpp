@@ -1,0 +1,1 @@
+../../../spdyn/sp_energy_str.fpp

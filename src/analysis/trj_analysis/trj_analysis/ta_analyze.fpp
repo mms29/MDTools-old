@@ -175,7 +175,7 @@ contains
   !
   !  Subroutine    analyze_dis
   !> @brief        analyze distances
-  !! @authors      NT, TM
+  !! @authors      NT, TM, SI
   !! @param[in]    trajectory : trajectory information
   !! @param[inout] option     : option information
   !
@@ -188,16 +188,20 @@ contains
     type(s_option),          intent(inout) :: option
 
     ! local variables
-    integer                  :: i, idx1, idx2
+    integer                  :: i, j, idx1, idx2
 
 
     do i = 1, size(option%distance)
+      option%distance(i) = 0.0_wp
+      
+      do j = 1, option%dist_num(i)/2
+        idx1 = option%dist_list(2*j-1,i)
+        idx2 = option%dist_list(2*j,i)
 
-      idx1 = option%dist_list(1,i)
-      idx2 = option%dist_list(2,i)
-
-      option%distance(i) = compute_dis(trajectory%coord(:,idx1), &
-                                       trajectory%coord(:,idx2))
+        option%distance(i) = option%distance(i) + option%dist_weight(i,j) &
+                           * compute_dis(trajectory%coord(:,idx1), &
+                                          trajectory%coord(:,idx2))
+      end do
 
     end do
 

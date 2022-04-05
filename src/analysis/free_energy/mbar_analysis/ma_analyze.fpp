@@ -28,7 +28,9 @@ module ma_analyze_mod
   use string_mod
   use messages_mod
   use constants_mod
+#ifdef OMP
   use omp_lib
+#endif
 
   implicit none
   private
@@ -37,7 +39,8 @@ module ma_analyze_mod
   type s_data_k
     real(wp),      allocatable :: v(:,:)       ! (nstep, ndim)
     real(wp),      allocatable :: vcrd(:,:)    ! (natom*3, nstep)
-    real(wp),      allocatable :: vtarget(:) ! (natom*3)
+    real(wp),      allocatable :: vtarget(:)   ! (natom*3)
+    real(wp),      allocatable :: vrefene(:)   ! (natom*3)
   end type s_data_k
 
   type s_u_kl
@@ -66,11 +69,13 @@ module ma_analyze_mod
   real(wp),    allocatable :: g_rep_f_k  (:,:) ! (nstp, nrep)
   real(wp),    allocatable :: g_sqz_u_kln(:,:) ! (nstp, nrep)
   real(wp),    allocatable :: g_rep_u_kn (:,:) ! (nstp, nrep)
+  real(wp),    allocatable :: g_temp     (:,:) ! (nstp, nrep)
 
   !$omp threadprivate (g_rep_N_k)
   !$omp threadprivate (g_rep_f_k)
   !$omp threadprivate (g_sqz_u_kln)
   !$omp threadprivate (g_rep_u_kn)
+  !$omp threadprivate (g_temp)
 
   ! subroutines
   public  :: analyze
@@ -140,7 +145,7 @@ contains
     type(s_bin_k),    allocatable :: bin_k(:)      ! (nbrella)
     type(s_pmf),      allocatable :: pmf(:)        ! (nblocks)
     real(wp),         allocatable :: weight_k(:,:) ! (nstep, nbrella)
-    integer,          allocatable :: time_k(:,:)   ! (nstep, nbrella)
+    real(wp),         allocatable :: time_k(:,:)   ! (nstep, nbrella)
     integer                       :: i, j, iblock, nstep
     real(wp)                      :: f_sum
 
@@ -187,6 +192,9 @@ contains
     
       end if
 
+        if (input%refenefile /= '') &
+         call build_data_k_from_refene(input%refenefile, option, data_k, time_k)
+
     else
 
       call build_data_k_from_ene(input%cvfile, option, data_k, time_k)
@@ -222,7 +230,7 @@ contains
         else if (option%input_type == InputTypeEnePair .or. option%input_type == InputTypeFEP) then
           data_k(i)%vtarget(:) = 0.0_wp
 
-        else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST) then
+        else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST .or. option%input_type == InputTypeMBGO) then
           do j = 1, nstep
             data_k(i)%vtarget(j) = data_k(i)%v(j, i)
           end do
@@ -242,7 +250,11 @@ contains
 
       else
 
-        call build_u_kl_from_cv(option, data_k, u_kl)
+        if (input%refenefile /= '') then
+          call build_u_kl_from_cv_ene(option, data_k, u_kl)        
+        else
+          call build_u_kl_from_cv(option, data_k, u_kl)        
+        end if
 
       end if
 
@@ -285,9 +297,9 @@ contains
         deallocate(f_k_tmp)
       end do
     else
-      time_start = omp_get_wtime()
+!      time_start = omp_get_wtime()
       call solve_mbar(option, u_kl, f_k)
-      time_end = omp_get_wtime()
+!      time_end = omp_get_wtime()
       ! write(*,*) 'Elapsed time in sec = ', time_end - time_start
     end if
 
@@ -373,7 +385,7 @@ contains
 
     ! local variables
     type(s_pdb)                            :: pdb
-    character(MaxLine)                     :: filename
+    character(MaxFilename)                 :: filename
     character(MaxLineLong_CV)              :: line
     real(wp)                               :: dummy
 
@@ -423,19 +435,18 @@ contains
   end subroutine readref_pdb
 
   !======1=========2=========3=========4=========5=========6=========7=========8
-
   subroutine build_data_k_from_cv(cvfile, option, data_k, time_k)
 
     ! formal arguments
     character(*),            intent(in)    :: cvfile
     type(s_option),          intent(in)    :: option
     type(s_data_k),          allocatable   :: data_k(:)
-    integer,                 allocatable   :: time_k(:,:)
+    real(wp),                allocatable   :: time_k(:,:)
 
     ! local variables
     integer                  :: file, tim, i, j, k, istep
     integer                  :: nbrella, ibrella, ndim, nstep, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(MaxLineLong_CV) :: line
 
 
@@ -538,19 +549,18 @@ contains
   end subroutine build_data_k_from_cv
 
   !======1=========2=========3=========4=========5=========6=========7=========8
-
   subroutine build_data_k_from_ene(cvfile, option, data_k, time_k)
 
     ! formal arguments
     character(*),            intent(in)    :: cvfile
     type(s_option),          intent(in)    :: option
     type(s_data_k),          allocatable   :: data_k(:)
-    integer,                 allocatable   :: time_k(:,:)
+    real(wp),                allocatable   :: time_k(:,:)
 
     ! local variables
     integer                  :: file, tim, i, j, k, istep
     integer                  :: nbrella, ibrella, nstep, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(MaxLineLong_CV) :: line
 
 
@@ -577,7 +587,7 @@ contains
       nfunc = 1
     else if (option%input_type == InputTypeEnePair .or. option%input_type == InputTypeFEP) then
       nfunc = 3
-    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST) then
+    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST .or. option%input_type == InputTypeMBGO) then
       nfunc = nbrella
     else
       call error_msg('Build_Data_K_From_Ene> unsupported input type')
@@ -619,7 +629,69 @@ contains
   end subroutine build_data_k_from_ene
 
   !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine build_data_k_from_refene(refenefile, option, data_k, time_k)
 
+    ! formal arguments
+    character(*),            intent(in)    :: refenefile
+    type(s_option),          intent(in)    :: option
+    type(s_data_k),          allocatable   :: data_k(:)
+    real(wp),                allocatable   :: time_k(:,:)
+
+
+    ! local variables
+    integer                   :: file, tim, i, j, k, istep
+    integer                   :: nbrella, ibrella, nstep, nfunc
+    character(MaxLine)        :: filename
+    character(MaxLineLong_CV) :: line
+
+
+    write(MsgOut,'(a)') 'Build_Data_K_From_Ref_Ene> '
+
+    
+    ! check nstep
+    !
+    call check_cvfile(refenefile, nstep)
+
+
+    ! read cv file and setup data_k
+    !
+    nbrella = option%num_replicas
+
+    ibrella = 0
+    do i = 1, nbrella
+
+      ibrella = ibrella + 1
+      allocate(data_k(ibrella)%vrefene(nstep))
+
+      filename = get_replicate_name1(refenefile, ibrella)
+      write(MsgOut,'(a,a)') '  read refene file: ',trim(filename)
+
+      call open_file(file, &
+                     filename, &
+                     IOFileInput)
+
+      istep = 0
+      do while(.true.)
+        read(file,'(a)',end=11) line
+        if (line(1:1) .ne. '#' .and. line(1:1) .ne. '@') then
+          istep = istep + 1
+          read(line,*) time_k(istep, ibrella), data_k(ibrella)%vrefene(istep)
+          data_k(ibrella)%vrefene(istep) = data_k(ibrella)%vrefene(istep) &
+            /(KB * option%temperature(1))
+        end if
+      end do
+
+11    call close_file(file)
+!      call close_file(file)
+
+    end do
+
+    write(MsgOut,'(a)') '  ..done'
+    write(MsgOut,'(a)') ''
+
+  end subroutine build_data_k_from_refene
+
+  !======1=========2=========3=========4=========5=========6=========7=========8  
   subroutine add_data_k_from_target(targetfile, option, data_k)
 
     ! formal arguments
@@ -630,7 +702,7 @@ contains
     ! local variables
     integer                  :: file, tim, i, j, k, istep
     integer                  :: nbrella, ibrella, nstep, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(MaxLineLong_CV) :: line
     real(wp)                 :: dummy
 
@@ -656,7 +728,7 @@ contains
       !allocate(data_k(ibrella)%vtarget(nstep))
 
       filename = get_replicate_name1(targetfile, ibrella)
-      write(MsgOut,'(a,a)') '  read cv file: ',trim(filename)
+      write(MsgOut,'(a,a)') '  read target energy file: ',trim(filename)
 
       call open_file(file, &
                      filename, &
@@ -690,14 +762,14 @@ contains
     type(s_molecule),        intent(in)    :: molecule
     type(s_option),          intent(in)    :: option
     type(s_data_k),          allocatable   :: data_k(:)
-    integer,                 allocatable   :: time_k(:,:)
+    real(wp),                allocatable   :: time_k(:,:)
 
     ! local variables
     type(s_trajectory)       :: trajectory
     type(s_trj_file)         :: file
     integer                  :: i, j, k, istep
     integer                  :: nbrella, ibrella, ndim, nstep, natom, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
 
 
     write(MsgOut,'(a)') 'Build_Data_K_From_Dcd> '
@@ -835,7 +907,6 @@ contains
   end subroutine build_data_k_from_dcd
 
   !======1=========2=========3=========4=========5=========6=========7=========8
-
   subroutine build_data_k_from_dcd_posi_readref &
                 (dcdfile, molecule, option, data_k, time_k)
 
@@ -844,7 +915,7 @@ contains
     type(s_molecule),        intent(in)    :: molecule
     type(s_option),          intent(in)    :: option
     type(s_data_k),          allocatable   :: data_k(:)
-    integer,                 allocatable   :: time_k(:,:)
+    real(wp),                allocatable   :: time_k(:,:)
 
     ! local variables
     type(s_trajectory)       :: trajectory
@@ -852,7 +923,7 @@ contains
     integer                  :: i, j, k, istep, jj, iatom
     integer                  :: nbrella, ibrella, ndim, nstep, natom, nfunc, igroup
     integer                  :: nselatom
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
 
 
     write(MsgOut,'(a)') 'Build_Data_K_From_Dcd_Posi_Readref> '
@@ -1044,7 +1115,109 @@ contains
   end subroutine build_u_kl_from_cv
 
   !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine build_u_kl_from_cv_ene(option, data_k, u_kl)
 
+    ! formal arguments
+    type(s_option),          intent(in)    :: option
+    type(s_data_k),          intent(in)    :: data_k(:)
+    type(s_u_kl),            allocatable   :: u_kl(:,:)
+ 
+    ! local variables
+    real(wp),    allocatable :: umbrella_center(:,:), k_constant(:,:)
+    logical,     allocatable :: is_periodic(:)
+    real(wp),    allocatable :: box_size(:)
+    integer                  :: nbrella, ibrella, ndim, nfunc, ifunc
+    integer                  :: i, j, k, l
+
+
+    write(MsgOut,'(a)') 'Build_U_Kl_From_CV_with_Ene> '
+
+    ndim    = option%dimension
+
+    if (ndim == 1) then
+      nbrella = option%rest_nreplica(option%rest_func_no(1, 1))
+    else if (ndim == 2) then
+      nbrella = 1
+      do i = 1, 2
+        !!! todo: support for temperature
+        nbrella = nbrella * option%rest_nreplica(option%rest_func_no(i, 1))
+      end do
+    else
+      call error_msg('Build_U_Kl_From_CV> dimension > 2 not supported')
+    end if
+
+    allocate(u_kl(nbrella, nbrella))
+
+    if (ndim == 1) then
+
+      nfunc = option%rest_func_num(1)
+
+      allocate(umbrella_center(nbrella, nfunc), &
+               k_constant(nbrella, nfunc), &
+               is_periodic(nfunc), &
+               box_size(nfunc))
+
+      do i = 1, nfunc
+        umbrella_center(:,i) = option%rest_references(:,option%rest_func_no(1, i))
+        k_constant(:,i)      = option%rest_constants (:,option%rest_func_no(1, i))
+        is_periodic(i)       = option%is_periodic(option%rest_func_no(1, i))
+        box_size(i)          = option%box_size(option%rest_func_no(1, i))
+      end do
+
+    else
+
+      nfunc = option%rest_func_num(1) + option%rest_func_num(2)
+
+      allocate(umbrella_center(nbrella, nfunc), &
+               k_constant(nbrella, nfunc), &
+               is_periodic(nfunc), &
+               box_size(nfunc))
+
+      ibrella = 0
+      do i = 1, option%rest_nreplica(option%rest_func_no(1, 1))
+        do j = 1, option%rest_nreplica(option%rest_func_no(2, 1))
+          ibrella = ibrella + 1
+          umbrella_center(ibrella,1:2) = &
+               (/option%rest_references(i, option%rest_func_no(1, 1)), &
+                 option%rest_references(j, option%rest_func_no(2, 1))/)
+          k_constant(ibrella,1:2) = &
+               (/option%rest_constants(i, option%rest_func_no(1, 1)), &
+                 option%rest_constants(j, option%rest_func_no(2, 1))/)
+        end do
+      end do
+
+      ifunc = 0
+      do i = 1, option%rest_func_num(1)
+        ifunc = ifunc + 1
+        is_periodic(ifunc) = option%is_periodic(option%rest_func_no(1, i))
+        box_size(ifunc)    = option%box_size(option%rest_func_no(1, i))
+      end do
+      do i = 1, option%rest_func_num(2)
+        ifunc = ifunc + 1
+        is_periodic(ifunc) = option%is_periodic(option%rest_func_no(2, i))
+        box_size(ifunc)    = option%box_size(option%rest_func_no(2, i))
+      end do
+
+    end if
+
+    do k = 1, nbrella
+      do l = 1, nbrella
+        call exec_fhandle(option, umbrella_center(l,:), k_constant(l,:), &
+                          data_k(k), u_kl(k,l), is_periodic, box_size)
+        u_kl(k,l)%v(:) = (u_kl(k,l)%v(:) + data_k(k)%vrefene(:))
+      end do
+    end do
+
+    deallocate(umbrella_center, k_constant, is_periodic, box_size)
+
+    write(MsgOut,'(a)') '  ..done'
+    write(MsgOut,'(a)') ''         
+
+    return
+
+  end subroutine build_u_kl_from_cv_ene
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
   subroutine build_u_kl_from_ene(option, data_k, u_kl)
 
     ! formal arguments
@@ -1066,7 +1239,7 @@ contains
       nfunc = 1
     else if (option%input_type == InputTypeEnePair .or. option%input_type == InputTypeFEP) then
       nfunc = 2
-    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST) then
+    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST .or. option%input_type == InputTypeMBGO) then
       nfunc = nbrella
     else
       call error_msg('Build_U_KL_From_Ene> unsupported input type')
@@ -1102,7 +1275,7 @@ contains
           end do
         end if
       end do
-    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST) then
+    else if (option%input_type == InputTypeEneAll .or. option%input_type == InputTypeREST .or. option%input_type == InputTypeMBGO) then
       do k = 1, nbrella
         do l = 1, nbrella
           allocate(u_kl(k,l)%v(nstep))
@@ -1936,7 +2109,7 @@ contains
     type(s_f_k),             intent(in)    :: f_k(:)
     type(s_pmf),             intent(in)    :: pmf(:)
     real(wp),                intent(in)    :: weight_k(:,:)
-    integer,                 intent(in)    :: time_k(:,:)
+    real(wp),                intent(in)    :: time_k(:,:) 
 
     ! local variables
     integer                  :: file, i, j, nbrella, nstep, irep_x, irep_y
@@ -1948,12 +2121,18 @@ contains
 
     real(wp)                 :: ZERO = 0.0_wp
     real(wp)                 :: NaN, KBT
+    real(wp)                 :: out_unit
 
     real(wp),    allocatable :: f_k2d(:,:), pmf1d(:), pmf2d(:,:)
 
 
     NaN  = 0.0_wp/ZERO
-    !KBT  = KB * option%temperature
+    KBT  = KB * option%target_temperature
+    if (option%out_unit == 'kcal/mol') then
+      out_unit = KBT
+    else if (option%out_unit == 'NONE') then
+      out_unit = 1.0_wp
+    end if
 
     ! output fene file
     !
@@ -1968,7 +2147,7 @@ contains
         write(fmt,'(a,i0,a)') '(', option%nblocks,'f25.16)'
 
         do i = 1, nbrella
-          write(file,fmt=fmt) (f_k(j)%v(i),j=1,option%nblocks)
+          write(file,fmt=fmt) (f_k(j)%v(i)*out_unit,j=1,option%nblocks)
         end do
 
       else
@@ -1986,7 +2165,7 @@ contains
         write(fmt,'(a,i0,a)') '(',nrep_x, 'f25.16)'
 
         do j = 1, nrep_y
-          write(file,fmt=fmt) (f_k2d(j,i),i=1,nrep_x)
+          write(file,fmt=fmt) (f_k2d(j,i)*out_unit,i=1,nrep_x)
         end do
 
         deallocate(f_k2d)
@@ -2017,7 +2196,7 @@ contains
         write(fmt,'(a,i0,a)') '(', ncol+1,'f25.16)'
 
         do i = 1, nbin_pmf
-          write(file,fmt=fmt) bin_k%center_x(i), (pmf(j)%v(i),j=1,ncol)
+          write(file,fmt=fmt) bin_k%center_x(i), (pmf(j)%v(i)*out_unit,j=1,ncol)
         end do
 
       else
@@ -2037,7 +2216,7 @@ contains
         write(fmt,'(a,i0,a)') '(',nbin_x, 'f25.16)'
 
         do j = 1, nbin_y
-          write(file,fmt=fmt) (pmf2d(j,i),i=1,nbin_x)
+          write(file,fmt=fmt) (pmf2d(j,i)*out_unit,i=1,nbin_x)
         end do
 
         ! do ibin_x = 1, nbin_x
@@ -2080,7 +2259,7 @@ contains
                get_replicate_name1(output%weightfile, irep_x), IOFileOutputNew)
 
           do i = 1, nstep
-            write(file,*) time_k(i,irep_x), weight_k(i,irep_x)
+            write(file,*) int(time_k(i,irep_x)), weight_k(i,irep_x)
           end do
 
           call close_file(file)
@@ -2104,8 +2283,8 @@ contains
 
             do i = 1, nstep
               write(file,*) &
-                time_k(i,(irep_x-1)+(irep_y-1)*nrep_x+1), &
-                weight_k(i,(irep_x-1)+(irep_y-1)*nrep_x+1)
+                time_k(i,(irep_y-1)+(irep_x-1)*nrep_x+1), &
+                weight_k(i,(irep_y-1)+(irep_x-1)*nrep_x+1)
             end do
 
             call close_file(file)
@@ -2152,7 +2331,7 @@ contains
       v = 0
       do ifunc = 1, nfunc
         K = k_constant(ifunc)
-        KBT  = KB * option%temperature(ifunc)
+        KBT  = KB * option%temperature(1)
         BETA = 1.0_wp / KBT
         if (is_periodic(ifunc)) then
           v = v + BETA * K * &
@@ -2353,7 +2532,7 @@ contains
 
     ! local variables
     integer                  :: file
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(MaxLineLong_CV) :: line
 
 
@@ -2391,7 +2570,7 @@ contains
     type(s_trj_file)         :: file
     integer                  :: i, file_size, hdr_size, step_size
     integer(4)               :: icntrl(20), ntitle
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(80)            :: title(10)
     character(4)             :: hdr
     logical                  :: exist
@@ -2538,56 +2717,87 @@ contains
 
     log_wi_jn(1:nstp,1:nrep) = 0.0_wp
 
-    !$omp parallel private(irep, istp, irep2)
+    !$omp parallel private(istp, irep2)
     !
-
-    if (.not. allocated(g_rep_N_k)) then
-      allocate(g_rep_N_k  (nstp,nrep))
-      allocate(g_rep_f_k  (nstp,nrep))
-      allocate(g_sqz_u_kln(nstp,nrep))
-      allocate(g_rep_u_kn (nstp,nrep))
+    if (.not. allocated(g_temp)) then
+      allocate(g_temp (nstp,nrep))
     end if
 
     !$omp do
     !
-
     ! for K = 1:K
     do irep = 1, nrep
 
       if (nstp /= N_k(irep)) &
         call error_msg('MBar_Log_Wi_Jn> ERROR ')
 
-      ! repeat(log(N_k), 1, N_k(k))
-      do istp = 1, nstp
-        g_rep_N_k(istp,1:nrep) = log(real(N_k(1:nrep), wp))
-      end do
-
-      ! repeat(f_k, 1, N_k(k))
-      do istp = 1, nstp
-        g_rep_f_k(istp,1:nrep) = f_k(1:nrep)
-      end do
-
-      ! squeeze(u_kln(k, :, 1:N_k(k)))
-      g_sqz_u_kln(1:nstp,1:nrep) = u_kln(1:nstp,1:nrep,irep)
-
-      ! repeat(u_kn(k, 1:N_k(k)), K, 1)
       do irep2 = 1, nrep
-        g_rep_u_kn(1:nstp,irep2) = u_kn(1:nstp, irep)
+        do istp = 1, nstp
+          g_temp(istp,irep2) = log(real(N_k(irep2), wp)) + f_k(irep2) &
+            - u_kln(istp,irep2,irep) + u_kn(istp, irep)
+        end do
       end do
 
-      call logsumexp1d2(g_rep_N_k   (1:nstp,1:nrep) + &
-                        g_rep_f_k   (1:nstp,1:nrep) - &
-                        (g_sqz_u_kln(1:nstp,1:nrep) - &
-                         g_rep_u_kn (1:nstp,1:nrep)), &
-                        log_wi_jn(:,irep))
+      call logsumexp1d2(g_temp(1:nstp,1:nrep), log_wi_jn(:,irep))
       log_wi_jn(1:nstp,irep) = -log_wi_jn(1:nstp,irep)
 
     end do
-
     !
     !$omp end do
     !
     !$omp end parallel
+
+
+!    !$omp parallel private(irep, istp, irep2)
+!    !
+!
+!    if (.not. allocated(g_rep_N_k)) then
+!      allocate(g_rep_N_k  (nstp,nrep))
+!      allocate(g_rep_f_k  (nstp,nrep))
+!      allocate(g_sqz_u_kln(nstp,nrep))
+!      allocate(g_rep_u_kn (nstp,nrep))
+!    end if
+!
+!    !$omp do
+!    !
+!
+!    ! for K = 1:K
+!    do irep = 1, nrep
+!
+!      if (nstp /= N_k(irep)) &
+!        call error_msg('MBar_Log_Wi_Jn> ERROR ')
+!
+!      ! repeat(log(N_k), 1, N_k(k))
+!      do istp = 1, nstp
+!        g_rep_N_k(istp,1:nrep) = log(real(N_k(1:nrep), wp))
+!      end do
+!
+!      ! repeat(f_k, 1, N_k(k))
+!      do istp = 1, nstp
+!        g_rep_f_k(istp,1:nrep) = f_k(1:nrep)
+!      end do
+!
+!      ! squeeze(u_kln(k, :, 1:N_k(k)))
+!      g_sqz_u_kln(1:nstp,1:nrep) = u_kln(1:nstp,1:nrep,irep)
+!
+!      ! repeat(u_kn(k, 1:N_k(k)), K, 1)
+!      do irep2 = 1, nrep
+!        g_rep_u_kn(1:nstp,irep2) = u_kn(1:nstp, irep)
+!      end do
+!
+!      call logsumexp1d2(g_rep_N_k   (1:nstp,1:nrep) + &
+!                        g_rep_f_k   (1:nstp,1:nrep) - &
+!                        (g_sqz_u_kln(1:nstp,1:nrep) - &
+!                         g_rep_u_kn (1:nstp,1:nrep)), &
+!                        log_wi_jn(:,irep))
+!      log_wi_jn(1:nstp,irep) = -log_wi_jn(1:nstp,irep)
+!
+!    end do
+!
+!    !
+!    !$omp end do
+!    !
+!    !$omp end parallel
 
     return
 

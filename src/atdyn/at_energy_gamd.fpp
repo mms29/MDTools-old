@@ -25,7 +25,7 @@ module at_energy_gamd_mod
   use mpi_parallel_mod
   use constants_mod
   use math_libs_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -179,7 +179,7 @@ contains
         ene_pot = ene_pot + energy%cmap
     end if
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     if (.not. gamd%boost_pot) then
       ! Allreduce force
       !

@@ -20,6 +20,7 @@ module at_remd_mod
   use at_md_leapfrog_mod
   use at_md_vverlet_mod
   use at_nmmd_mod
+  use at_md_vverlet_cg_mod
   use at_dynamics_str_mod
   use at_dynvars_str_mod
   use at_dynvars_mod
@@ -45,7 +46,7 @@ module at_remd_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -499,6 +500,7 @@ contains
     integer                    :: comp, dsta, dend, found, dtotal
     integer                    :: replicaid, parmsetid
     integer                    :: ncycle, icycle, nlen, ixx
+    integer                    :: funcid
     character(MaxLine)         :: param
     character(10)              :: tmp, frmt, cd
     character(18)              :: frmt2
@@ -520,6 +522,8 @@ contains
     remd%dimension       = rep_info%dimension
     remd%total_nreplicas = product(rep_info%nreplicas(1:remd%dimension))
     max_nreplicas        = maxval (rep_info%nreplicas(1:remd%dimension))
+
+    remd%rest_mixed_three_atoms = .false.
 
     call alloc_remd(remd, RemdReplicas, remd%dimension,  &
                     remd%total_nreplicas, max_nreplicas)
@@ -599,6 +603,12 @@ contains
     ! setup replica exchange period
     !
     if (rep_info%exchange_period > 0) then
+      if (dynamics%rstout_period > 0) then
+        if (mod(dynamics%rstout_period,rep_info%exchange_period) /= 0) then
+          call error_msg('Setup_Remd> mod(rstout_period, exchange_period)'//&
+                         ' must be zero)')
+        endif
+      endif
       if (dynamics%eneout_period > rep_info%exchange_period) then
         call error_msg('Setup_Remd> (eneout_period <= exchange_period)'//    &
                        ' is required')
@@ -608,6 +618,7 @@ contains
                          ' must be zero)')
         end if
       end if
+
       cycles = 2*rep_info%exchange_period*remd%dimension
       if (mod(dynamics%nsteps,cycles) /= 0) then
         call error_msg('Setup_Remd> mod(nsteps,(2*exchange_period*dimension))'//&
@@ -786,6 +797,13 @@ contains
                        'function  = ', remd%umbrid2funclist(i,k),  &
                        'constant  = ', remd%rest_constants(i,k),   &
                        'reference = ', remd%rest_reference(i,k)
+          funcid = remd%umbrid2funclist(i,k)
+          if ( restraints%function(funcid) == RestraintsFuncRG .or. &
+               restraints%function(funcid) == RestraintsFuncRGWOMASS ) then
+            write(MsgOut,'(6X,A,L7,2X,A,F11.3)')                     &
+                         'caging    = ', remd%rest_caging(i,k),      &
+                         'flat_radi = ', remd%rest_flat_radius(i,k)
+          endif
         end do
         write(MsgOut,'(A)') ''
       end do
@@ -895,12 +913,6 @@ contains
                                           have inconsistency')
             end if
 
-            !if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
-            !  call error_msg('Setup_Remd> nreplica' // trim(msg1) // ' in [REMD] and &
-            !                              reference'// trim(msg2) // ' in [RESTRAINTS] &
-            !                              have inconsistency')
-            !end if
-
             if (enefunc%restraint_kind(funcid) /= RestraintsFuncEM) then
               if (split_num(restraints%reference(funcid)) /= remd%nreplicas(i)) then
                 call error_msg('Setup_Remd> nreplica' // trim(msg1) // ' in [REMD] and &
@@ -944,6 +956,26 @@ contains
             ndata = split_num(param)
             call split(ndata, max_nreplicas, param, ddata)
             remd%rest_reference(umbrid,k) = ddata(j)
+
+            ! caging and flat_radius (Rg restraint)
+            if (restraints%function(funcid) == RestraintsFuncRG .or. &
+                restraints%function(funcid) == RestraintsFuncRGWOMASS ) then
+              param = restraints%caging(funcid)
+              ndata = split_num(param)
+              if (ndata > 0) then
+                call split(ndata, max_nreplicas, param, cdata)
+                call tolower(cdata(j))
+                remd%rest_caging(umbrid,k) = (cdata(j) == 'yes' .or. cdata(j) == 'true')
+              end if
+
+              param = restraints%flat_radius(funcid)
+              ndata = split_num(param)
+              if (ndata > 0) then
+                call split(ndata, max_nreplicas, param, ddata)
+                remd%rest_flat_radius(umbrid,k) = ddata(j)
+              end if
+            end if
+
           end do
         end do
       end if
@@ -1010,7 +1042,7 @@ contains
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
-    integer :: i, j, k, num, ndata, nrest
+    integer :: i, j, k, num, ndata, nrest, nflags
     integer :: ierror
 
     integer, parameter :: max_param_type = 20
@@ -1084,6 +1116,7 @@ contains
         remd%solute_tempering(i)%num_cmap_type = 0
         remd%solute_tempering(i)%num_atom_cls  = 0
         remd%solute_tempering(i)%num_contacts  = 0
+        remd%solute_tempering(i)%num_mixed_three = 0
 
         read(rep_info%select_index(i),*) remd%solute_tempering(i)%mygroup
 
@@ -1135,7 +1168,7 @@ contains
         !
         call setup_remd_solute_tempering_bonds( remd%solute_tempering(i), &
                                                 enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_bonds, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1147,23 +1180,28 @@ contains
 
         ! angle
         !
+        nflags = 0
         call setup_remd_solute_tempering_angles( remd%solute_tempering(i), &
                                                  enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_angles, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+        call mpi_reduce(remd%solute_tempering(i)%num_mixed_three, nflags, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
         nrest = remd%solute_tempering(i)%num_angles
+        nflags = remd%solute_tempering(i)%num_mixed_three
 #endif
         if (main_rank) then
           write(MsgOut,'(a,i0)') '  num_solute_angle    = ', nrest
         end if
+        if (nflags > 0) remd%rest_mixed_three_atoms = .true.
 
         ! urey-bradley
         !
         call setup_remd_solute_tempering_ureys( remd%solute_tempering(i), &
                                                 enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_ureys, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1175,45 +1213,60 @@ contains
 
         ! dihedrals
         !
+        nflags = 0
         call setup_remd_solute_tempering_dihedrals( remd%solute_tempering(i), &
                                                     enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_dihedrals, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+        call mpi_reduce(remd%solute_tempering(i)%num_mixed_three, nflags, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
         nrest = remd%solute_tempering(i)%num_dihedrals
+        nflags = remd%solute_tempering(i)%num_mixed_three
 #endif
         if (main_rank) then
           write(MsgOut,'(a,i0)') '  num_solute_dihedral = ', nrest
         end if
+        if (nflags > 0) remd%rest_mixed_three_atoms = .true.
 
         ! impropers
         !
+        nflags = 0
         call setup_remd_solute_tempering_impropers( remd%solute_tempering(i), &
                                                     enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_impropers, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+        call mpi_reduce(remd%solute_tempering(i)%num_mixed_three, nflags, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
         nrest = remd%solute_tempering(i)%num_impropers
+        nflags = remd%solute_tempering(i)%num_mixed_three
 #endif
         if (main_rank) then
           write(MsgOut,'(a,i0)') '  num_solute_improper = ', nrest
         end if
+        if (nflags > 0) remd%rest_mixed_three_atoms = .true.
 
         ! cmaps
         !
+        nflags = 0
         call setup_remd_solute_tempering_cmaps( remd%solute_tempering(i), &
                                                 enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_cmaps, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+        call mpi_reduce(remd%solute_tempering(i)%num_mixed_three, nflags, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
         nrest = remd%solute_tempering(i)%num_cmaps
+        nflags = remd%solute_tempering(i)%num_mixed_three
 #endif
         if (main_rank) then
           write(MsgOut,'(a,i0)') '  num_solute_cmap     = ', nrest
         end if
+        if (nflags > 0) remd%rest_mixed_three_atoms = .true.
 
         ! charge
         !
@@ -1235,7 +1288,7 @@ contains
         !
         call setup_remd_solute_tempering_native_contact( &
                           remd%solute_tempering(i), enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_contacts, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1331,7 +1384,7 @@ contains
 
     ! local variables
     integer, parameter :: num_unit = 3
-    integer            :: alist(num_unit), i, j, k, num, ndata
+    integer            :: alist(num_unit), i, j, k, num, ndata, nflags
     logical            :: count_only
 
     if ( .not. allocated(enefunc%angl_force_const) .or. &
@@ -1340,6 +1393,7 @@ contains
     count_only = .true.
     do i = 1, 2
       ndata = 0
+      nflags = 0
       do j = enefunc%istart_angle, enefunc%iend_angle
         num = 0
         alist(1:num_unit) = enefunc%angl_list(1:num_unit,j)
@@ -1354,11 +1408,13 @@ contains
             soltemp%angl_weight(ndata) = real(num,wp) / real(num_unit,wp)
             soltemp%angl_force_const_org(ndata) = enefunc%angl_force_const(j)
           end if
+          if (num /= num_unit) nflags = nflags + 1
         end if
 
       end do
 
       if ( count_only ) then
+        soltemp%num_mixed_three = nflags
         soltemp%num_angles = ndata
         allocate(soltemp%angl_list(ndata), &
                  soltemp%angl_weight(ndata), &
@@ -1446,7 +1502,7 @@ contains
 
     ! local variables
     integer, parameter :: num_unit = 4
-    integer            :: alist(num_unit), i, j, k, num, ndata
+    integer            :: alist(num_unit), i, j, k, num, ndata, nflags
     logical            :: count_only
 
 
@@ -1456,6 +1512,7 @@ contains
     count_only = .true.
     do i = 1, 2
       ndata = 0
+      nflags = 0
       do j = enefunc%istart_dihedral, enefunc%iend_dihedral
         num = 0
         alist(1:num_unit) = enefunc%dihe_list(1:num_unit,j)
@@ -1470,12 +1527,14 @@ contains
             soltemp%dihe_weight(ndata) = real(num,wp) / real(num_unit,wp)
             soltemp%dihe_force_const_org(ndata) = enefunc%dihe_force_const(j)
           end if
+          if (num /= num_unit) nflags = nflags + 1
         end if
 
       end do
 
       if ( count_only ) then
         soltemp%num_dihedrals = ndata
+        soltemp%num_mixed_three = nflags
         allocate(soltemp%dihe_list(ndata), &
                  soltemp%dihe_weight(ndata), &
                  soltemp%dihe_force_const_org(ndata))
@@ -1505,7 +1564,7 @@ contains
 
     ! local variables
     integer, parameter :: num_unit = 4
-    integer            :: alist(num_unit), i, j, k, num, ndata
+    integer            :: alist(num_unit), i, j, k, num, ndata, nflags
     logical            :: count_only
 
     if ( .not. allocated(enefunc%impr_force_const) .or. &
@@ -1514,6 +1573,7 @@ contains
     count_only = .true.
     do i = 1, 2
       ndata = 0
+      nflags = 0
       do j = enefunc%istart_improper, enefunc%iend_improper
         num = 0
         alist(1:num_unit) = enefunc%impr_list(1:num_unit,j)
@@ -1528,12 +1588,14 @@ contains
             soltemp%impr_weight(ndata) = real(num,wp) / real(num_unit,wp)
             soltemp%impr_force_const_org(ndata) = enefunc%impr_force_const(j)
           end if
+          if (num /= num_unit) nflags = nflags + 1
         end if
 
       end do
 
       if ( count_only ) then
         soltemp%num_impropers = ndata
+        soltemp%num_mixed_three = nflags
         allocate(soltemp%impr_list(ndata), &
                  soltemp%impr_weight(ndata), &
                  soltemp%impr_force_const_org(ndata))
@@ -1563,7 +1625,7 @@ contains
 
     ! local variables
     integer, parameter :: num_unit = 8
-    integer            :: alist(num_unit), i, j, k, num, ndata
+    integer            :: alist(num_unit), i, j, k, num, ndata, nflags
     logical            :: count_only
 
     integer :: num_new_types, ct, ncmap_type
@@ -1585,6 +1647,7 @@ contains
     count_only = .true.
     do i = 1, 2
       ndata = 0
+      nflags = 0
       do j = enefunc%istart_cmap, enefunc%iend_cmap
 
         num = 0
@@ -1604,11 +1667,13 @@ contains
           else
             enefunc%cmap_type(j) = ncmap_type + flags(ct,num)
           end if
+          if (num /= num_unit) nflags = nflags + 1
         end if
 
       end do
 
       if ( count_only ) then
+        soltemp%num_mixed_three = nflags
         if ( ndata == 0 ) exit
         soltemp%num_cmaps = ndata
         allocate(cmap_coef_org(4,4,24,24,ncmap_type), &
@@ -1988,6 +2053,9 @@ contains
         call nmmd_dynamics (output, molecule, enefunc, dynvars, dynamics, &
                                 pairlist, boundary, constraints, ensemble)
 
+      else if (dynamics%integrator == IntegratorVVER_CG) then
+        call vverlet_dynamics_cg(output, molecule, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble)
       end if
 
       ! perform remd
@@ -2496,7 +2564,7 @@ contains
     ! allgather potential energy
     !
     before_gather = dynvars%energy%total
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2641,7 +2709,7 @@ contains
     before_gather =  boundary%box_size_x &
                    * boundary%box_size_y &
                    * boundary%box_size_z 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2767,7 +2835,7 @@ contains
     !
     before_gather =  boundary%box_size_x &
                    * boundary%box_size_y 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2888,6 +2956,7 @@ contains
     integer,         pointer :: parameters(:,:)
     real(wp),        pointer :: after_gather(:), random_table(:,:)
     real(wp),        pointer :: force(:,:), virial(:,:), virial_ext(:,:)
+    real(wp),        pointer :: force_omp(:,:,:)
     real(wp),        pointer :: refcoord0(:,:), refcoord1(:,:)
 
 
@@ -2904,6 +2973,7 @@ contains
     refcoord0       => remd%restraint_refcoord0
     refcoord1       => remd%restraint_refcoord1
     force           => dynvars%force
+    force_omp       => dynvars%force_omp
     virial          => dynvars%virial
     virial_ext      => dynvars%virial_extern
 
@@ -2930,7 +3000,7 @@ contains
       before_gather = before_gather + eneval
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2971,7 +3041,7 @@ contains
       before_gather = 0.0_wp
     end if
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -3100,6 +3170,7 @@ contains
     integer                     :: nfuncs
     type(s_energy),        save :: energy
     real(wp), allocatable, save :: force(:,:)
+    real(wp), allocatable, save :: force_omp(:,:,:)
     real(wp)                    :: virial(3,3)
     real(wp)                    :: virial_ext(3,3)
 
@@ -3108,7 +3179,8 @@ contains
     nfuncs = enefunc%num_restraintfuncs
     if ( .not. allocated(force) ) then
       call alloc_energy(energy, EneRestraints, nfuncs)
-      allocate( force(3,molecule%num_atoms) )
+      allocate( force(3,molecule%num_atoms), &
+                force_omp(3,molecule%num_atoms,nthread) )
     end if
 
     total_nreplicas => remd%total_nreplicas
@@ -3125,11 +3197,13 @@ contains
     !
     call compute_energy( molecule, enefunc, pairlist, boundary,    &
                          .true., enefunc%nonb_limiter,             &
-                         dynvars%coord, energy, dynvars%temporary, &
-                         force, virial, virial_ext )
+                         dynvars%coord, dynvars%trans,             &
+                         dynvars%coord_pbc,                        &
+                         energy, dynvars%temporary,                &
+                         force, force_omp, virial, virial_ext )
 
     before_gather = energy%total
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror )
@@ -3165,15 +3239,17 @@ contains
       !
       call compute_energy( molecule, enefunc, pairlist, boundary,    &
                            .true., enefunc%nonb_limiter,             &
-                           dynvars%coord, energy, dynvars%temporary, &
-                           force, virial, virial_ext )
+                           dynvars%coord, dynvars%trans,             &
+                           dynvars%coord_pbc,                        &
+                           energy, dynvars%temporary,                &
+                           force, force_omp, virial, virial_ext )
 
     else
       energy%total = 0.0_wp
     end if
 
     before_gather = energy%total
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -3289,6 +3365,9 @@ contains
           call setup_eef1_temperature(ensemble%temperature, enefunc)
         else if (enefunc%gbsa_use) then
           enefunc%gbsa%temperature = ensemble%temperature
+        end if
+        if (enefunc%cg_ele_calc) then
+          enefunc%cg_ele_sol_T = ensemble%temperature
         end if
 
       else if (remd%types(i) == RemdPressure   ) then

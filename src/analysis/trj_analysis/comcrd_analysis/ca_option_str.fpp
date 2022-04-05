@@ -24,12 +24,13 @@ module ca_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical             :: check_only
-    integer             :: analysis_for
-    integer             :: pbcc_mode
-    integer             :: output_coord
-    character(MaxLine)  :: analysis_atom_exp
-    type(s_selatoms)    :: analysis_atom
+    logical                :: check_only
+    integer                :: analysis_for
+    integer                :: pbcc_mode
+    integer                :: output_coord
+    logical                :: output_atomno
+    character(MaxLineLong) :: analysis_atom_exp
+    type(s_selatoms)       :: analysis_atom
 
   end type s_option
 

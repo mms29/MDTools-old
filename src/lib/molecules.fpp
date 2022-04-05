@@ -35,6 +35,9 @@ module molecules_mod
   implicit none
   private
 
+  ! local variables
+  logical, private :: vervose = .true.   
+
   ! subroutines
   public  :: define_molecules
   public  :: update_num_deg_freedom
@@ -338,7 +341,7 @@ contains
 
     ! write summary of molecule information
     !
-    if (main_rank) then
+    if (main_rank .and. vervose) then
 
       write(MsgOut,'(A)') 'Define_Molecule> Summary of molecules'
 
@@ -360,6 +363,7 @@ contains
       write(MsgOut,'(A20,F10.3)')                          &
            '  total_charge    = ', molecule%total_charge
       write(MsgOut,'(A)') ' '
+      vervose = .false.
     end if
 
 
@@ -695,7 +699,13 @@ contains
     molecule%atom_cls_no  (1:natom) = prmtop%atom_cls_no  (1:natom)
     molecule%charge       (1:natom) = prmtop%charge       (1:natom)/18.2223_wp
     molecule%mass         (1:natom) = prmtop%mass         (1:natom)
-    molecule%inv_mass     (1:natom) = 1.0_wp/prmtop%mass  (1:natom)
+    do i = 1, natom
+      if (prmtop%mass(i) > EPS) then
+        molecule%inv_mass(i) = 1.0_wp/prmtop%mass(i)
+      else
+        molecule%inv_mass(i) = 0.0_wp
+      end if
+    end do
 
     ! residue_no, residue_name
     if (prmtop%lresidue_label .and. prmtop%lresidue_pointer) then
@@ -746,7 +756,6 @@ contains
       molecule%bond_list(1,icnt) = prmtop%bond_wo_hy(1,i) / 3 + 1
       molecule%bond_list(2,icnt) = prmtop%bond_wo_hy(2,i) / 3 + 1
     end do
-
 
     ! angles
     !
@@ -848,6 +857,19 @@ contains
 
     end do
 
+    ! cmap 
+    !
+    molecule%num_cmaps = prmtop%num_cmap 
+
+    call alloc_molecules(molecule, MoleculeCmap, molecule%num_cmaps)
+
+    do i = 1, prmtop%num_cmap
+
+      molecule%cmap_list(1:4,i) = prmtop%cmap_list(1:4,i)
+      molecule%cmap_list(5:8,i) = prmtop%cmap_list(2:5,i)
+
+    end do
+
     ! assigen center of the system and shift coordinates according to center
     !
 !   center(1:3) = 0.0_wp
@@ -931,12 +953,13 @@ contains
 
         do k = 1, gromol%num_dihes
           select case (gromol%dihes(k)%func)
-          case (1,3,4,9)
+         !shinobu-edited
+          case (1,3,4,9,21,22,31,32,33,41,43,52)
             ndihe = ndihe + 1
           case (2)
             nimpr = nimpr + 1
           case default
-            call error_msg('Setup_Molecule_Gromacs> Unknown dihedral fucn type.')
+            call error_msg('Setup_Molecule_Gromacs> Unknown dihedral func type.')
           end select
         end do
 
@@ -967,21 +990,28 @@ contains
 
         ! atom
         do k = 1, gromol%num_atoms
-          m                         = molecule%num_atoms + 1
-          molecule%atom_no(m)       = m
-          molecule%segment_name(m)  = name
-          molecule%residue_no(m)    = gromol%atoms(k)%residue_no
-          molecule%residue_name(m)  = gromol%atoms(k)%residue_name
-          molecule%atom_name(m)     = gromol%atoms(k)%atom_name
-          molecule%atom_cls_name(m) = gromol%atoms(k)%atom_type
-          molecule%charge(m)        = gromol%atoms(k)%charge
-          molecule%mass(m)          = gromol%atoms(k)%mass
+          m                             = molecule%num_atoms + 1
+          molecule%atom_no(m)           = m
+          molecule%segment_name(m)      = name
+          molecule%residue_no(m)        = gromol%atoms(k)%residue_no
+          molecule%residue_name(m)      = gromol%atoms(k)%residue_name
+          molecule%atom_name(m)         = gromol%atoms(k)%atom_name
+          molecule%atom_cls_name(m)     = gromol%atoms(k)%atom_type
+          molecule%charge(m)            = gromol%atoms(k)%charge
+          molecule%mass(m)              = gromol%atoms(k)%mass
           if (molecule%mass(m) > EPS) then 
-            molecule%inv_mass(m)      = 1.0_wp / molecule%mass(m)
+            molecule%inv_mass(m)        = 1.0_wp / molecule%mass(m)
           else
-            molecule%inv_mass(m)      = 0.0_wp
+            molecule%inv_mass(m)        = 0.0_wp
           end if
-          molecule%num_atoms        = m
+          molecule%stokes_radius(m)     = gromol%atoms(k)%stokes_r * 10.0_wp
+          !shinobu-edited
+          if (molecule%stokes_radius(m) > EPS) then
+            molecule%inv_stokes_radius(m) = 0.1_wp / molecule%stokes_radius(m)
+          else
+            molecule%inv_stokes_radius(m) = 0.0_wp
+          end if
+          molecule%num_atoms            = m
         end do
 
         ! bond
@@ -1041,7 +1071,8 @@ contains
         ! dihedral/improper dihedral
         do k = 1, gromol%num_dihes
           select case (gromol%dihes(k)%func)
-          case (1,4,9)
+          !shinobu-edited
+          case (1,3,4,9,21,22,31,32,33,41,43,52)
             m                        = molecule%num_dihedrals + 1
             molecule%dihe_list(1, m) = gromol%dihes(k)%atom_idx1 + ioffset
             molecule%dihe_list(2, m) = gromol%dihes(k)%atom_idx2 + ioffset

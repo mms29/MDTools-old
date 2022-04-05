@@ -2,7 +2,7 @@
 !
 !  Module   sp_enefunc_gromacs_mod
 !> @brief   define potential energy functions
-!! @authors Jaewoon Jung (JJ), Takeshi Imai (TI), Chigusa Kobayashi (CK), 
+!! @authors Jaewoon Jung (JJ), Takeshi Imai (TI), Chigusa Kobayashi (CK),
 !!          Takaharu Mori (TM), Yuji Sugita (YS)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
@@ -30,11 +30,19 @@ module sp_enefunc_gromacs_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+
+  type(s_enefunc)             :: ef0
+
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! subroutines
@@ -49,6 +57,13 @@ module sp_enefunc_gromacs_mod
   private :: setup_enefunc_impr
   private :: setup_enefunc_nonb
   private :: setup_enefunc_gro_restraints
+  private :: setup_enefunc_vsite2
+  private :: setup_enefunc_vsite3
+  private :: setup_enefunc_vsite3fd
+  private :: setup_enefunc_vsite3fad
+  private :: setup_enefunc_vsite3out
+  private :: setup_enefunc_vsite4fdn
+  private :: setup_enefunc_vsiten
 
   ! paramters
   integer, parameter :: WaterIdx(2,3) = reshape((/1,2,1,3,2,3/),shape=(/2,3/))
@@ -74,12 +89,12 @@ contains
                                     constraints, restraints, domain, enefunc)
 
     ! formal arguments
-    type(s_ene_info),        intent(in)    :: ene_info 
+    type(s_ene_info),        intent(in)    :: ene_info
     type(s_grotop),          intent(in)    :: grotop
     type(s_molecule),        intent(in)    :: molecule
     type(s_constraints),     intent(inout) :: constraints
     type(s_restraints),      intent(in)    :: restraints
-    type(s_domain),          intent(inout) :: domain 
+    type(s_domain),          intent(inout) :: domain
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
@@ -91,47 +106,56 @@ contains
     ncel  = domain%num_cell_local
     ncelb = domain%num_cell_local + domain%num_cell_boundary
 
-    call alloc_enefunc(enefunc, EneFuncBase,     ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncBond,     ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncAngl,     ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncDihe,     ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncRBDihe,   ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncImpr,     ncel, ncel)
-    call alloc_enefunc(enefunc, EneFuncBondCell, ncel, ncelb)
+    call alloc_enefunc(enefunc, EneFuncBase,      ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncBond,      ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncAngl,      ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncDihe,      ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncRBDihe,    ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncImpr,      ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncBondCell,  ncel, ncelb)
+    call alloc_enefunc(enefunc, EneFuncVsite2,    ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3,    ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3fd,  ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3fad, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3out, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite4fdn, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsiten,    ncel, ncel)
 
     if (.not. constraints%rigid_bond) then
 
       ! bond
       !
-      call setup_enefunc_bond(grotop, domain, constraints, enefunc)
+      call setup_enefunc_bond(grotop, molecule, domain, constraints, enefunc)
 
       ! angle
       !
-      call setup_enefunc_angl(grotop, domain, enefunc)
+      call setup_enefunc_angl(grotop, molecule, domain, enefunc)
 
     else
 
       ! bond
       !
-      call setup_enefunc_bond_constraint(grotop, domain, constraints, enefunc)
+      call setup_enefunc_bond_constraint(grotop, molecule, domain, constraints,&
+                                         enefunc)
 
       ! angle
       !
-      call setup_enefunc_angl_constraint(grotop, domain, constraints, enefunc)
+      call setup_enefunc_angl_constraint(grotop, molecule, domain, constraints,&
+                                         enefunc)
 
     end if
 
     ! dihedral
     !
-    call setup_enefunc_dihe(grotop, domain, enefunc)
+    call setup_enefunc_dihe(grotop, molecule, domain, enefunc)
 
     ! Ryckaert-Bellemans dihedral
     !
-    call setup_enefunc_rb_dihe(grotop, domain, enefunc)
+    call setup_enefunc_rb_dihe(grotop, molecule, domain, enefunc)
 
     ! improper
     !
-    call setup_enefunc_impr(grotop, domain, enefunc)
+    call setup_enefunc_impr(grotop, molecule, domain, enefunc)
 
     ! nonbonded
     !
@@ -148,6 +172,34 @@ contains
     ! restraints (gromacs)
     !
     call setup_enefunc_gro_restraints(molecule, grotop, domain, enefunc)
+
+    ! virtual site 2
+    !
+    call setup_enefunc_vsite2(grotop, domain, enefunc)
+
+    ! virtual site 3
+    !
+    call setup_enefunc_vsite3(grotop, domain, enefunc)
+
+    ! virtual site 3fd
+    !
+    call setup_enefunc_vsite3fd(grotop, domain, enefunc)
+
+    ! virtual site 3fad
+    !
+    call setup_enefunc_vsite3fad(grotop, domain, enefunc)
+
+    ! virtual site 3out
+    !
+    call setup_enefunc_vsite3out(grotop, domain, enefunc)
+
+    ! virtual site 4fdn
+    !
+    call setup_enefunc_vsite4fdn(grotop, domain, enefunc)
+
+    ! virtual site n
+    !
+    call setup_enefunc_vsiten(grotop, domain, enefunc)
 
 
     ! write summary of energy function
@@ -169,6 +221,17 @@ contains
            '  nb14_calc       = ', enefunc%num_nb14_all
       end if
       write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite2_ene       = ', enefunc%num_vsite2_all,      &
+           ' vsite3_ene       = ', enefunc%num_vsite3_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite3fd_ene     = ', enefunc%num_vsite3fd_all,    &
+           ' vsite3fad_ene    = ', enefunc%num_vsite3fad_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite3out_ene    = ', enefunc%num_vsite3out_all,   &
+           ' vsite4fdn_ene    = ', enefunc%num_vsite4fdn_all
+      write(MsgOut,'(A20,I10)')                                 &
+           ' vsiten_ene       = ', enefunc%num_vsiten_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
            ' restraint_groups = ', enefunc%num_restraintgroups, &
            ' restraint_funcs  = ', enefunc%num_restraintfuncs
       write(MsgOut,'(A)') ' '
@@ -184,15 +247,17 @@ contains
   !> @brief        define BOND term for each cell in potential energy function
   !! @authors      NT
   !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    molecule : molecule information
   !! @param[in]    domain   : domain information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_bond(grotop, domain, constraints, enefunc)
+  subroutine setup_enefunc_bond(grotop, molecule, domain, constraints, enefunc)
 
     ! formal arguments
     type(s_grotop),          intent(in)    :: grotop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_constraints),     intent(in)    :: constraints
     type(s_enefunc), target, intent(inout) :: enefunc
@@ -202,6 +267,7 @@ contains
     integer                  :: i, j, k
     integer                  :: ioffset, nbond_a
     integer                  :: idx1, idx2, icel1, icel2, icel_local
+    integer                  :: ii1, ii2
 
     type(s_grotop_mol), pointer :: gromol
     real(wp),           pointer :: force(:,:), dist(:,:)
@@ -233,6 +299,13 @@ contains
             idx1 = gromol%bonds(k)%atom_idx1 + ioffset
             idx2 = gromol%bonds(k)%atom_idx2 + ioffset
 
+            if (domain%fep_use) then
+              ! FEP: If the bond are not set to any group of FEP, exclude this bond.
+              ii1 = molecule%fepgrp(idx1)
+              ii2 = molecule%fepgrp(idx2)
+              if (molecule%fepgrp_bond(ii1,ii2) == 0) cycle
+            end if
+
             icel1 = id_g2l(1,idx1)
             icel2 = id_g2l(1,idx2)
 
@@ -243,7 +316,7 @@ contains
               if (icel_local > 0 .and. icel_local <= ncel) then
 
                 if (bond(icel_local)+1 > MaxBond) &
-                  call error_msg('Setup_Enefunc_Bond> Too many bonds.') 
+                  call error_msg('Setup_Enefunc_Bond> Too many bonds.')
 
                 nbond_a = nbond_a + 1
 
@@ -281,7 +354,7 @@ contains
               if (icel_local > 0 .and. icel_local <= ncel) then
 
                 if (bond(icel_local)+1 > MaxBond) &
-                  call error_msg('Setup_Enefunc_Bond> Too many bonds.') 
+                  call error_msg('Setup_Enefunc_Bond> Too many bonds.')
 
                 nbond_a = nbond_a + 1
 
@@ -372,7 +445,7 @@ contains
 
     end if
       
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(nbond_a, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -380,7 +453,7 @@ contains
 #endif
 
     return
-    
+
   end subroutine setup_enefunc_bond
 
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -389,27 +462,31 @@ contains
   !> @brief        define BOND term between heavy atoms
   !! @authors      NT
   !! @param[in]    grotop      : CHARMM grotop information
+  !! @param[in]    molecule    : molecule information
   !! @param[in]    domain      : domain information
   !! @param[in]    constraints : constraints information
   !! @param[inout] enefunc     : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_bond_constraint(grotop, domain, constraints, enefunc)
+  subroutine setup_enefunc_bond_constraint(grotop, molecule, domain, &
+                                           constraints, enefunc)
 
     ! formal arguments
     type(s_grotop),              intent(in)    :: grotop
+    type(s_molecule),            intent(in)    :: molecule
     type(s_domain),      target, intent(in)    :: domain
     type(s_constraints), target, intent(inout) :: constraints
     type(s_enefunc),     target, intent(inout) :: enefunc
 
     ! local variables
     real(wp)                 :: water_dist(3)
-    integer                  :: i, j, k, m, n
+    integer                  :: i, j, k, l, m, n
     integer                  :: nwat, ioffset, nbond_a, nbond_c
     integer                  :: icel, connect, ih, ih1, ih2
     integer                  :: i1, i2, idx1, idx2, icel1, icel2, icel_local
     integer                  :: wat_bonds, wat_found, nbond_sys
+    integer                  :: ii1, ii2
     character(6)             :: res1, res2
     character(4)             :: atm1, atm2
     logical                  :: cl1, cl2
@@ -456,6 +533,14 @@ contains
             i1 = gromol%bonds(k)%atom_idx1
             i2 = gromol%bonds(k)%atom_idx2
 
+            if (domain%fep_use) then
+              ! FEP: If the bond are not set to any group of FEP,
+              ! exclude this bond.
+              ii1 = molecule%fepgrp(i1)
+              ii2 = molecule%fepgrp(i2)
+              if (molecule%fepgrp_bond(ii1,ii2) == 0) cycle
+            end if
+
             atm1 = gromol%atoms(i1)%atom_type
             atm2 = gromol%atoms(i2)%atom_type
 
@@ -485,7 +570,7 @@ contains
                 if (icel_local > 0 .and. icel_local <= ncel) then
 
                   if (bond(icel_local)+1 > MaxBond) &
-               call error_msg('Setup_Enefunc_Bond_Constraint> Too many bonds.') 
+               call error_msg('Setup_Enefunc_Bond_Constraint> Too many bonds.')
 
                   nbond_a = nbond_a + 1
 
@@ -510,7 +595,7 @@ contains
                 icel = cell_pair(icel1,icel2)
 
                 if (icel > 0 .and. icel <= ncel) then
-                
+
                   do m = 1, connect
 
                     do n = 1, HGr_local(m,icel)
@@ -518,13 +603,41 @@ contains
                       do ih = 1, m
                         ih2 = id_l2g(HGr_bond_list(ih+1,n,m,icel),icel)
 
+                        if (domain%fep_use) then
+                          ! FEP: Hydrogen rewiring
+                          ! In singleA-dualB bonds, one end has atom index of singleA, 
+                          ! and so par%bond_dist_min becomes singleA-dualB value.
+                          ! However, in real, the bonds should be considered as
+                          ! singleB-dualB. The parameter of singleB-dualB should be
+                          ! used. To avoid this problem, for singleA-dualB bond
+                          ! including hydrogen, the atom index of singleA is replaced
+                          ! with the corresponding atom index of singleB.
+                          if ((int(molecule%fepgrp(ih1)) == 1) .and. &
+                            (int(molecule%fepgrp(ih2)) == 4)) then
+                            do l = 1, molecule%num_atoms_fep(1)
+                              if (molecule%id_singleA(l) == ih1) then
+                                ih1 = molecule%id_singleB(l)
+                                exit
+                              end if
+                            end do
+                          else if ((int(molecule%fepgrp(ih1)) == 4) .and. &
+                            (int(molecule%fepgrp(ih2)) == 1)) then
+                            do l = 1, molecule%num_atoms_fep(2)
+                              if (molecule%id_singleB(l) == ih2) then
+                                ih2 = molecule%id_singleA(l)
+                                exit
+                              end if
+                            end do
+                          end if
+                        end if
+
                         if (ih1 == idx1 .and. ih2 == idx2 .or. &
                           ih2 == idx1 .and. ih1 == idx2) then
 
                           nbond_c = nbond_c + 1
                           HGr_bond_dist(ih+1,n,m,icel) = &
                                      gromol%bonds(k)%b0 * 10.0_wp
-  
+
                           goto 1
 
                         end if
@@ -570,12 +683,40 @@ contains
                     do ih = 1, m
                       ih2 = id_l2g(HGr_bond_list(ih+1,n,m,icel),icel)
 
+                      if (domain%fep_use) then
+                        ! FEP: Hydrogen rewiring
+                        ! In singleA-dualB bonds, one end has atom index of singleA, 
+                        ! and so par%bond_dist_min becomes singleA-dualB value.
+                        ! However, in real, the bonds should be considered as
+                        ! singleB-dualB. The parameter of singleB-dualB should be
+                        ! used. To avoid this problem, for singleA-dualB bond
+                        ! including hydrogen, the atom index of singleA is replaced
+                        ! with the corresponding atom index of singleB.
+                        if ((int(molecule%fepgrp(ih1)) == 1) .and. &
+                          (int(molecule%fepgrp(ih2)) == 4)) then
+                          do l = 1, molecule%num_atoms_fep(1)
+                            if (molecule%id_singleA(l) == ih1) then
+                              ih1 = molecule%id_singleB(l)
+                              exit
+                            end if
+                          end do
+                        else if ((int(molecule%fepgrp(ih1)) == 4) .and. &
+                          (int(molecule%fepgrp(ih2)) == 1)) then
+                          do l = 1, molecule%num_atoms_fep(2)
+                            if (molecule%id_singleB(l) == ih2) then
+                              ih2 = molecule%id_singleA(l)
+                              exit
+                            end if
+                          end do
+                        end if
+                      end if
+
                       if (ih1 == idx1 .and. ih2 == idx2 .or. &
                           ih2 == idx1 .and. ih1 == idx2) then
 
                         nbond_c = nbond_c + 1
                         HGr_bond_dist(ih+1,n,m,icel) = water_dist(k)
-  
+
                         goto 2
 
                       end if
@@ -648,7 +789,7 @@ contains
 
     end if
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(nbond_a, enefunc%num_bond_all,  1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 
@@ -678,7 +819,7 @@ contains
     end if
 
     return
-    
+
   end subroutine setup_enefunc_bond_constraint
 
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -687,15 +828,17 @@ contains
   !> @brief        define ANGLE term for each cell in potential energy function
   !! @authors      NT
   !! @param[in]    grotop   : GROMACS topology informaiton
+  !! @param[in]    molecule : molecule information
   !! @param[in]    domain   : domain information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_angl(grotop, domain, enefunc)
+  subroutine setup_enefunc_angl(grotop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_grotop),  target, intent(in)    :: grotop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -703,6 +846,7 @@ contains
     integer                  :: i, j, k
     integer                  :: ioffset, nangl_a
     integer                  :: idx1, idx2, idx3, icel1, icel2, icel_local
+    integer                  :: i1, i2, i3
 
     type(s_grotop_mol), pointer :: gromol
     real(wp),           pointer :: force(:,:), theta(:,:)
@@ -735,6 +879,14 @@ contains
             idx2 = gromol%angls(k)%atom_idx2 + ioffset
             idx3 = gromol%angls(k)%atom_idx3 + ioffset
 
+            if (domain%fep_use) then
+              ! FEP: If the angle are not set to any group of FEP, exclude this angle.
+              i1 = molecule%fepgrp(idx1)
+              i2 = molecule%fepgrp(idx2)
+              i3 = molecule%fepgrp(idx3)
+              if (molecule%fepgrp_angl(i1,i2,i3) == 0) cycle
+            end if
+
             icel1 = id_g2l(1,idx1)
             icel2 = id_g2l(1,idx3)
 
@@ -745,7 +897,7 @@ contains
               if (icel_local > 0 .and. icel_local <= ncel) then
 
                 if (angle(icel_local)+1 > MaxAngle) &
-                  call error_msg('Setup_Enefunc_Angl> Too many angles.') 
+                  call error_msg('Setup_Enefunc_Angl> Too many angles.')
 
                 nangl_a = nangl_a + 1
 
@@ -777,7 +929,7 @@ contains
             if (icel_local > 0 .and. icel_local <= ncel) then
 
               if (angle(icel_local)+1 > MaxAngle) &
-                call error_msg('Setup_Enefunc_Angl> Too many angles.') 
+                call error_msg('Setup_Enefunc_Angl> Too many angles.')
 
               nangl_a = nangl_a + 1
 
@@ -796,7 +948,7 @@ contains
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(nangl_a, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -820,10 +972,12 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_angl_constraint(grotop, domain, constraints, enefunc)
+  subroutine setup_enefunc_angl_constraint(grotop, molecule, domain, &
+                                           constraints, enefunc)
 
     ! formal arguments
     type(s_grotop),              intent(in)    :: grotop
+    type(s_molecule),            intent(in)    :: molecule
     type(s_domain),      target, intent(in)    :: domain
     type(s_constraints), target, intent(in)    :: constraints
     type(s_enefunc),     target, intent(inout) :: enefunc
@@ -832,6 +986,7 @@ contains
     integer                  :: i, j, k
     integer                  :: nwat, ioffset, icel_local, nangl_a
     integer                  :: i1, i2, i3, idx1, idx2, idx3, icel1, icel2
+    integer                  :: ii1, ii2, ii3
     integer                  :: nangl_sys
     character(6)             :: res1, res2, res3
 
@@ -867,6 +1022,14 @@ contains
             i1 = gromol%angls(k)%atom_idx1
             i2 = gromol%angls(k)%atom_idx2
             i3 = gromol%angls(k)%atom_idx3
+
+            if (domain%fep_use) then
+              ! FEP: If the angle is not set to any group of FEP, exclude this angle.
+              ii1 = molecule%fepgrp(i1)
+              ii2 = molecule%fepgrp(i2)
+              ii3 = molecule%fepgrp(i3)
+              if (molecule%fepgrp_angl(ii1,ii2,ii3) == 0) cycle
+            end if
 
             res1 = gromol%atoms(i1)%residue_name
             res2 = gromol%atoms(i2)%residue_name
@@ -917,11 +1080,11 @@ contains
         end if
 
         ioffset   = ioffset   + gromol%num_atoms
-        
+
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(nangl_a, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -948,10 +1111,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_dihe(grotop, domain, enefunc)
+  subroutine setup_enefunc_dihe(grotop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_grotop),  target, intent(in)    :: grotop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -959,6 +1123,7 @@ contains
     integer                  :: i, j, k
     integer                  :: ioffset, found
     integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+    integer                  :: ii1, ii2, ii3, ii4
 
     type(s_grotop_mol), pointer :: gromol
     real(wp),           pointer :: force(:,:), phase(:,:)
@@ -998,6 +1163,15 @@ contains
           idx3 = gromol%dihes(k)%atom_idx3 + ioffset
           idx4 = gromol%dihes(k)%atom_idx4 + ioffset
 
+          if (domain%fep_use) then
+            ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+            ii1 = molecule%fepgrp(idx1)
+            ii2 = molecule%fepgrp(idx2)
+            ii3 = molecule%fepgrp(idx3)
+            ii4 = molecule%fepgrp(idx4)
+            if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+          end if
+
           icel1 = id_g2l(1,idx1)
           icel2 = id_g2l(1,idx4)
 
@@ -1011,7 +1185,7 @@ contains
               ndihe = ndihe + 1
 
               if (ndihe > MaxDihe) &
-                call error_msg('Setup_Enefunc_Dihe> Too many dihedrals.') 
+                call error_msg('Setup_Enefunc_Dihe> Too many dihedrals.')
 
               list (1:4,ndihe,icel_local) = (/idx1, idx2, idx3, idx4/)
               force (   ndihe,icel_local) = gromol%dihes(k)%kp * JOU2CAL
@@ -1030,12 +1204,12 @@ contains
       end do
     end do
 
-    found = 0 
+    found = 0
     do i = 1, ncel
       found = found + dihe(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -1058,10 +1232,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_rb_dihe(grotop, domain, enefunc)
+  subroutine setup_enefunc_rb_dihe(grotop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_grotop),   target, intent(in)    :: grotop
+    type(s_molecule),         intent(in)    :: molecule
     type(s_domain),   target, intent(in)    :: domain
     type(s_enefunc),  target, intent(inout) :: enefunc
 
@@ -1069,6 +1244,7 @@ contains
     integer                  :: i, j, k
     integer                  :: ioffset, found
     integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+    integer                  :: ii1, ii2, ii3, ii4
 
     type(s_grotop_mol), pointer :: gromol
     real(wp),           pointer :: c(:,:,:)
@@ -1102,6 +1278,15 @@ contains
           idx3 = gromol%dihes(k)%atom_idx3 + ioffset
           idx4 = gromol%dihes(k)%atom_idx4 + ioffset
 
+          if (domain%fep_use) then
+            ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+            ii1 = molecule%fepgrp(idx1)
+            ii2 = molecule%fepgrp(idx2)
+            ii3 = molecule%fepgrp(idx3)
+            ii4 = molecule%fepgrp(idx4)
+            if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+          end if
+
           icel1 = id_g2l(1,idx1)
           icel2 = id_g2l(1,idx4)
 
@@ -1115,7 +1300,7 @@ contains
               ndihe = ndihe + 1
 
               if (ndihe > MaxDihe) &
-                call error_msg('Setup_Enefunc_RB_Dihe> Too many dihedrals.') 
+                call error_msg('Setup_Enefunc_RB_Dihe> Too many dihedrals.')
 
               list (1:4,ndihe,icel_local) = (/idx1, idx2, idx3, idx4/)
               c    (1:6,ndihe,icel_local) = gromol%dihes(k)%c(1:6) * JOU2CAL
@@ -1130,12 +1315,12 @@ contains
       end do
     end do
 
-    found = 0 
+    found = 0
     do i = 1, ncel
       found = found + dihe(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_rb_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -1157,10 +1342,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_impr(grotop, domain, enefunc)
+  subroutine setup_enefunc_impr(grotop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_grotop),  target, intent(in)    :: grotop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -1168,6 +1354,7 @@ contains
     integer                  :: i, j, k
     integer                  :: ioffset, found
     integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+    integer                  :: ii1, ii2, ii3, ii4
 
     type(s_grotop_mol), pointer :: gromol
     real(wp),           pointer :: force(:,:), phase(:,:)
@@ -1203,6 +1390,15 @@ contains
           idx3 = gromol%dihes(k)%atom_idx3 + ioffset
           idx4 = gromol%dihes(k)%atom_idx4 + ioffset
 
+          if (domain%fep_use) then
+            ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+            ii1 = molecule%fepgrp(idx1)
+            ii2 = molecule%fepgrp(idx2)
+            ii3 = molecule%fepgrp(idx3)
+            ii4 = molecule%fepgrp(idx4)
+            if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+          end if
+
           icel1 = id_g2l(1,idx1)
           icel2 = id_g2l(1,idx4)
 
@@ -1216,10 +1412,10 @@ contains
               nimpr = nimpr + 1
 
               if (nimpr > MaxImpr) &
-                call error_msg('Setup_Enefunc_Impr> Too many impropers.') 
+                call error_msg('Setup_Enefunc_Impr> Too many impropers.')
 
               list (1:4,nimpr,icel_local) = (/idx1, idx2, idx3, idx4/)
-              force (   nimpr,icel_local) = gromol%dihes(k)%kp & 
+              force (   nimpr,icel_local) = gromol%dihes(k)%kp &
                                             * JOU2CAL * 0.5_wp
               phase (   nimpr,icel_local) = gromol%dihes(k)%ps * RAD
               period(   nimpr,icel_local) = gromol%dihes(k)%multiplicity
@@ -1234,12 +1430,12 @@ contains
       end do
     end do
 
-    found = 0 
+    found = 0
     do i = 1, ncel
       found = found + impr(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_impr_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -1406,7 +1602,8 @@ contains
     end do
 
     ! create native contact list
-    if (enefunc%forcefield == ForcefieldAAGO) then
+    if (enefunc%forcefield == ForcefieldAAGO .or. &
+        enefunc%forcefield == ForcefieldCAGO) then
       call setup_enefunc_contact(grotop, domain, enefunc)
     end if
 
@@ -1474,11 +1671,15 @@ contains
         domain%atom_cls_no(ix,i) = atmcls_map_g2l(domain%atom_cls_no(ix,i))
       end do
     end do
-    if (constraints%rigid_bond .or. enefunc%table%water_table) then
-      domain%water%atom_cls_no(1:3)  &
-        = atmcls_map_g2l(domain%water%atom_cls_no(1:3))
-      enefunc%table%atom_cls_no_O = atmcls_map_g2l(enefunc%table%atom_cls_no_O)
-      enefunc%table%atom_cls_no_H = atmcls_map_g2l(enefunc%table%atom_cls_no_H)
+    if (enefunc%table%num_water > 0) then
+      if (constraints%rigid_bond .or. enefunc%table%water_table) then
+        domain%water%atom_cls_no(1:3)  = &
+           atmcls_map_g2l(domain%water%atom_cls_no(1:3))
+        enefunc%table%atom_cls_no_O    = &
+           atmcls_map_g2l(enefunc%table%atom_cls_no_O)
+        enefunc%table%atom_cls_no_H    = &
+           atmcls_map_g2l(enefunc%table%atom_cls_no_H)
+      end if
     end if
 
     deallocate(check_cls,      &
@@ -1493,12 +1694,13 @@ contains
 
     ! treatment for 1-2, 1-3, 1-4 interactions
     !
-    ncel   = domain%num_cell_local 
+    ncel   = domain%num_cell_local
 
     call alloc_enefunc(enefunc, EneFuncNonb,     ncel, maxcell_near)
     call alloc_enefunc(enefunc, EneFuncNonbList, ncel, maxcell_near)
 
-    if (enefunc%forcefield == ForcefieldAAGO) then
+    if (enefunc%forcefield == ForcefieldAAGO .or. &
+        enefunc%forcefield == ForcefieldCAGO) then
 
       call count_nonb_excl_go(.true., domain, enefunc)
 
@@ -1537,7 +1739,7 @@ contains
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
-    type(s_enefunc)          :: ef0
+!   type(s_enefunc)          :: ef0
     real(wp)                 :: kx, ky, kz
     integer                  :: nposres, npr_atom, max_pr_atom, natom, ioffset
     integer                  :: i, j, k, n, n2, n3, group0, func0, istart, iend
@@ -1761,13 +1963,13 @@ contains
         ! summary for positional restraint
         !
         write(MsgOut,'(A,4F8.3)') &
-             ' const(total, x, y, z) = ', enefunc%restraint_const(1:4,i) 
+             ' const(total, x, y, z) = ', enefunc%restraint_const(1:4,i)
         write(MsgOut,'(A,I5)') ' exponend of function = ', &
                                           enefunc%restraint_exponent_func(i)
 
         write(MsgOut,'(A,I5)') ' # of groups  = ', enefunc%restraint_funcgrp(i)
-        write(MsgOut,'(" grouplist: ",$)') 
-        do j = 1, enefunc%restraint_funcgrp(i) 
+        write(MsgOut,'(" grouplist: ",$)')
+        do j = 1, enefunc%restraint_funcgrp(i)
           write(MsgOut,'(i3,$)') enefunc%restraint_grouplist(j,i)
           if (mod(j,20) == 0 .and. j /= enefunc%restraint_funcgrp(i) )  &
             write(MsgOut,'(A)') ''
@@ -1818,6 +2020,7 @@ contains
     integer,         pointer :: num_nonb_excl(:,:), num_nb14_calc(:,:)
     integer,         pointer :: num_nonb_excl1(:,:), num_nb14_calc1(:,:)
     integer,         pointer :: nbond(:), bondlist(:,:,:)
+    integer,         pointer :: ncontact(:), contactlist(:,:,:)
     integer,         pointer :: nangle(:), anglelist(:,:,:)
     integer,         pointer :: ndihedral(:), dihelist(:,:,:), pairlist(:,:)
     integer,         pointer :: nimpr(:), imprlist(:,:,:)
@@ -1835,6 +2038,8 @@ contains
 
     nbond           => enefunc%num_bond
     bondlist        => enefunc%bond_list
+    ncontact        => enefunc%num_contact
+    contactlist     => enefunc%contact_list
     nangle          => enefunc%num_angle
     anglelist       => enefunc%angle_list
     ndihedral       => enefunc%num_dihedral
@@ -1933,6 +2138,82 @@ contains
 
           list1 = anglelist(1,ix,i)
           list2 = anglelist(3,ix,i)
+          icel1 = id_g2l(1,list1)
+          icel2 = id_g2l(1,list2)
+          i1    = id_g2l(2,list1)
+          i2    = id_g2l(2,list2)
+
+          if (icel1 < icel2) then
+
+            icel = pairlist(icel2,icel1)
+            num_excl = num_nonb_excl(i1,icel)
+            duplicate = .false.
+            do k = 1, num_excl
+              if (i2 == nonb_excl_list(k,i1,icel)) duplicate = .true.
+            end do
+            if (.not. duplicate) then
+              num_excl = num_excl + 1
+              num_nonb_excl(i1,icel) = num_excl
+              nonb_excl_list(num_excl,i1,icel) = i2
+              exclusion_mask(i2,i1,icel) = 1
+            end if
+
+          else if (icel1 > icel2) then
+
+            icel = pairlist(icel1,icel2)
+            num_excl = num_nonb_excl(i2,icel)
+            duplicate = .false.
+            do k = 1, num_excl
+              if (i1 == nonb_excl_list(k,i2,icel)) duplicate = .true.
+            end do
+            if (.not. duplicate) then
+              num_excl = num_excl + 1
+              num_nonb_excl(i2,icel) = num_excl
+              nonb_excl_list(num_excl,i2,icel) = i1
+              exclusion_mask(i1,i2,icel) = 1
+            end if
+
+          else if (i1 < i2) then
+ 
+            num_excl = num_nonb_excl1(i1,i)
+            duplicate = .false.
+            do k = 1, num_excl
+              if (i2 == nonb_excl_list1(k,i1,i)) duplicate = .true.
+            end do
+            if (.not. duplicate) then
+              num_excl = num_excl + 1
+              nonb_excl_list1(num_excl,i1,i) = i2
+              exclusion_mask1(i2,i1,i) = 1
+            end if
+
+          else if (i1 > i2) then
+
+            num_excl = num_nonb_excl1(i2,i)
+            duplicate = .false.
+            do k = 1, num_excl
+              if (i1 == nonb_excl_list1(k,i2,i)) duplicate = .true.
+            end do
+            if (.not. duplicate) then
+              num_excl = num_excl + 1
+              nonb_excl_list1(num_excl,i2,i) = i1
+              exclusion_mask1(i1,i2,i) = 1
+            end if
+
+          end if
+        end do
+      end do
+
+    end if
+
+    ! exclude native contact interaction
+    !
+    if (enefunc%excl_level > 1) then
+
+      do i = 1, ncell_local
+        do ix = 1, ncontact(i)
+
+          list1 = contactlist(1,ix,i)
+          list2 = contactlist(2,ix,i)
           icel1 = id_g2l(1,list1)
           icel2 = id_g2l(1,list2)
           i1    = id_g2l(2,list1)
@@ -2227,7 +2508,7 @@ contains
     integer                  :: idx1, idx2, icel1, icel2, icel_local
 
     type(s_grotop_mol), pointer :: gromol
-    real(wp),           pointer :: lj12(:,:), lj6(:,:)
+    real(wp),           pointer :: lj12(:,:), lj10(:,:), lj6(:,:)
     integer,            pointer :: contact(:), list(:,:,:)
     integer,            pointer :: ncel, cell_pair(:,:)
     integer,            pointer :: id_g2l(:,:)
@@ -2240,6 +2521,7 @@ contains
     contact   => enefunc%num_contact
     list      => enefunc%contact_list
     lj12      => enefunc%contact_lj12
+    lj10      => enefunc%contact_lj10
     lj6       => enefunc%contact_lj6
 
     do step = 1, 2
@@ -2274,17 +2556,38 @@ contains
                 if (step == 2) then
                   enefunc%contact_list(1,contact(icel_local),icel_local) = idx1
                   enefunc%contact_list(2,contact(icel_local),icel_local) = idx2
-                  if (grotop%defaults%combi_rule == 2) then
+                  if (gromol%pairs(k)%func == 2) then
                     sig = 10.0_wp * gromol%pairs(k)%v
                     eps = JOU2CAL * gromol%pairs(k)%w
-                    enefunc%contact_lj12(pcontact,icel_local) = eps * (sig**12)
-                    enefunc%contact_lj6 (pcontact,icel_local) = &
-                                         2.0_wp * eps * (sig** 6)
+ 
+                    if (enefunc%forcefield == ForcefieldCAGO) then
+                      enefunc%contact_lj12(pcontact,icel_local) = &
+                                                       5.0_wp * eps * (sig**12)
+                      enefunc%contact_lj10(pcontact,icel_local) = &
+                                                       6.0_wp * eps * (sig**10)
+                      enefunc%contact_lj6 (pcontact,icel_local) = 0.0_wp
+                    else
+                      enefunc%contact_lj12(pcontact,icel_local) = eps * (sig**12)
+                      enefunc%contact_lj10(pcontact,icel_local) = 0.0_wp
+                      enefunc%contact_lj6 (pcontact,icel_local) = &
+                                           2.0_wp * eps * (sig** 6)
+                    end if
                   else
-                    enefunc%contact_lj12(pcontact,icel_local) = &
+
+                    if (enefunc%forcefield == ForcefieldCAGO) then
+                      enefunc%contact_lj12(pcontact,icel_local) = &
                                          gromol%pairs(k)%w *  1.0E12_wp * JOU2CAL
-                    enefunc%contact_lj6 (pcontact,icel_local) = &
+                      enefunc%contact_lj10(pcontact,icel_local) = &
+                                         gromol%pairs(k)%v *  1.0E10_wp * JOU2CAL
+                      enefunc%contact_lj6 (pcontact,icel_local) = 0.0_wp
+                    else
+                      enefunc%contact_lj12(pcontact,icel_local) = &
+                                         gromol%pairs(k)%w *  1.0E12_wp * JOU2CAL
+                      enefunc%contact_lj10(pcontact,icel_local) = 0.0_wp
+                      enefunc%contact_lj6 (pcontact,icel_local) = &
                                          gromol%pairs(k)%v *  1.0E6_wp * JOU2CAL
+                    end if
+
                   end if
                 end if
 
@@ -2304,7 +2607,7 @@ contains
         do i = 1, ncel
           MaxContact = max(MaxContact,contact(i))
         end do
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_allreduce(mpi_in_place, MaxContact, 1, mpi_integer, &
                            mpi_max, mpi_comm_country, ierror)
 #endif
@@ -2315,7 +2618,7 @@ contains
       end if
 
     end do
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(ncontact, enefunc%num_contact_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -2324,5 +2627,697 @@ contains
 
     return
   end subroutine setup_enefunc_contact
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite2
+  !> @brief        define vertial site 2 term for each cell in potential energy
+  !!               function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite2(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite2
+    list      => enefunc%vsite2_list
+    vs_a      => enefunc%vsite2_a
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites2
+
+          if (gromol%vsites2(k)%func /= 1) cycle
+
+          idx1 = gromol%vsites2(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites2(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites2(k)%atom_idx3 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx3)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite2) &
+                call error_msg('Setup_Enefunc_Vsite2> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:3,vsite(icel_local),icel_local) = (/idx1,idx2,idx3/)
+              vs_a(    vsite(icel_local),icel_local) = gromol%vsites2(k)%a
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite2_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite2_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite2
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3
+  !> @brief        define vertial site 3 term for each cell in potential energy
+  !!               function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3
+    list      => enefunc%vsite3_list
+    vs_a      => enefunc%vsite3_a
+    vs_b      => enefunc%vsite3_b
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 1) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3) &
+                call error_msg('Setup_Enefunc_Vsite3> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(    vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_b(    vsite(icel_local),icel_local) = gromol%vsites3(k)%b
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite3_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fd
+  !> @brief        define vertial site 3fd term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fd(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_d(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3fd
+    list      => enefunc%vsite3fd_list
+    vs_a      => enefunc%vsite3fd_a
+    vs_d      => enefunc%vsite3fd_d
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 2) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3fd) &
+                call error_msg('Setup_Enefunc_Vsite3fd> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_d(vsite(icel_local),icel_local) = gromol%vsites3(k)%d*10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite3fd_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3fd_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3fd
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fad
+  !> @brief        define vertial site 3fad term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fad(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_th(:,:), vs_d(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3fad
+    list      => enefunc%vsite3fad_list
+    vs_th     => enefunc%vsite3fad_theta
+    vs_d      => enefunc%vsite3fad_d
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 3) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3fad) &
+                call error_msg('Setup_Enefunc_Vsite3fad> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_th(vsite(icel_local),icel_local) = gromol%vsites3(k)%theta*RAD
+              vs_d (vsite(icel_local),icel_local) = gromol%vsites3(k)%d*10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite3fad_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3fad_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3fad
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3out
+  !> @brief        define vertial site 3out term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3out(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:), vs_c(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3out
+    list      => enefunc%vsite3out_list
+    vs_a      => enefunc%vsite3out_a
+    vs_b      => enefunc%vsite3out_b
+    vs_c      => enefunc%vsite3out_c
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 4) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3out) &
+                call error_msg('Setup_Enefunc_Vsite3out> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_b(vsite(icel_local),icel_local) = gromol%vsites3(k)%b
+              vs_c(vsite(icel_local),icel_local) = gromol%vsites3(k)%c * 0.1_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite3out_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3out_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3out
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite4fdn
+  !> @brief        define vertial site 4fdn term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite4fdn(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset, nvsite_a
+    integer                  :: idx1, idx2, idx3, idx4, idx5
+    integer                  :: icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:), vs_c(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite4fdn
+    list      => enefunc%vsite4fdn_list
+    vs_a      => enefunc%vsite4fdn_a
+    vs_b      => enefunc%vsite4fdn_b
+    vs_c      => enefunc%vsite4fdn_c
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites4
+
+          if (gromol%vsites4(k)%func /= 2) cycle
+
+          idx1 = gromol%vsites4(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites4(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites4(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites4(k)%atom_idx4 + ioffset
+          idx5 = gromol%vsites4(k)%atom_idx5 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx5)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite4fdn) &
+                call error_msg('Setup_Enefunc_Vsite4fdn> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:5,vsite(icel_local),icel_local) = &
+                                                   (/idx1,idx2,idx3,idx4,idx5/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites4(k)%a
+              vs_b(vsite(icel_local),icel_local) = gromol%vsites4(k)%b
+              vs_c(vsite(icel_local),icel_local) = gromol%vsites4(k)%c * 10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsite4fdn_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite4fdn_all = nvsite_a
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite4fdn
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsiten
+  !> @brief        define vertial site n term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !! @param[in]    grotop   : GROMACS TOP information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsiten(grotop, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),          intent(in)    :: grotop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k, ni
+    integer                  :: ioffset, nvsite_a
+    integer                  :: icel1, icel2, icel_local
+
+    integer, allocatable     :: idx(:)
+
+    type(s_grotop_mol), pointer :: gromol
+    integer,            pointer :: vsite(:), list(:,:,:), vs_n(:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsiten
+    list      => enefunc%vsiten_list
+    vs_n      => enefunc%vsiten_n
+
+    ioffset   = 0
+    nvsite_a  = 0
+
+    allocate(idx(1))
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsitesn
+
+          if (gromol%vsitesn(k)%func /= 1 .or. &
+              gromol%vsitesn(k)%func /= 2 .or. &
+              gromol%vsitesn(k)%func /= 3) cycle
+
+          ni = size(gromol%vsitesn(k)%atom_idcs) + 1
+
+          if (size(idx) /= ni) then
+            deallocate(idx)
+            allocate(idx(ni))
+          end if
+
+          idx(1)    = gromol%vsitesn(k)%atom_idx          + ioffset
+          idx(2:ni) = gromol%vsitesn(k)%atom_idcs(1:ni-1) + ioffset
+
+          icel1 = id_g2l(1,idx(1))
+          icel2 = id_g2l(1,idx(size(idx)))
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsiten) &
+                call error_msg('Setup_Enefunc_Vsiten> Too many vsites.')
+
+              nvsite_a = nvsite_a + 1
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:ni,vsite(icel_local),icel_local) = idx(1:ni)
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(nvsite_a, enefunc%num_vsiten_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsiten_all = nvsite_a
+#endif
+
+    deallocate(idx)
+
+    return
+
+  end subroutine setup_enefunc_vsiten
 
 end module sp_enefunc_gromacs_mod

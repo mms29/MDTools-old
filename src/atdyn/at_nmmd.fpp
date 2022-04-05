@@ -99,7 +99,7 @@ contains
         integer                   :: nsteps, istart, iend
         character                 :: num*9
         logical                   :: savefile
-        real(wp), pointer :: coord(:, :)
+        real(wp), pointer :: coord(:, :), coord_pbc(:,:)
 
         integer :: nmodes, exitstatus
         logical :: file_exists
@@ -107,6 +107,7 @@ contains
         integer :: icount
 
         coord => dynvars%coord
+        coord_pbc => dynvars%coord_pbc
         natom = molecule%num_atoms
         istart = dynamics%istart_step
         iend = dynamics%iend_step
@@ -155,7 +156,7 @@ contains
             ! calculate potential energy(t + dt), force(t + dt), and virial(t + dt)
             !
             call compute_energy_nmmd(molecule, dynamics, enefunc, &
-                    boundary, dynvars, pairlist, i)
+                    boundary, dynvars, constraints, pairlist, i)
 
             call timer(TimerIntegrator, TimerOn)
 
@@ -190,8 +191,8 @@ contains
                     call update_boundary(enefunc%table%table, &
                                         enefunc%pairlistdist, &
                                         boundary)
-                call update_pairlist(enefunc, boundary, coord, pairlist)
-
+                    call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                             coord_pbc, pairlist)
                 end if
             end if
 
@@ -305,7 +306,7 @@ contains
         end do
 
         if (boundary%num_fixatm > 0) &
-            call clear_fixatm_component(boundary, natom, dynvars%velocity)
+            call clear_fixatm_component(constraints, natom, dynvars%velocity)
 
         call stop_trans_rotation(molecule%num_atoms, molecule%mass, &
                                  dynamics%stop_com_translation, &
@@ -318,7 +319,7 @@ contains
         ! calculate energy(0) and forces(0)
         !
         call compute_energy_nmmd(molecule, dynamics, enefunc, &
-                boundary, dynvars, pairlist, 0)
+                boundary, dynvars, constraints, pairlist, 0)
         
         
         ! output dynvars(0)
@@ -346,7 +347,7 @@ contains
 
 
     subroutine compute_energy_nmmd(molecule, dynamics, enefunc, &
-        boundary, dynvars, pairlist, iteration)
+        boundary, dynvars, constraints, pairlist, iteration)
 
         ! formal arguments
         type(s_dynamics), intent(in)    :: dynamics
@@ -355,6 +356,7 @@ contains
         type(s_pairlist), target, intent(inout) :: pairlist
         type(s_boundary), target, intent(in)    :: boundary
         type(s_dynvars), target, intent(inout) :: dynvars
+        type(s_constraints), target, intent(inout) :: constraints
         integer, intent(in)     ::  iteration
 
         integer :: i,j ,nmodes, natom
@@ -362,14 +364,18 @@ contains
         natom = molecule%num_atoms
 
         call compute_energy(molecule, enefunc, pairlist, boundary, &
-                    mod(iteration, dynamics%eneout_period) == 0, &
-                    enefunc%nonb_limiter, &
-                    dynvars%coord, &
-                    dynvars%energy, &
-                    dynvars%temporary, &
-                    dynvars%force, &
-                    dynvars%virial, &
-                    dynvars%virial_extern)
+                          mod(i,dynamics%eneout_period) == 0,    &
+                          enefunc%nonb_limiter,  &
+                          dynvars%coord,         &
+                          dynvars%trans,         &
+                          dynvars%coord_pbc,     &
+                          dynvars%energy,        &
+                          dynvars%temporary,     &
+                          dynvars%force,         &
+                          dynvars%force_omp,     &
+                          dynvars%virial,        &
+                          dynvars%virial_extern, &
+                          constraints)
 
 
         ! update NMMD forces

@@ -48,6 +48,8 @@ module sp_energy_str_mod
     ! gamd
     real(dp)         :: total_gamd
     real(dp)         :: dihedral_gamd
+    ! FEP
+    real(dp)         :: deltU_fep(3)
   end type s_energy
 
   ! parameters
@@ -74,7 +76,7 @@ contains
   !
   !  Subroutine    init_energy
   !> @brief        initialize potential energy
-  !! @authors      YS, TM
+  !! @authors      YS, TM, HO
   !! @param[out]   energy : energy information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -106,6 +108,8 @@ contains
     energy%emcorr             = 0.0_dp
     energy%total_gamd         = 0.0_dp
     energy%dihedral_gamd      = 0.0_dp
+    ! FEP
+    energy%deltU_fep          = 0.0_dp
 
     return
 

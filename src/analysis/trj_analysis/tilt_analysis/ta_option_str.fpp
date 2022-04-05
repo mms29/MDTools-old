@@ -27,10 +27,10 @@ module ta_option_str_mod
 
 
   type, public :: s_option
-    logical             :: check_only
+    logical                :: check_only
 
-    character(MaxLine)  :: TM_helix_atom_exp
-    type(s_selatoms)    :: TM_helix_atom
+    character(MaxLineLong) :: TM_helix_atom_exp
+    type(s_selatoms)       :: TM_helix_atom
   end type s_option
 
   ! subroutines

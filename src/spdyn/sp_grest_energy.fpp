@@ -30,7 +30,7 @@ module sp_grest_energy_mod
   use mpi_parallel_mod
   use constants_mod
   use math_libs_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 

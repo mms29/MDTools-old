@@ -28,7 +28,7 @@ module sp_parallel_io_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -275,6 +275,20 @@ contains
     call write_data_integer &
          (file, 'MaxCmap', MaxCmap)
     call write_data_integer &
+         (file, 'MaxVsite2', MaxVsite2)
+    call write_data_integer &
+         (file, 'MaxVsite3', MaxVsite3)
+    call write_data_integer &
+         (file, 'MaxVsite3fd', MaxVsite3fd)
+    call write_data_integer &
+         (file, 'MaxVsite3fad', MaxVsite3fad)
+    call write_data_integer &
+         (file, 'MaxVsite3out', MaxVsite3out)
+    call write_data_integer &
+         (file, 'MaxVsite4fdn', MaxVsite4fdn)
+    call write_data_integer &
+         (file, 'MaxVsiten', MaxVsiten)
+    call write_data_integer &
          (file, 'BondMove', BondMove)
     call write_data_integer &
          (file, 'AngleMove', AngleMove)
@@ -284,6 +298,20 @@ contains
          (file, 'ImprMove', ImprMove)
     call write_data_integer &
          (file, 'CmapMove', CmapMove)
+    call write_data_integer &
+         (file, 'Vsite2Move', Vsite2Move)
+    call write_data_integer &
+         (file, 'Vsite3Move', Vsite3Move)
+    call write_data_integer &
+         (file, 'Vsite3fdMove', Vsite3fdMove)
+    call write_data_integer &
+         (file, 'Vsite3fadMove', Vsite3fadMove)
+    call write_data_integer &
+         (file, 'Vsite3outMove', Vsite3outMove)
+    call write_data_integer &
+         (file, 'Vsite4fdnMove', Vsite4fdnMove)
+    call write_data_integer &
+         (file, 'VsitenMove', VsitenMove)
 
     ! sp_pairlist_str
     call write_data_integer &
@@ -681,6 +709,137 @@ contains
                (/4,4,nvar1,nvar1,nvar2/), &
                    enefunc%cmap_coef(1:4, 1:4, 1:nvar1, 1:nvar1, 1:nvar2))
     end if
+
+    ! enefunc_str::Vsite2    variables
+    ! enefunc_str::Vsite3    variables
+    ! enefunc_str::Vsite3fd  variables
+    ! enefunc_str::Vsite3fad variables
+    ! enefunc_str::Vsite3out variables
+    ! enefunc_str::Vsite4fdn variables
+    ! enefunc_str::Vsiten    variables
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite2', &
+             (/ncell/), enefunc%num_vsite2(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite3', &
+             (/ncell/), enefunc%num_vsite3(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite3fd', &
+             (/ncell/), enefunc%num_vsite3fd(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite3fad', &
+             (/ncell/), enefunc%num_vsite3fad(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite3out', &
+             (/ncell/), enefunc%num_vsite3out(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsite4fdn', &
+             (/ncell/), enefunc%num_vsite4fdn(1:ncell))
+
+    call write_data_integer_array &
+         (file, 'enefunc:num_vsiten', &
+             (/ncell/), enefunc%num_vsiten(1:ncell))
+
+    do i = 1, ncell
+
+      nvar = enefunc%num_vsite2(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite2_list', &
+                 (/3,nvar,1/), enefunc%vsite2_list(1:3, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite2_a', &
+                 (/nvar,1/), enefunc%vsite2_a     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite3_list', &
+                 (/4,nvar,1/), enefunc%vsite3_list(1:4, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3_a', &
+                 (/nvar,1/), enefunc%vsite3_a     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3_b', &
+                 (/nvar,1/), enefunc%vsite3_b     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3fd(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite3fd_list', &
+                 (/4,nvar,1/), enefunc%vsite3fd_list(1:4, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3fd_a', &
+                 (/nvar,1/), enefunc%vsite3fd_a     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3fd_d', &
+                 (/nvar,1/), enefunc%vsite3fd_d     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3fad(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite3fad_list', &
+                 (/4,nvar,1/), enefunc%vsite3fad_list(1:4, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3fad_theta', &
+                 (/nvar,1/), enefunc%vsite3fad_theta (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3fad_d', &
+                 (/nvar,1/), enefunc%vsite3fad_d     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3out(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite3out_list', &
+                 (/4,nvar,1/), enefunc%vsite3out_list(1:4, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3out_a', &
+                 (/nvar,1/), enefunc%vsite3out_a     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3out_b', &
+                 (/nvar,1/), enefunc%vsite3out_b     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite3out_c', &
+                 (/nvar,1/), enefunc%vsite3out_c     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite4fdn(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsite4fdn_list', &
+                 (/5,nvar,1/), enefunc%vsite4fdn_list(1:5, 1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite4fdn_a', &
+                 (/nvar,1/), enefunc%vsite4fdn_a     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite4fdn_b', &
+                 (/nvar,1/), enefunc%vsite4fdn_b     (     1:nvar, i))
+        call write_data_real_array &
+             (file, 'enefunc:vsite4fdn_c', &
+                 (/nvar,1/), enefunc%vsite4fdn_c     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsiten(i)
+      if (nvar > 0) then
+        call write_data_integer_array &
+             (file, 'enefunc:vsiten_list', &
+                 (/10,nvar,1/), enefunc%vsiten_list(1:10, 1:nvar, i))
+        call write_data_integer_array &
+             (file, 'enefunc:vsiten_n', &
+                 (/nvar,1/), enefunc%vsiten_n      (      1:nvar, i))
+      end if
+
+    end do
 
     ! enefunc_str::nonbond parameters
     
@@ -1128,6 +1287,20 @@ contains
     call read_data_integer &
          (file, 'MaxCmap', MaxCmap)
     call read_data_integer &
+         (file, 'MaxVsite2', MaxVsite2)
+    call read_data_integer &
+         (file, 'MaxVsite3', MaxVsite3)
+    call read_data_integer &
+         (file, 'MaxVsite3fd', MaxVsite3fd)
+    call read_data_integer &
+         (file, 'MaxVsite3fad', MaxVsite3fad)
+    call read_data_integer &
+         (file, 'MaxVsite3out', MaxVsite3out)
+    call read_data_integer &
+         (file, 'MaxVsite4fdn', MaxVsite4fdn)
+    call read_data_integer &
+         (file, 'MaxVsiten', MaxVsiten)
+    call read_data_integer &
          (file, 'BondMove', BondMove)
     call read_data_integer &
          (file, 'AngleMove', AngleMove)
@@ -1137,6 +1310,20 @@ contains
          (file, 'ImprMove', ImprMove)
     call read_data_integer &
          (file, 'CmapMove', CmapMove)
+    call read_data_integer &
+         (file, 'Vsite2Move', Vsite2Move)
+    call read_data_integer &
+         (file, 'Vsite3Move', Vsite3Move)
+    call read_data_integer &
+         (file, 'Vsite3fdMove', Vsite3fdMove)
+    call read_data_integer &
+         (file, 'Vsite3fadMove', Vsite3fadMove)
+    call read_data_integer &
+         (file, 'Vsite3outMove', Vsite3outMove)
+    call read_data_integer &
+         (file, 'Vsite4fdnMove', Vsite4fdnMove)
+    call read_data_integer &
+         (file, 'VsitenMove', VsitenMove)
 
     ! sp_pairlist_str
     call read_data_integer &
@@ -1545,6 +1732,145 @@ contains
                (/4,4,nvar1,nvar1,nvar2/), &
                    enefunc%cmap_coef(1:4, 1:4, 1:nvar1, 1:nvar1, 1:nvar2))
     end if
+
+    ! enefunc_str::Vsite2    variables
+    ! enefunc_str::Vsite3    variables
+    ! enefunc_str::Vsite3fd  variables
+    ! enefunc_str::Vsite3fad variables
+    ! enefunc_str::Vsite3out variables
+    ! enefunc_str::Vsite4fdn variables
+    ! enefunc_str::Vsiten    variables
+
+    call alloc_enefunc(enefunc, EneFuncVsite2,    ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsite3,    ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsite3fd,  ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsite3fad, ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsite3out, ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsite4fdn, ncell, ncell)
+    call alloc_enefunc(enefunc, EneFuncVsiten,    ncell, ncell)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite2', &
+             (/ncell/), enefunc%num_vsite2(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite3', &
+             (/ncell/), enefunc%num_vsite3(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite3fd', &
+             (/ncell/), enefunc%num_vsite3fd(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite3fad', &
+             (/ncell/), enefunc%num_vsite3fad(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite3out', &
+             (/ncell/), enefunc%num_vsite3out(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsite4fdn', &
+             (/ncell/), enefunc%num_vsite4fdn(1:ncell), .false.)
+
+    call read_data_integer_array &
+         (file, 'enefunc:num_vsiten', &
+             (/ncell/), enefunc%num_vsiten(1:ncell), .false.)
+
+    do i = 1, ncell
+
+      nvar = enefunc%num_vsite2(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite2_list', &
+                 (/3,nvar,1/), enefunc%vsite2_list(1:3, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite2_a', &
+                 (/nvar,1/), enefunc%vsite2_a     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite3_list', &
+                 (/4,nvar,1/), enefunc%vsite3_list(1:4, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3_a', &
+                 (/nvar,1/), enefunc%vsite3_a     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3_b', &
+                 (/nvar,1/), enefunc%vsite3_b     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3fd(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite3fd_list', &
+                 (/4,nvar,1/), enefunc%vsite3fd_list(1:4, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3fd_a', &
+                 (/nvar,1/), enefunc%vsite3fd_a     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3fd_d', &
+                 (/nvar,1/), enefunc%vsite3fd_d     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3fad(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite3fad_list', &
+                 (/4,nvar,1/), enefunc%vsite3fad_list(1:4, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3fad_theta', &
+                 (/nvar,1/), enefunc%vsite3fad_theta (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3fad_d', &
+                 (/nvar,1/), enefunc%vsite3fad_d     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite3out(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite3out_list', &
+                 (/4,nvar,1/), enefunc%vsite3out_list(1:4, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3out_a', &
+                 (/nvar,1/), enefunc%vsite3out_a     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3out_b', &
+                 (/nvar,1/), enefunc%vsite3out_b     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite3out_c', &
+                 (/nvar,1/), enefunc%vsite3out_c     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsite4fdn(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsite4fdn_list', &
+                 (/5,nvar,1/), enefunc%vsite4fdn_list(1:5, 1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite4fdn_a', &
+                 (/nvar,1/), enefunc%vsite4fdn_a     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite4fdn_b', &
+                 (/nvar,1/), enefunc%vsite4fdn_b     (     1:nvar, i))
+        call read_data_real_array &
+             (file, 'enefunc:vsite4fdn_c', &
+                 (/nvar,1/), enefunc%vsite4fdn_c     (     1:nvar, i))
+      end if
+
+      nvar = enefunc%num_vsiten(i)
+      if (nvar > 0) then
+        call read_data_integer_array &
+             (file, 'enefunc:vsiten_list', &
+                 (/10,nvar,1/), enefunc%vsiten_list(1:10, 1:nvar, i))
+        call read_data_integer_array &
+             (file, 'enefunc:vsiten_n', &
+                 (/nvar,1/), enefunc%vsiten_n      (      1:nvar, i))
+      end if
+
+    end do
 
     ! enefunc_str::nonbond parameters
     

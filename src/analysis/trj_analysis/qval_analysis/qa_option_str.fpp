@@ -28,12 +28,12 @@ module qa_option_str_mod
     logical                       :: check_only
 
     ! parameters for Q-value cacluation
-    logical             :: verbose
-    real(wp)            :: maximum_distance
-    real(wp)            :: lambda
-    real(wp)            :: beta
-    type(s_selatoms)    :: analysis_atom
-    character(MaxLine)  :: analysis_atom_exp
+    logical                :: verbose
+    real(wp)               :: maximum_distance
+    real(wp)               :: lambda
+    real(wp)               :: beta
+    type(s_selatoms)       :: analysis_atom
+    character(MaxLineLong) :: analysis_atom_exp
 
     ! atom selection
     type(s_selatoms),  allocatable :: selatoms(:)

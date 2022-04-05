@@ -1,0 +1,1 @@
+../../../spdyn/sp_dynvars_str.fpp

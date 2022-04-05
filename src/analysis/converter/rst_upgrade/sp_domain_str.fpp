@@ -1,0 +1,1 @@
+../../../spdyn/sp_domain_str.fpp

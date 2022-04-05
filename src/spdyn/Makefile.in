@@ -119,25 +119,27 @@ am__prst_setup_SOURCES_DIST = sp_domain_str.fpp sp_energy_str.fpp \
 	sp_enefunc_str.fpp sp_pairlist_str.fpp sp_boundary_str.fpp \
 	sp_constraints_str.fpp sp_experiments_str.fpp \
 	sp_restraints_str.fpp sp_ensemble_str.fpp sp_dynvars_str.fpp \
-	sp_dynamics_str.fpp sp_minimize_str.fpp sp_output_str.fpp \
-	sp_remd_str.fpp sp_rpath_str.fpp sp_migration.fpp \
-	sp_communicate.fpp sp_parallel_io.fpp sp_pairlist.fpp \
-	sp_boundary.fpp sp_experiments.fpp sp_energy_bonds.fpp \
-	sp_energy_angles.fpp sp_energy_dihedrals.fpp \
-	sp_energy_table_linear.fpp sp_energy_table_linear_water.fpp \
+	sp_dynamics_str.fpp sp_minimize_str.fpp sp_alchemy_str.fpp \
+	sp_output_str.fpp sp_remd_str.fpp sp_rpath_str.fpp \
+	sp_migration.fpp sp_communicate.fpp sp_parallel_io.fpp \
+	sp_pairlist.fpp sp_boundary.fpp sp_experiments.fpp \
+	sp_energy_bonds.fpp sp_energy_angles.fpp \
+	sp_energy_dihedrals.fpp sp_energy_table_linear.fpp \
+	sp_energy_table_linear_water.fpp \
 	sp_energy_table_linear_nowater.fpp \
 	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
 	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
 	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
-	sp_energy.fpp sp_grest_energy.fpp sp_enefunc_table.fpp \
-	sp_enefunc_restraints.fpp sp_enefunc_localres.fpp \
-	sp_enefunc_charmm.fpp sp_enefunc_amber.fpp \
-	sp_enefunc_gromacs.fpp sp_enefunc_gamd.fpp sp_enefunc.fpp \
-	sp_constraints.fpp sp_restraints.fpp sp_ensemble.fpp \
-	sp_domain.fpp sp_dynvars.fpp sp_assign_velocity.fpp \
-	sp_update_domain.fpp sp_input.fpp sp_output.fpp \
-	sp_md_leapfrog.fpp sp_md_vverlet.fpp sp_md_respa.fpp \
-	sp_md_mts.fpp sp_remd.fpp sp_rpath.fpp sp_gamd.fpp \
+	sp_energy.fpp sp_grest_energy.fpp sp_fep_energy.fpp \
+	sp_enefunc_table.fpp sp_enefunc_restraints.fpp \
+	sp_enefunc_localres.fpp sp_enefunc_charmm.fpp \
+	sp_enefunc_amber.fpp sp_enefunc_gromacs.fpp \
+	sp_enefunc_gamd.fpp sp_enefunc.fpp sp_constraints.fpp \
+	sp_restraints.fpp sp_ensemble.fpp sp_domain.fpp sp_dynvars.fpp \
+	sp_assign_velocity.fpp sp_update_domain.fpp sp_input.fpp \
+	sp_output.fpp sp_md_leapfrog.fpp sp_md_vverlet.fpp \
+	sp_md_respa.fpp sp_md_mts.fpp sp_alchemy.fpp sp_remd.fpp \
+	sp_fep_topology.fpp sp_fep_utils.fpp sp_rpath.fpp sp_gamd.fpp \
 	sp_dynamics.fpp pr_fileio.c pr_huge_molecule.fpp pr_pdb2hm.fpp \
 	pr_charmm2hm.fpp pr_amber2hm.fpp pr_gromacs2hm.fpp \
 	pr_domain_index.fpp pr_control.fpp pr_select_atoms_peer.fpp \
@@ -152,74 +154,7 @@ am_prst_setup_OBJECTS = sp_domain_str.$(OBJEXT) \
 	sp_constraints_str.$(OBJEXT) sp_experiments_str.$(OBJEXT) \
 	sp_restraints_str.$(OBJEXT) sp_ensemble_str.$(OBJEXT) \
 	sp_dynvars_str.$(OBJEXT) sp_dynamics_str.$(OBJEXT) \
-	sp_minimize_str.$(OBJEXT) sp_output_str.$(OBJEXT) \
-	sp_remd_str.$(OBJEXT) sp_rpath_str.$(OBJEXT) \
-	sp_migration.$(OBJEXT) sp_communicate.$(OBJEXT) \
-	sp_parallel_io.$(OBJEXT) sp_pairlist.$(OBJEXT) \
-	sp_boundary.$(OBJEXT) sp_experiments.$(OBJEXT) \
-	sp_energy_bonds.$(OBJEXT) sp_energy_angles.$(OBJEXT) \
-	sp_energy_dihedrals.$(OBJEXT) sp_energy_table_linear.$(OBJEXT) \
-	sp_energy_table_linear_water.$(OBJEXT) \
-	sp_energy_table_linear_nowater.$(OBJEXT) \
-	sp_energy_table_linear_bondcorr.$(OBJEXT) \
-	sp_energy_table_cubic.$(OBJEXT) sp_energy_go.$(OBJEXT) \
-	sp_energy_pme.$(OBJEXT) sp_energy_nonbonds.$(OBJEXT) \
-	sp_enefunc_fit.$(OBJEXT) sp_energy_restraints.$(OBJEXT) \
-	sp_energy_gamd.$(OBJEXT) sp_energy.$(OBJEXT) \
-	sp_grest_energy.$(OBJEXT) sp_enefunc_table.$(OBJEXT) \
-	sp_enefunc_restraints.$(OBJEXT) sp_enefunc_localres.$(OBJEXT) \
-	sp_enefunc_charmm.$(OBJEXT) sp_enefunc_amber.$(OBJEXT) \
-	sp_enefunc_gromacs.$(OBJEXT) sp_enefunc_gamd.$(OBJEXT) \
-	sp_enefunc.$(OBJEXT) sp_constraints.$(OBJEXT) \
-	sp_restraints.$(OBJEXT) sp_ensemble.$(OBJEXT) \
-	sp_domain.$(OBJEXT) sp_dynvars.$(OBJEXT) \
-	sp_assign_velocity.$(OBJEXT) sp_update_domain.$(OBJEXT) \
-	sp_input.$(OBJEXT) sp_output.$(OBJEXT) \
-	sp_md_leapfrog.$(OBJEXT) sp_md_vverlet.$(OBJEXT) \
-	sp_md_respa.$(OBJEXT) sp_md_mts.$(OBJEXT) sp_remd.$(OBJEXT) \
-	sp_rpath.$(OBJEXT) sp_gamd.$(OBJEXT) sp_dynamics.$(OBJEXT) \
-	pr_fileio.$(OBJEXT) pr_huge_molecule.$(OBJEXT) \
-	pr_pdb2hm.$(OBJEXT) pr_charmm2hm.$(OBJEXT) \
-	pr_amber2hm.$(OBJEXT) pr_gromacs2hm.$(OBJEXT) \
-	pr_domain_index.$(OBJEXT) pr_control.$(OBJEXT) \
-	pr_select_atoms_peer.$(OBJEXT) pr_setup_spdyn_peer.$(OBJEXT) \
-	pr_run_prst_setup.$(OBJEXT) $(am__objects_1) $(am__objects_2)
-prst_setup_OBJECTS = $(am_prst_setup_OBJECTS)
-prst_setup_LDADD = $(LDADD)
-am__spdyn_SOURCES_DIST = sp_domain_str.fpp sp_energy_str.fpp \
-	sp_enefunc_str.fpp sp_pairlist_str.fpp sp_boundary_str.fpp \
-	sp_constraints_str.fpp sp_experiments_str.fpp \
-	sp_restraints_str.fpp sp_ensemble_str.fpp sp_dynvars_str.fpp \
-	sp_dynamics_str.fpp sp_minimize_str.fpp sp_output_str.fpp \
-	sp_remd_str.fpp sp_rpath_str.fpp sp_migration.fpp \
-	sp_communicate.fpp sp_parallel_io.fpp sp_pairlist.fpp \
-	sp_boundary.fpp sp_experiments.fpp sp_energy_bonds.fpp \
-	sp_energy_angles.fpp sp_energy_dihedrals.fpp \
-	sp_energy_table_linear.fpp sp_energy_table_linear_water.fpp \
-	sp_energy_table_linear_nowater.fpp \
-	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
-	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
-	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
-	sp_energy.fpp sp_grest_energy.fpp sp_enefunc_table.fpp \
-	sp_enefunc_restraints.fpp sp_enefunc_localres.fpp \
-	sp_enefunc_charmm.fpp sp_enefunc_amber.fpp \
-	sp_enefunc_gromacs.fpp sp_enefunc_gamd.fpp sp_enefunc.fpp \
-	sp_constraints.fpp sp_restraints.fpp sp_ensemble.fpp \
-	sp_domain.fpp sp_dynvars.fpp sp_assign_velocity.fpp \
-	sp_update_domain.fpp sp_input.fpp sp_output.fpp \
-	sp_md_leapfrog.fpp sp_md_vverlet.fpp sp_md_respa.fpp \
-	sp_md_mts.fpp sp_remd.fpp sp_rpath.fpp sp_gamd.fpp \
-	sp_dynamics.fpp sp_minimize.fpp sp_restart.fpp sp_control.fpp \
-	sp_setup_spdyn.fpp sp_setup_mpi.fpp gpu_sp_energy.cu \
-	gpu_common.h spdyn.fpp
-@CUDAGPU_TRUE@am__objects_3 = gpu_sp_energy.$(OBJEXT) spdyn.$(OBJEXT)
-@CUDAGPU_FALSE@am__objects_4 = spdyn.$(OBJEXT)
-am_spdyn_OBJECTS = sp_domain_str.$(OBJEXT) sp_energy_str.$(OBJEXT) \
-	sp_enefunc_str.$(OBJEXT) sp_pairlist_str.$(OBJEXT) \
-	sp_boundary_str.$(OBJEXT) sp_constraints_str.$(OBJEXT) \
-	sp_experiments_str.$(OBJEXT) sp_restraints_str.$(OBJEXT) \
-	sp_ensemble_str.$(OBJEXT) sp_dynvars_str.$(OBJEXT) \
-	sp_dynamics_str.$(OBJEXT) sp_minimize_str.$(OBJEXT) \
+	sp_minimize_str.$(OBJEXT) sp_alchemy_str.$(OBJEXT) \
 	sp_output_str.$(OBJEXT) sp_remd_str.$(OBJEXT) \
 	sp_rpath_str.$(OBJEXT) sp_migration.$(OBJEXT) \
 	sp_communicate.$(OBJEXT) sp_parallel_io.$(OBJEXT) \
@@ -234,21 +169,95 @@ am_spdyn_OBJECTS = sp_domain_str.$(OBJEXT) sp_energy_str.$(OBJEXT) \
 	sp_energy_pme.$(OBJEXT) sp_energy_nonbonds.$(OBJEXT) \
 	sp_enefunc_fit.$(OBJEXT) sp_energy_restraints.$(OBJEXT) \
 	sp_energy_gamd.$(OBJEXT) sp_energy.$(OBJEXT) \
-	sp_grest_energy.$(OBJEXT) sp_enefunc_table.$(OBJEXT) \
-	sp_enefunc_restraints.$(OBJEXT) sp_enefunc_localres.$(OBJEXT) \
-	sp_enefunc_charmm.$(OBJEXT) sp_enefunc_amber.$(OBJEXT) \
-	sp_enefunc_gromacs.$(OBJEXT) sp_enefunc_gamd.$(OBJEXT) \
-	sp_enefunc.$(OBJEXT) sp_constraints.$(OBJEXT) \
-	sp_restraints.$(OBJEXT) sp_ensemble.$(OBJEXT) \
-	sp_domain.$(OBJEXT) sp_dynvars.$(OBJEXT) \
+	sp_grest_energy.$(OBJEXT) sp_fep_energy.$(OBJEXT) \
+	sp_enefunc_table.$(OBJEXT) sp_enefunc_restraints.$(OBJEXT) \
+	sp_enefunc_localres.$(OBJEXT) sp_enefunc_charmm.$(OBJEXT) \
+	sp_enefunc_amber.$(OBJEXT) sp_enefunc_gromacs.$(OBJEXT) \
+	sp_enefunc_gamd.$(OBJEXT) sp_enefunc.$(OBJEXT) \
+	sp_constraints.$(OBJEXT) sp_restraints.$(OBJEXT) \
+	sp_ensemble.$(OBJEXT) sp_domain.$(OBJEXT) sp_dynvars.$(OBJEXT) \
 	sp_assign_velocity.$(OBJEXT) sp_update_domain.$(OBJEXT) \
 	sp_input.$(OBJEXT) sp_output.$(OBJEXT) \
 	sp_md_leapfrog.$(OBJEXT) sp_md_vverlet.$(OBJEXT) \
-	sp_md_respa.$(OBJEXT) sp_md_mts.$(OBJEXT) sp_remd.$(OBJEXT) \
-	sp_rpath.$(OBJEXT) sp_gamd.$(OBJEXT) sp_dynamics.$(OBJEXT) \
-	sp_minimize.$(OBJEXT) sp_restart.$(OBJEXT) \
-	sp_control.$(OBJEXT) sp_setup_spdyn.$(OBJEXT) \
-	sp_setup_mpi.$(OBJEXT) $(am__objects_3) $(am__objects_4)
+	sp_md_respa.$(OBJEXT) sp_md_mts.$(OBJEXT) sp_alchemy.$(OBJEXT) \
+	sp_remd.$(OBJEXT) sp_fep_topology.$(OBJEXT) \
+	sp_fep_utils.$(OBJEXT) sp_rpath.$(OBJEXT) sp_gamd.$(OBJEXT) \
+	sp_dynamics.$(OBJEXT) pr_fileio.$(OBJEXT) \
+	pr_huge_molecule.$(OBJEXT) pr_pdb2hm.$(OBJEXT) \
+	pr_charmm2hm.$(OBJEXT) pr_amber2hm.$(OBJEXT) \
+	pr_gromacs2hm.$(OBJEXT) pr_domain_index.$(OBJEXT) \
+	pr_control.$(OBJEXT) pr_select_atoms_peer.$(OBJEXT) \
+	pr_setup_spdyn_peer.$(OBJEXT) pr_run_prst_setup.$(OBJEXT) \
+	$(am__objects_1) $(am__objects_2)
+prst_setup_OBJECTS = $(am_prst_setup_OBJECTS)
+prst_setup_LDADD = $(LDADD)
+am__spdyn_SOURCES_DIST = sp_domain_str.fpp sp_energy_str.fpp \
+	sp_enefunc_str.fpp sp_pairlist_str.fpp sp_boundary_str.fpp \
+	sp_constraints_str.fpp sp_experiments_str.fpp \
+	sp_restraints_str.fpp sp_ensemble_str.fpp sp_dynvars_str.fpp \
+	sp_dynamics_str.fpp sp_minimize_str.fpp sp_alchemy_str.fpp \
+	sp_output_str.fpp sp_remd_str.fpp sp_rpath_str.fpp \
+	sp_migration.fpp sp_communicate.fpp sp_parallel_io.fpp \
+	sp_pairlist.fpp sp_boundary.fpp sp_experiments.fpp \
+	sp_energy_bonds.fpp sp_energy_angles.fpp \
+	sp_energy_dihedrals.fpp sp_energy_table_linear.fpp \
+	sp_energy_table_linear_water.fpp \
+	sp_energy_table_linear_nowater.fpp \
+	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
+	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
+	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
+	sp_energy.fpp sp_grest_energy.fpp sp_fep_energy.fpp \
+	sp_enefunc_table.fpp sp_enefunc_restraints.fpp \
+	sp_enefunc_localres.fpp sp_enefunc_charmm.fpp \
+	sp_enefunc_amber.fpp sp_enefunc_gromacs.fpp \
+	sp_enefunc_gamd.fpp sp_enefunc.fpp sp_constraints.fpp \
+	sp_restraints.fpp sp_ensemble.fpp sp_domain.fpp sp_dynvars.fpp \
+	sp_assign_velocity.fpp sp_update_domain.fpp sp_input.fpp \
+	sp_output.fpp sp_md_leapfrog.fpp sp_md_vverlet.fpp \
+	sp_md_respa.fpp sp_md_mts.fpp sp_alchemy.fpp sp_remd.fpp \
+	sp_fep_topology.fpp sp_fep_utils.fpp sp_rpath.fpp sp_gamd.fpp \
+	sp_dynamics.fpp sp_minimize.fpp sp_restart.fpp sp_control.fpp \
+	sp_setup_spdyn.fpp sp_setup_mpi.fpp gpu_sp_energy.cu \
+	gpu_common.h spdyn.fpp
+@CUDAGPU_TRUE@am__objects_3 = gpu_sp_energy.$(OBJEXT) spdyn.$(OBJEXT)
+@CUDAGPU_FALSE@am__objects_4 = spdyn.$(OBJEXT)
+am_spdyn_OBJECTS = sp_domain_str.$(OBJEXT) sp_energy_str.$(OBJEXT) \
+	sp_enefunc_str.$(OBJEXT) sp_pairlist_str.$(OBJEXT) \
+	sp_boundary_str.$(OBJEXT) sp_constraints_str.$(OBJEXT) \
+	sp_experiments_str.$(OBJEXT) sp_restraints_str.$(OBJEXT) \
+	sp_ensemble_str.$(OBJEXT) sp_dynvars_str.$(OBJEXT) \
+	sp_dynamics_str.$(OBJEXT) sp_minimize_str.$(OBJEXT) \
+	sp_alchemy_str.$(OBJEXT) sp_output_str.$(OBJEXT) \
+	sp_remd_str.$(OBJEXT) sp_rpath_str.$(OBJEXT) \
+	sp_migration.$(OBJEXT) sp_communicate.$(OBJEXT) \
+	sp_parallel_io.$(OBJEXT) sp_pairlist.$(OBJEXT) \
+	sp_boundary.$(OBJEXT) sp_experiments.$(OBJEXT) \
+	sp_energy_bonds.$(OBJEXT) sp_energy_angles.$(OBJEXT) \
+	sp_energy_dihedrals.$(OBJEXT) sp_energy_table_linear.$(OBJEXT) \
+	sp_energy_table_linear_water.$(OBJEXT) \
+	sp_energy_table_linear_nowater.$(OBJEXT) \
+	sp_energy_table_linear_bondcorr.$(OBJEXT) \
+	sp_energy_table_cubic.$(OBJEXT) sp_energy_go.$(OBJEXT) \
+	sp_energy_pme.$(OBJEXT) sp_energy_nonbonds.$(OBJEXT) \
+	sp_enefunc_fit.$(OBJEXT) sp_energy_restraints.$(OBJEXT) \
+	sp_energy_gamd.$(OBJEXT) sp_energy.$(OBJEXT) \
+	sp_grest_energy.$(OBJEXT) sp_fep_energy.$(OBJEXT) \
+	sp_enefunc_table.$(OBJEXT) sp_enefunc_restraints.$(OBJEXT) \
+	sp_enefunc_localres.$(OBJEXT) sp_enefunc_charmm.$(OBJEXT) \
+	sp_enefunc_amber.$(OBJEXT) sp_enefunc_gromacs.$(OBJEXT) \
+	sp_enefunc_gamd.$(OBJEXT) sp_enefunc.$(OBJEXT) \
+	sp_constraints.$(OBJEXT) sp_restraints.$(OBJEXT) \
+	sp_ensemble.$(OBJEXT) sp_domain.$(OBJEXT) sp_dynvars.$(OBJEXT) \
+	sp_assign_velocity.$(OBJEXT) sp_update_domain.$(OBJEXT) \
+	sp_input.$(OBJEXT) sp_output.$(OBJEXT) \
+	sp_md_leapfrog.$(OBJEXT) sp_md_vverlet.$(OBJEXT) \
+	sp_md_respa.$(OBJEXT) sp_md_mts.$(OBJEXT) sp_alchemy.$(OBJEXT) \
+	sp_remd.$(OBJEXT) sp_fep_topology.$(OBJEXT) \
+	sp_fep_utils.$(OBJEXT) sp_rpath.$(OBJEXT) sp_gamd.$(OBJEXT) \
+	sp_dynamics.$(OBJEXT) sp_minimize.$(OBJEXT) \
+	sp_restart.$(OBJEXT) sp_control.$(OBJEXT) \
+	sp_setup_spdyn.$(OBJEXT) sp_setup_mpi.$(OBJEXT) \
+	$(am__objects_3) $(am__objects_4)
 spdyn_OBJECTS = $(am_spdyn_OBJECTS)
 spdyn_LDADD = $(LDADD)
 AM_V_P = $(am__v_P_@AM_V@)
@@ -362,20 +371,27 @@ CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
+EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 F77 = @F77@
 FC = @FC@
 FCFLAGS = @FCFLAGS@
 FCFLAGS_FFTE_KERNEL_FPP__PGI__SP = @FCFLAGS_FFTE_KERNEL_FPP__PGI__SP@
 FCFLAGS_FPP__PGI_NOOPT = @FCFLAGS_FPP__PGI_NOOPT@
+FCFLAGS_KERNELS_NONBOND = @FCFLAGS_KERNELS_NONBOND@
 FFLAGS = @FFLAGS@
 FPP = @FPP@
+GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -411,6 +427,7 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_F77 = @ac_ct_F77@
 ac_ct_FC = @ac_ct_FC@
 am__include = @am__include@
@@ -451,6 +468,8 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
+@INTERNAL_LAPACK_FALSE@INT_LAPACK_LIB = 
+@INTERNAL_LAPACK_TRUE@INT_LAPACK_LIB = $(LAPACK_LIB1)
 SUBDIRS := ../lib .
 @PARALLEL_IO_FALSE@PRST_SETUP = 
 @PARALLEL_IO_TRUE@PRST_SETUP = prst_setup
@@ -458,34 +477,7 @@ spdyn_SOURCES = sp_domain_str.fpp sp_energy_str.fpp sp_enefunc_str.fpp \
 	sp_pairlist_str.fpp sp_boundary_str.fpp sp_constraints_str.fpp \
 	sp_experiments_str.fpp sp_restraints_str.fpp \
 	sp_ensemble_str.fpp sp_dynvars_str.fpp sp_dynamics_str.fpp \
-	sp_minimize_str.fpp sp_output_str.fpp sp_remd_str.fpp \
-	sp_rpath_str.fpp sp_migration.fpp sp_communicate.fpp \
-	sp_parallel_io.fpp sp_pairlist.fpp sp_boundary.fpp \
-	sp_experiments.fpp sp_energy_bonds.fpp sp_energy_angles.fpp \
-	sp_energy_dihedrals.fpp sp_energy_table_linear.fpp \
-	sp_energy_table_linear_water.fpp \
-	sp_energy_table_linear_nowater.fpp \
-	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
-	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
-	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
-	sp_energy.fpp sp_grest_energy.fpp sp_enefunc_table.fpp \
-	sp_enefunc_restraints.fpp sp_enefunc_localres.fpp \
-	sp_enefunc_charmm.fpp sp_enefunc_amber.fpp \
-	sp_enefunc_gromacs.fpp sp_enefunc_gamd.fpp sp_enefunc.fpp \
-	sp_constraints.fpp sp_restraints.fpp sp_ensemble.fpp \
-	sp_domain.fpp sp_dynvars.fpp sp_assign_velocity.fpp \
-	sp_update_domain.fpp sp_input.fpp sp_output.fpp \
-	sp_md_leapfrog.fpp sp_md_vverlet.fpp sp_md_respa.fpp \
-	sp_md_mts.fpp sp_remd.fpp sp_rpath.fpp sp_gamd.fpp \
-	sp_dynamics.fpp sp_minimize.fpp sp_restart.fpp sp_control.fpp \
-	sp_setup_spdyn.fpp sp_setup_mpi.fpp $(am__append_1) \
-	$(am__append_2)
-spdyn_ADDLIB = ../lib/lib.a
-prst_setup_SOURCES = sp_domain_str.fpp sp_energy_str.fpp \
-	sp_enefunc_str.fpp sp_pairlist_str.fpp sp_boundary_str.fpp \
-	sp_constraints_str.fpp sp_experiments_str.fpp \
-	sp_restraints_str.fpp sp_ensemble_str.fpp sp_dynvars_str.fpp \
-	sp_dynamics_str.fpp sp_minimize_str.fpp sp_output_str.fpp \
+	sp_minimize_str.fpp sp_alchemy_str.fpp sp_output_str.fpp \
 	sp_remd_str.fpp sp_rpath_str.fpp sp_migration.fpp \
 	sp_communicate.fpp sp_parallel_io.fpp sp_pairlist.fpp \
 	sp_boundary.fpp sp_experiments.fpp sp_energy_bonds.fpp \
@@ -495,15 +487,45 @@ prst_setup_SOURCES = sp_domain_str.fpp sp_energy_str.fpp \
 	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
 	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
 	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
-	sp_energy.fpp sp_grest_energy.fpp sp_enefunc_table.fpp \
-	sp_enefunc_restraints.fpp sp_enefunc_localres.fpp \
-	sp_enefunc_charmm.fpp sp_enefunc_amber.fpp \
-	sp_enefunc_gromacs.fpp sp_enefunc_gamd.fpp sp_enefunc.fpp \
-	sp_constraints.fpp sp_restraints.fpp sp_ensemble.fpp \
-	sp_domain.fpp sp_dynvars.fpp sp_assign_velocity.fpp \
-	sp_update_domain.fpp sp_input.fpp sp_output.fpp \
-	sp_md_leapfrog.fpp sp_md_vverlet.fpp sp_md_respa.fpp \
-	sp_md_mts.fpp sp_remd.fpp sp_rpath.fpp sp_gamd.fpp \
+	sp_energy.fpp sp_grest_energy.fpp sp_fep_energy.fpp \
+	sp_enefunc_table.fpp sp_enefunc_restraints.fpp \
+	sp_enefunc_localres.fpp sp_enefunc_charmm.fpp \
+	sp_enefunc_amber.fpp sp_enefunc_gromacs.fpp \
+	sp_enefunc_gamd.fpp sp_enefunc.fpp sp_constraints.fpp \
+	sp_restraints.fpp sp_ensemble.fpp sp_domain.fpp sp_dynvars.fpp \
+	sp_assign_velocity.fpp sp_update_domain.fpp sp_input.fpp \
+	sp_output.fpp sp_md_leapfrog.fpp sp_md_vverlet.fpp \
+	sp_md_respa.fpp sp_md_mts.fpp sp_alchemy.fpp sp_remd.fpp \
+	sp_fep_topology.fpp sp_fep_utils.fpp sp_rpath.fpp sp_gamd.fpp \
+	sp_dynamics.fpp sp_minimize.fpp sp_restart.fpp sp_control.fpp \
+	sp_setup_spdyn.fpp sp_setup_mpi.fpp $(am__append_1) \
+	$(am__append_2)
+spdyn_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
+prst_setup_SOURCES = sp_domain_str.fpp sp_energy_str.fpp \
+	sp_enefunc_str.fpp sp_pairlist_str.fpp sp_boundary_str.fpp \
+	sp_constraints_str.fpp sp_experiments_str.fpp \
+	sp_restraints_str.fpp sp_ensemble_str.fpp sp_dynvars_str.fpp \
+	sp_dynamics_str.fpp sp_minimize_str.fpp sp_alchemy_str.fpp \
+	sp_output_str.fpp sp_remd_str.fpp sp_rpath_str.fpp \
+	sp_migration.fpp sp_communicate.fpp sp_parallel_io.fpp \
+	sp_pairlist.fpp sp_boundary.fpp sp_experiments.fpp \
+	sp_energy_bonds.fpp sp_energy_angles.fpp \
+	sp_energy_dihedrals.fpp sp_energy_table_linear.fpp \
+	sp_energy_table_linear_water.fpp \
+	sp_energy_table_linear_nowater.fpp \
+	sp_energy_table_linear_bondcorr.fpp sp_energy_table_cubic.fpp \
+	sp_energy_go.fpp sp_energy_pme.fpp sp_energy_nonbonds.fpp \
+	sp_enefunc_fit.fpp sp_energy_restraints.fpp sp_energy_gamd.fpp \
+	sp_energy.fpp sp_grest_energy.fpp sp_fep_energy.fpp \
+	sp_enefunc_table.fpp sp_enefunc_restraints.fpp \
+	sp_enefunc_localres.fpp sp_enefunc_charmm.fpp \
+	sp_enefunc_amber.fpp sp_enefunc_gromacs.fpp \
+	sp_enefunc_gamd.fpp sp_enefunc.fpp sp_constraints.fpp \
+	sp_restraints.fpp sp_ensemble.fpp sp_domain.fpp sp_dynvars.fpp \
+	sp_assign_velocity.fpp sp_update_domain.fpp sp_input.fpp \
+	sp_output.fpp sp_md_leapfrog.fpp sp_md_vverlet.fpp \
+	sp_md_respa.fpp sp_md_mts.fpp sp_alchemy.fpp sp_remd.fpp \
+	sp_fep_topology.fpp sp_fep_utils.fpp sp_rpath.fpp sp_gamd.fpp \
 	sp_dynamics.fpp pr_fileio.c pr_huge_molecule.fpp pr_pdb2hm.fpp \
 	pr_charmm2hm.fpp pr_amber2hm.fpp pr_gromacs2hm.fpp \
 	pr_domain_index.fpp pr_control.fpp pr_select_atoms_peer.fpp \
@@ -516,7 +538,7 @@ EXTRA_DIST = \
 	pr_domain_index_mem.fpp \
 	pr_domain_index_file.fpp
 
-prst_setup_ADDLIB = ../lib/lib.a
+prst_setup_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
 SUFFIXES = .fpp
 DEPENDS = Makefile.depends
 MAINTAINERCLEANFILES = Makefile.in
@@ -905,6 +927,36 @@ uninstall-am: uninstall-binPROGRAMS
 	ps ps-am tags tags-am uninstall uninstall-am \
 	uninstall-binPROGRAMS
 
+
+#sp_pairlist.o : sp_pairlist.fpp
+#if USEKCOMP
+#	cp $*.fpp $*.f90
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+#	mv $*.cpp.f90 $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_PAIRLIST) -c $*.f90
+#else
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+#endif
+
+sp_energy_table_linear_nowater.o : sp_energy_table_linear_nowater.fpp
+@USEKCOMP_TRUE@	cp $*.fpp $*.f90
+@USEKCOMP_TRUE@	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+@USEKCOMP_TRUE@	mv $*.cpp.f90 $*.f90
+@USEKCOMP_TRUE@	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_NONBOND) -c $*.f90
+@USEKCOMP_FALSE@	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+@USEKCOMP_FALSE@	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+
+#sp_energy_table_linear_water.o : sp_energy_table_linear_water.fpp
+#if USEKCOMP
+#	cp $*.fpp $*.f90
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+#	mv $*.cpp.f90 $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_PAIRLIST) -c $*.f90
+#else
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+#endif
 
 .fpp.o:
 @USEKCOMP_TRUE@	cp $*.fpp $*.f90

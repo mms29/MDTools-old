@@ -18,6 +18,9 @@ module fileio_gropp_mod
   use string_mod
   use messages_mod
   use mpi_parallel_mod
+#ifdef HAVE_MPI_GENESIS
+  use mpi
+#endif
 
   implicit none
   private
@@ -29,7 +32,7 @@ module fileio_gropp_mod
   ! structures
   type s_gropp_file
      integer                         :: unit_no            = InvalidUnitNo
-     character(MaxLine)              :: filename           = ''
+     character(MaxFilename)          :: filename           = ''
      character(MaxLine)              :: paths(MaxIncDepth) = '.'
      integer                         :: depth              = 1
   end type s_gropp_file
@@ -96,110 +99,126 @@ contains
     ! local variables
     integer                  :: ifile, file_in, file_out, alloc_stat
     integer                  :: depth
-    character(MaxLine)       :: pp_filename
+    character(MaxFilename)   :: pp_filename
 
     type(s_gro_macro), pointer :: macro_head
     type(s_gro_macro), pointer :: macro_cur
 
-    
-    file_in  = InvalidUnitNo
-    file_out = InvalidUnitNo
+    if (main_rank) then
+      file_in  = InvalidUnitNo
+      file_out = InvalidUnitNo
 
 
     ! check file handle
     !
-    do ifile = 1, MaxGroPPFile
-      if (g_gropp_file(ifile)%unit_no == InvalidUnitNo) then
-        g_gropp_file(ifile)%paths(1:MaxIncDepth) = '.'
-        g_gropp_file(ifile)%depth                = 1
-        exit
+      do ifile = 1, MaxGroPPFile
+        if (g_gropp_file(ifile)%unit_no == InvalidUnitNo) then
+          g_gropp_file(ifile)%paths(1:MaxIncDepth) = '.'
+          g_gropp_file(ifile)%depth                = 1
+          exit
+        end if
+      end do
+      if (ifile > MaxGroPPFile) then
+        error = 'file open error. [open file > MaxFile]'
+        return
       end if
-    end do
-    if (ifile > MaxGroPPFile) then
-      error = 'file open error. [open file > MaxFile]'
-      return
-    end if
 
 
     ! allocate head macro
     !
-    allocate(macro_head, stat = alloc_stat)
-    if (alloc_stat /= 0) then
-      error = 'memory allocation error.'
-      goto 900
-    end if
+      allocate(macro_head, stat = alloc_stat)
+      if (alloc_stat /= 0) then
+        error = 'memory allocation error.'
+        goto 900
+      end if
 
-    macro_cur => macro_head
-    macro_cur%def = 'M_A_C_R_O_H_E_A_D'
+      macro_cur => macro_head
+      macro_cur%def = 'M_A_C_R_O_H_E_A_D'
 
 
     ! allocate pre-defined macro
     !
-    call predef_macro(predefs, macro_cur)
+      call predef_macro(predefs, macro_cur)
 
 
     ! open include file (read)
     !
-    call open_include(file_in, filename, ifile)
-    if (file_in == InvalidUnitNo) then
-      error = 'file open error. ['//trim(filename)//']'
-      goto 900
-    end if
+      call open_include(file_in, filename, ifile)
+      if (file_in == InvalidUnitNo) then
+        error = 'file open error. ['//trim(filename)//']'
+        goto 900
+      end if
 
 
     ! open preprocessed file (write)
     !
-    write(pp_filename,'(a,a,i0)') &
-         trim(filename),      &
-         '__gro_pp_file_pid', &
-         getpid()
+      write(pp_filename,'(a,a,i0)') &
+           trim(filename),      &
+           '__gro_pp_file_rank', &
+           my_world_rank
+!        getpid()
 
-    call open_file(file_out, pp_filename, IOFileOutputReplace)
-    if (file_out == InvalidUnitNo) then
-      error = 'file open error. [Temporary-file]'
-      goto 900
-    end if
+      call open_file(file_out, pp_filename, IOFileOutputReplace)
+      if (file_out == InvalidUnitNo) then
+        error = 'file open error. [Temporary-file]'
+        goto 900
+      end if
 
 
     ! preprocessing recursively
     !
-    depth = 0
-    error = ''
+      depth = 0
+      error = ''
 
-    call pp_body(ifile, file_in, file_out, macro_cur, macro_head, &
-                 .true., depth, error)
-    if (depth /= 0) then
-      error = 'Bad pre-processor command state.'
-      goto 900
-    end if
-    if (error /= '') &
-      goto 900
+      call pp_body(ifile, file_in, file_out, macro_cur, macro_head, &
+                   .true., depth, error)
+      if (depth /= 0) then
+        error = 'Bad pre-processor command state.'
+        goto 900
+      end if
+      if (error /= '') &
+        goto 900
 
-    !DEBUG
-    !call print_macro(macro_head)
-
-
-    ! close file
-    !
-    call close_file(file_out)
-    call close_include(file_in, ifile)
+      !DEBUG
+      !call print_macro(macro_head)
 
 
-    ! deallocate all macro
-    !
-    call dealloc_macro(macro_head)
+      ! close file
+      !
+      call close_file(file_out)
+      call close_include(file_in, ifile)
 
+
+      ! deallocate all macro
+      !
+      call dealloc_macro(macro_head)
+
+
+    endif
+
+#ifdef HAVE_MPI_GENESIS
+    if (nproc_country > 1) then
+      call mpi_barrier(mpi_comm_world, ierror)
+      call mpi_bcast(pp_filename, MaxLine, mpi_character, 0, &
+                     mpi_comm_world, ierror)
+    endif
+#endif
 
     ! open preprocessed file (read)
     !
     call open_file(gro_pp_open_file, pp_filename, IOFileInput)
-    if (gro_pp_open_file == InvalidUnitNo) then
-      error = 'file open error. [Preprocessed-file]'
-      goto 910
-    end if
 
-    g_gropp_file(ifile)%unit_no  = gro_pp_open_file
-    g_gropp_file(ifile)%filename = pp_filename
+    if (main_rank) then
+
+      if (gro_pp_open_file == InvalidUnitNo) then
+        error = 'file open error. [Preprocessed-file]'
+        goto 910
+      end if
+
+      g_gropp_file(ifile)%unit_no  = gro_pp_open_file
+      g_gropp_file(ifile)%filename = pp_filename
+
+    endif
 
     return
 
@@ -237,14 +256,16 @@ contains
 
     call close_file(unit_no)
 
-    do i = 1, MaxGroPPFile
-      if (unit_no == g_gropp_file(i)%unit_no) then
-        call unlink(g_gropp_file(i)%filename)
-        g_gropp_file(i)%unit_no = InvalidUnitNo
-        g_gropp_file(i)%filename = ''
-        exit
-      end if
-    end do
+    if (main_rank) then
+      do i = 1, MaxGroPPFile
+        if (unit_no == g_gropp_file(i)%unit_no) then
+          call unlink(g_gropp_file(i)%filename)
+          g_gropp_file(i)%unit_no = InvalidUnitNo
+          g_gropp_file(i)%filename = ''
+          exit
+        end if
+      end do
+    endif
 
     return
 

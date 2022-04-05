@@ -6,6 +6,11 @@
 #  (c) Copyright 2014 RIKEN. All rights reserved.
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
+if INTERNAL_LAPACK
+  INT_LAPACK_LIB=$(LAPACK_LIB3)
+else
+  INT_LAPACK_LIB=
+endif
 
 SUBDIRS := ../../libana .
 
@@ -25,7 +30,7 @@ msd_analysis_SOURCES = \
 EXTRA_DIST = \
 	Makefile.depends 
 
-msd_analysis_ADDLIB = ../../../lib/lib.a
+msd_analysis_ADDLIB = ../../../lib/lib.a $(INT_LAPACK_LIB)
 msd_analysis_ADDLIBANA = ../../libana/libana.a
 
 SUFFIXES = .fpp

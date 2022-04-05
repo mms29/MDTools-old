@@ -188,20 +188,27 @@ CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
+EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 F77 = @F77@
 FC = @FC@
 FCFLAGS = @FCFLAGS@
 FCFLAGS_FFTE_KERNEL_FPP__PGI__SP = @FCFLAGS_FFTE_KERNEL_FPP__PGI__SP@
 FCFLAGS_FPP__PGI_NOOPT = @FCFLAGS_FPP__PGI_NOOPT@
+FCFLAGS_KERNELS_NONBOND = @FCFLAGS_KERNELS_NONBOND@
 FFLAGS = @FFLAGS@
 FPP = @FPP@
+GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -237,6 +244,7 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_F77 = @ac_ct_F77@
 ac_ct_FC = @ac_ct_FC@
 am__include = @am__include@
@@ -280,6 +288,7 @@ top_srcdir = @top_srcdir@
 SUBDIRS = comcrd_analysis \
           trj_analysis \
           qval_analysis \
+          qval_residcg_analysis \
           drms_analysis \
           rmsd_analysis \
           rg_analysis \
@@ -290,7 +299,7 @@ SUBDIRS = comcrd_analysis \
 	  msd_analysis \
           diffusion_analysis \
           fret_analysis \
-          energy_analysis
+		  ring_analysis
 
 all: all-recursive
 

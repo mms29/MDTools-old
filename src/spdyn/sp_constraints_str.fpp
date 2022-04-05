@@ -69,6 +69,18 @@ module sp_constraints_str_mod
     real(dp)                      :: water_massO
     real(dp)                      :: water_massH
 
+    ! for FEP
+    integer,          allocatable :: No_HGr_preserve(:)
+    integer,          allocatable :: HGrl_preserve(:,:)
+    integer,          allocatable :: No_HGr_appear(:)
+    integer,          allocatable :: HGrl_appear(:,:)
+    integer,          allocatable :: No_HGr_vanish(:)
+    integer,          allocatable :: HGrl_vanish(:,:)
+    integer,          allocatable :: No_HGr_appear_gr(:)
+    integer,          allocatable :: HGrl_appear_gr(:,:)
+    integer,          allocatable :: No_HGr_vanish_gr(:)
+    integer,          allocatable :: HGrl_vanish_gr(:,:)
+
   end type s_constraints
 
   ! parameters for allocatable variables
@@ -76,6 +88,7 @@ module sp_constraints_str_mod
   integer,      public, parameter :: ConstraintsBondGroup  = 2
   integer,      public, parameter :: ConstraintsDomainBond = 3
   integer,      public, parameter :: ConstraintsHGroupMove = 4
+  integer,      public, parameter :: ConstraintsDomainBond_FEP = 5
 
   ! parameters
   integer,      public, parameter :: ConstraintAtomName  = 1
@@ -128,6 +141,7 @@ contains
     constraints%water_rOH       = 0.0_dp
     constraints%water_massO     = 0.0_dp
     constraints%water_massH     = 0.0_dp
+    constraints%tip4            = .false.
 
     return
 
@@ -240,6 +254,47 @@ contains
       constraints%HGr_shake_force &
            (1:var_size1,   1:HGroupMax, 1:var_size1, 1:var_size)    = 0.0_dp
 
+    case (ConstraintsDomainBond_FEP)
+
+      if (allocated(constraints%HGr_local)) then
+        if (size(constraints%HGr_local) /= var_size*var_size1) &
+          deallocate(constraints%No_HGr,          &
+                     constraints%HGr_local,        &
+                     constraints%HGr_bond_list,   &
+                     constraints%HGr_bond_dist,   &
+                     constraints%HGr_bond_vector, &
+                     constraints%HGr_shake_force, &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(constraints%HGr_local)) &
+        allocate(constraints%No_HGr                                    &
+                      (var_size),                                      &
+                 constraints%HGr_local                                 &
+                      (var_size1, var_size),                           &
+                 constraints%HGr_bond_list                             &
+                      (var_size1+1, HGroupMax, var_size1, var_size),   &
+                 constraints%HGr_bond_dist                             &
+                      (var_size1+1, HGroupMax, var_size1, var_size),   &
+                 constraints%HGr_bond_vector                           &
+                      (3, var_size1, HGroupMax, var_size1, var_size),  &
+                 constraints%HGr_shake_force                           &
+                      (var_size1, HGroupMax, var_size1, var_size),     &
+                 stat = alloc_stat)
+
+      constraints%No_HGr          &
+           (1:var_size)                                             = 0
+      constraints%HGr_local       &
+           (1:var_size1, 1:var_size)                                = 0
+      constraints%HGr_bond_list   &
+           (1:var_size1+1, 1:HGroupMax, 1:var_size1, 1:var_size)    = 0
+      constraints%HGr_bond_dist   &
+           (1:var_size1+1, 1:HGroupMax, 1:var_size1, 1:var_size)    = 0.0_dp
+      constraints%HGr_bond_vector &
+           (1:3, 1:var_size1, 1:HGroupMax, 1:var_size1, 1:var_size) = 0.0_dp
+      constraints%HGr_shake_force &
+           (1:var_size1,   1:HGroupMax, 1:var_size1, 1:var_size)    = 0.0_dp
+
     case (ConstraintsHGroupMove)
 
       if (allocated(constraints%HGr_move)) then
@@ -259,9 +314,9 @@ contains
                  constraints%HGr_stay                                    &
                       (var_size, var_size1),                             &
                  constraints%HGr_move_int                                &
-                      (2*(var_size+1), HGrpMaxMove, var_size, var_size1),&
+                      (6*(var_size+1), HGrpMaxMove, var_size, var_size1),&
                  constraints%HGr_stay_int                                &
-                      (2*(var_size+1), HGroupMax, var_size, var_size1),  &
+                      (6*(var_size+1), HGroupMax, var_size, var_size1),  &
                  constraints%HGr_move_real                               &
                       (9*(var_size+1), HGrpMaxMove, var_size, var_size1),&
                  constraints%HGr_stay_real                               &
@@ -273,9 +328,9 @@ contains
       constraints%HGr_stay      &
            (1:var_size, 1:var_size1)                                   = 0
       constraints%HGr_move_int  &
-           (1:2*(var_size+1), 1:HGrpMaxMove, 1:var_size, 1:var_size1)  = 0
+           (1:6*(var_size+1), 1:HGrpMaxMove, 1:var_size, 1:var_size1)  = 0
       constraints%HGr_stay_int  &
-           (1:2*(var_size+1), 1:HGroupMax, 1:var_size, 1:var_size1)    = 0
+           (1:6*(var_size+1), 1:HGroupMax, 1:var_size, 1:var_size1)    = 0
       constraints%HGr_move_real &
            (1:9*(var_size+1), 1:HGrpMaxMove, 1:var_size, 1:var_size1)  = 0.0_dp
       constraints%HGr_stay_real &

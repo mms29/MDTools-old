@@ -36,7 +36,16 @@ module pm_option_str_mod
     real(wp), allocatable         :: band_width(:)
     logical,  allocatable         :: is_periodic(:)
     real(wp), allocatable         :: box_size(:)
+    integer                       :: output_type
+    real(wp), allocatable         :: delta_grid(:)
 
   end type s_option
+
+  ! parameters for output type
+  integer,      public, parameter :: OutputTypeGNUPLOT  = 1
+  integer,      public, parameter :: OutputTypeMATLAB   = 2
+  
+  character(*), public, parameter :: OutputType(2) = (/'GNUPLOT', &
+                                                      'MATLAB '/)
 
 end module pm_option_str_mod

@@ -1,0 +1,1 @@
+../../../spdyn/sp_enefunc_str.fpp

@@ -32,10 +32,12 @@ module sp_pairlist_str_mod
     integer,            allocatable :: num_nb15_calc1(:,:)
     integer,            allocatable :: num_nb15_water(:,:)
     integer,            allocatable :: num_nb15_nobc(:,:)
+    integer,            allocatable :: num_nb15_cgpbc(:,:)
     integer,            allocatable :: nb15_calc_list(:,:)
     integer,            allocatable :: nb15_calc_list1(:,:)
     integer,            allocatable :: nb15_calc_water(:,:)
     integer,            allocatable :: nb15_calc_list_nobc(:,:,:,:)
+    integer,            allocatable :: nb15_calc_list_cgpbc(:,:,:,:)
     integer,            allocatable :: nb15_cell(:)
     integer,            allocatable :: nb15_cells(:)
     integer,            allocatable :: nb15_cellw(:)
@@ -46,6 +48,14 @@ module sp_pairlist_str_mod
     integer,            allocatable :: nb15_listww(:,:)
     ! for GPU
     integer,            allocatable :: univ_ij_load(:)         !  (ij)
+    ! for FEP
+    integer,            allocatable :: num_nb15_calc_fep(:,:)
+    integer,            allocatable :: num_nb15_calc1_fep(:,:)
+    integer,            allocatable :: nb15_calc_list_fep(:,:)
+    integer,            allocatable :: nb15_calc_list1_fep(:,:)
+    integer,            allocatable :: nb15_cell_fep(:)
+    integer,            allocatable :: nb15_list_fep(:,:)
+
 #ifndef PGICUDA
     integer(1),         allocatable :: univ_mask2(:,:)         !  (ix*iy, ij)
     integer(1),         allocatable :: pack_univ_mask2(:)      !  (ix*iy*ij/8)
@@ -69,17 +79,25 @@ module sp_pairlist_str_mod
   end type s_pairlist
 
   ! parameters for allocatable variables
-  integer,        public, parameter :: PairListNoTable    = 1
-  integer,        public, parameter :: PairListTable      = 2
-  integer,        public, parameter :: PairListNoTable_CG = 3
-  integer,        public, parameter :: PairListNOBC       = 4
+  integer,        public, parameter :: PairListNoTable     = 1
+  integer,        public, parameter :: PairListTable       = 2
+  integer,        public, parameter :: PairListNoTable_CG  = 3
+  integer,        public, parameter :: PairListNOBC        = 4
+  integer,        public, parameter :: PairListCGPBC       = 5
+  integer,        public, parameter :: PairListNoTable_FEP = 6
 
   ! variables for maximum numbers in one cell
-  integer,        public            :: MaxNb15      = 15000
-  integer,        public            :: MaxNb15_NOBC = 3000
-  integer,        public            :: MaxNb15_CG   = 3000
-  integer,        public            :: MaxNb15_chk  = 15000
-  integer,        public            :: MaxNb15Water = 1500
+  integer,        public            :: MaxNb15       = 15000
+  integer,        public            :: MaxNb15_NOBC  = 3000
+  integer,        public            :: MaxNb15_CGPBC = 1000
+  integer,        public            :: MaxNb15_CG    = 3000
+  integer,        public            :: MaxNb15_chk   = 15000
+  integer,        public            :: MaxNb15Water  = 1500
+
+  ! FEP
+  ! MaxNb15_fep will be changed depending on the numbe of 
+  ! perturbed atoms.
+  integer,        public            :: MaxNb15_fep   = 15000
 
   ! subroutines
   public  :: init_pairlist
@@ -145,17 +163,35 @@ contains
 
       if (allocated(pairlist%num_nb15_nobc)) then
         if (size(pairlist%num_nb15_nobc) /= var_size*MaxAtom) &
-          deallocate(pairlist%num_nb15_nobc,       &
-                     pairlist%nb15_calc_list_nobc, &
+          deallocate(pairlist%num_nb15_nobc,                  &
+                     pairlist%nb15_calc_list_nobc,            &
                      stat = dealloc_stat)
       end if
 
-      if (.not. allocated(pairlist%num_nb15_nobc))                              &
-        allocate(pairlist%num_nb15_nobc(MaxAtom, var_size),                     &
-                 pairlist%nb15_calc_list_nobc(2,MaxNb15_NOBC,MaxAtom,var_size), &
+      if (.not. allocated(pairlist%num_nb15_nobc))            &
+        allocate(pairlist%num_nb15_nobc(MaxAtom, var_size),   &
+                 pairlist%nb15_calc_list_nobc                 &
+                 (2,MaxNb15_NOBC,MaxAtom,var_size),           &
                  stat = alloc_stat)
 
       pairlist%num_nb15_nobc(1:MaxAtom, 1:var_size)   = 0
+
+    case (PairListCGPBC)
+
+      if (allocated(pairlist%num_nb15_cgpbc)) then
+        if (size(pairlist%num_nb15_cgpbc) /= var_size*MaxAtom) &
+          deallocate(pairlist%num_nb15_cgpbc,                  &
+                     pairlist%nb15_calc_list_cgpbc,            &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(pairlist%num_nb15_cgpbc))            &
+        allocate(pairlist%num_nb15_cgpbc(MaxAtom, var_size),   &
+                 pairlist%nb15_calc_list_cgpbc                 &
+                 (2,MaxNb15_CGPBC,MaxAtom,var_size),           &
+                 stat = alloc_stat)
+
+      pairlist%num_nb15_cgpbc(1:MaxAtom, 1:var_size)   = 0
 
     case (PairListNoTable)
 
@@ -206,6 +242,73 @@ contains
       pairlist%univ_ix_list(:,:)    = 0
       pairlist%univ_iy_natom(:)     = 0
       pairlist%univ_iy_list(:,:)    = 0
+#endif
+
+
+    case (PairListNoTable_FEP)
+
+#ifndef USE_GPU
+      if (allocated(pairlist%num_nb15_calc1)) then
+        if (size(pairlist%num_nb15_calc1) /= var_size*MaxAtom) &
+          deallocate(pairlist%num_nb15_calc1,        &
+                     pairlist%num_nb15_calc,         &
+                     pairlist%nb15_calc_list1,       &
+                     pairlist%nb15_calc_list,        &
+                     pairlist%nb15_cell,             &
+                     pairlist%nb15_list,             &
+                     pairlist%num_nb15_calc1_fep,  &
+                     pairlist%num_nb15_calc_fep,   &
+                     pairlist%nb15_calc_list1_fep, &
+                     pairlist%nb15_calc_list_fep,  &
+                     pairlist%nb15_cell_fep,       &
+                     pairlist%nb15_list_fep,       &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(pairlist%num_nb15_calc1)) &
+        allocate(pairlist%num_nb15_calc1   (MaxAtom, var_size),     &
+                 pairlist%num_nb15_calc    (MaxAtom, maxcell),      &
+                 pairlist%nb15_calc_list1  (MaxNb15, var_size),     &
+                 pairlist%nb15_calc_list   (MaxNb15, maxcell),      &
+                 pairlist%nb15_cell        (maxcell),               &
+                 pairlist%nb15_list        (MaxAtom, maxcell),      &
+                 pairlist%num_nb15_calc1_fep (MaxAtom, var_size), &
+                 pairlist%num_nb15_calc_fep  (MaxAtom, maxcell),  &
+                 pairlist%nb15_calc_list1_fep(MaxNb15_fep, var_size), &
+                 pairlist%nb15_calc_list_fep (MaxNb15_fep, maxcell),  &
+                 pairlist%nb15_cell_fep      (maxcell),           &
+                 pairlist%nb15_list_fep      (MaxAtom, maxcell),  &
+                 stat = alloc_stat)
+
+      pairlist%num_nb15_calc1   (1:MaxAtom, 1:var_size)      = 0
+      pairlist%num_nb15_calc    (1:MaxAtom, 1:maxcell)       = 0
+      pairlist%num_nb15_calc1_fep (1:MaxAtom, 1:var_size)  = 0
+      pairlist%num_nb15_calc_fep  (1:MaxAtom, 1:maxcell)   = 0
+#else
+      if (.not. allocated(pairlist%num_nb15_calc1)) then
+         ! debug
+        allocate(pairlist%univ_ij_load(univ_maxcell1),            &
+                 pairlist%univ_ij_sort_list(univ_maxcell1),       &
+                 pairlist%univ_ix_natom(univ_maxcell1),           &
+                 pairlist%univ_ix_list(MaxAtom, univ_maxcell1),   &
+                 pairlist%univ_iy_natom(univ_maxcell1),           &
+                 pairlist%univ_iy_list(MaxAtom, univ_maxcell1),   &
+                 stat = alloc_stat)
+      endif
+      call set_pinned_memory(pairlist%univ_ij_sort_list, univ_maxcell1*4)
+      call set_pinned_memory(pairlist%univ_ix_natom, univ_maxcell1*4)
+      call set_pinned_memory(pairlist%univ_iy_natom, univ_maxcell1*4)
+      call set_pinned_memory(pairlist%univ_ix_list, MaxAtom*univ_maxcell1)
+      call set_pinned_memory(pairlist%univ_iy_list, MaxAtom*univ_maxcell1)
+
+      ! initialization
+      pairlist%univ_ij_load(:)      = 0
+      pairlist%univ_ij_sort_list(:) = 0
+      pairlist%univ_ix_natom(:)     = 0
+      pairlist%univ_ix_list(:,:)    = 0
+      pairlist%univ_iy_natom(:)     = 0
+      pairlist%univ_iy_list(:,:)    = 0
+
 #endif
 
 

@@ -467,6 +467,7 @@ contains
     real(wp),           pointer :: crd(:,:)
     integer,            pointer :: numr(:), numm(:), aidx(:)
     character(6),       pointer :: namr(:)
+    character(5)                :: nchar_atom
 !    character(4),   allocatable :: nama(:)
     character(4),       pointer :: seg(:)
     character(1),       pointer :: chn(:)
@@ -520,23 +521,28 @@ contains
         write(unit,'(a3)') 'TER'
       end if
       molep = molec
+      if (iatm <= 99999) then
+        write(nchar_atom,'(i5)') iatm
+      else
+        write(nchar_atom,'(a5)') '*****'
+      endif
 
       if (numr(iatm) <= 9999) then
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,a1,i4,4x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', iatm, nama(iatm), namr(iatm), chn(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,a1,i4,4x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(iatm), namr(iatm), chn(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
                   0.00, 0.00, seg(iatm)
 
       else if (numr(iatm) > 999999) then 
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,i6,4x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', iatm, nama(iatm), namr(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,i6,4x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(iatm), namr(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
                   0.00, 0.00, seg(iatm)
 
       else
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,a1,i5,3x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', iatm, nama(iatm), namr(iatm), chn(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,a1,i5,3x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(iatm), namr(iatm), chn(iatm), numr(iatm), (crd(j,iatm),j=1,3), &
                   0.00, 0.00, seg(iatm)
 
       end if
@@ -575,6 +581,7 @@ contains
     real(wp),           pointer :: crd(:,:)
     integer,            pointer :: numr(:), numm(:)
     character(6),       pointer :: namr(:)
+    character(5)                :: nchar_atom
 !    character(4),   allocatable :: nama(:)
     character(4),       pointer :: seg(:)
     character(1),       pointer :: chn(:)
@@ -626,28 +633,32 @@ contains
         write(unit,'(a3)') 'TER'
       end if
       molep = molec
+      if (i <= 99999) then
+        write(nchar_atom,'(i5)') i
+      else
+        write(nchar_atom,'(a5)') '*****'
+      endif
 
       if (numr(i) <= 9999) then
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,a1,i4,4x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', i, nama(i), namr(i), chn(i), numr(i), (crd(j,i),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,a1,i4,4x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(i), namr(i), chn(i), numr(i), (crd(j,i),j=1,3), &
                   0.00, 0.00, seg(i)
 
       else if (numr(i) > 999999) then 
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,i6,4x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', i, nama(i), namr(i), numr(i), (crd(j,i),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,i6,4x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(i), namr(i), numr(i), (crd(j,i),j=1,3), &
                   0.00, 0.00, seg(i)
 
       else
 
-        write(unit, '(a4,i7,1x,a4,1x,a4,a1,i5,3x,3f8.3,2f6.2,6x,a4)') &
-          'ATOM', i, nama(i), namr(i), chn(i), numr(i), (crd(j,i),j=1,3), &
+        write(unit, '(a4,2x,a5,1x,a4,1x,a4,a1,i5,3x,3f8.3,2f6.2,6x,a4)') &
+          'ATOM', nchar_atom, nama(i), namr(i), chn(i), numr(i), (crd(j,i),j=1,3), &
                   0.00, 0.00, seg(i)
 
       end if
     end do
-
     write(unit,'(a3)') 'TER'
     write(unit,'(a6)') 'ENDMDL'
 

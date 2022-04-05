@@ -24,10 +24,10 @@ module rg_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical            :: check_only
-    logical            :: mass_weighted
-    character(MaxLine) :: analysis_atom_exp
-    type(s_selatoms)   :: analysis_atom
+    logical                :: check_only
+    logical                :: mass_weighted
+    character(MaxLineLong) :: analysis_atom_exp
+    type(s_selatoms)       :: analysis_atom
 
   end type s_option
 

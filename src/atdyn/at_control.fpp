@@ -17,6 +17,7 @@ module at_control_mod
 
   use at_output_mod
   use at_input_mod
+  use at_morph_mod
   use at_remd_mod
   use at_rpath_mod
   use at_rpath_str_mod
@@ -32,6 +33,7 @@ module at_control_mod
   use at_experiments_mod
   use at_gamd_mod
   use select_mod
+  use fitting_mod
   use fileio_control_mod
   use string_mod
   use fitting_mod
@@ -96,6 +98,9 @@ module at_control_mod
     ! data for section vibration
     type(s_vib_info)      :: vib_info
 
+    ! data for section morphing
+    type(s_morph_info)    :: morph_info
+
     ! data for section gamd
     type(s_gamd_info)     :: gamd_info
 
@@ -110,6 +115,7 @@ module at_control_mod
   public  :: control_remd
   public  :: control_rpath
   public  :: control_vib
+  public  :: control_morph
   private :: show_ctrl
 
 contains
@@ -196,7 +202,10 @@ contains
 
       end if
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
+#ifdef QSIMULATE
+      call BLACS_Exit(1)
+#endif
       call MPI_Finalize(ierror)
 #endif
 
@@ -302,7 +311,6 @@ contains
     ! read restraints section
     !
     call read_ctrl_restraints(handle, ctrl_data%res_info)
-
 
     ! read fitting section
     !
@@ -496,7 +504,6 @@ contains
     ! read restraints section
     !
     call read_ctrl_restraints(handle, ctrl_data%res_info)
-
 
     ! read fitting section
     !
@@ -697,6 +704,9 @@ contains
     !
     call read_ctrl_restraints(handle, ctrl_data%res_info)
 
+    ! read fitting section
+    !
+    call read_ctrl_fitting(handle, ctrl_data%fit_info)
 
     ! read QM/MM section
     !
@@ -711,6 +721,82 @@ contains
     return
 
   end subroutine control_vib
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    control_morph
+  !> @brief        open/read/close control files for Minimization
+  !! @authors      CK
+  !! @param[in]    filename  : file name of control file
+  !! @param[out]   ctrl_data : information of control parameters
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  
+  subroutine control_morph(filename, ctrl_data)
+  
+    ! formal arguments
+    character(*),            intent(in)    :: filename
+    type(s_ctrl_data),       intent(inout) :: ctrl_data
+    
+    ! local variables
+    integer                  :: handle
+
+
+    ! open control file
+    ! 
+    call open_ctrlfile(filename, handle)
+
+    if (handle == 0) &
+      call error_msg('Control_Min> File IO Error')
+
+
+    ! read input section
+    !
+    call read_ctrl_input(handle, ctrl_data%inp_info)
+
+
+    ! read output section
+    !
+    call read_ctrl_output(handle, ctrl_data%out_info)
+
+
+    ! read energy section
+    !
+    call read_ctrl_energy(handle, ctrl_data%ene_info)
+
+
+    ! read morphing section
+    !
+    call read_ctrl_morph(handle, ctrl_data%morph_info)
+
+
+    ! read boundary section
+    !
+    call read_ctrl_boundary(handle, ctrl_data%bound_info)
+
+
+    ! read selection section
+    !
+    call read_ctrl_selection(handle, ctrl_data%sel_info)
+
+
+    ! read restraints section
+    !
+    call read_ctrl_restraints(handle, ctrl_data%res_info)
+
+
+    ! read restraints section
+    !
+    call read_ctrl_fitting(handle, ctrl_data%fit_info)
+
+    ! close control file
+    !
+    call close_ctrlfile(handle)
+
+
+    return
+
+  end subroutine control_morph
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

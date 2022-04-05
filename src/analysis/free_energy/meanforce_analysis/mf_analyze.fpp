@@ -67,7 +67,7 @@ contains
     integer                  :: nimage, nstep, nsel, natom
     integer                  :: iimage, istep, isel
     integer                  :: pfile, ofile, i
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
 
     real(wp), allocatable    :: path(:,:), f(:,:), path_prv(:,:), f_prv(:,:)
     real(wp), allocatable    :: F_k(:,:), F_k_prv(:,:), Fdat(:)
@@ -228,7 +228,7 @@ contains
     type(s_trj_file)         :: file
     integer                  :: i, file_size, hdr_size, step_size
     integer(4)               :: icntrl(20), ntitle
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(80)            :: title(10)
     character(4)             :: hdr
 

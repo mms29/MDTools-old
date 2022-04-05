@@ -30,14 +30,18 @@ module ta_option_mod
 
   ! structures
   type, public :: s_opt_info
+    integer                         :: n_distance     = 1     
     logical                         :: check_only     = .false.
     logical                         :: allow_backup   = .false.
+    logical                         :: linear_sum     = .false.    
     character(Maxline), allocatable :: dis_atoms(:)
     character(Maxline), allocatable :: ang_atoms(:)
     character(Maxline), allocatable :: tor_atoms(:)
     character(Maxline), allocatable :: cdis_groups(:)
     character(Maxline), allocatable :: cang_groups(:)
     character(Maxline), allocatable :: ctor_groups(:)
+    character(Maxline), allocatable :: ldis_groups(:)
+    character(Maxline), allocatable :: dist_weight(:)
   end type s_opt_info
 
   ! subroutines
@@ -133,7 +137,7 @@ contains
   !
   !  Subroutine    read_ctrl_option
   !> @brief        read control parameters in OPTION section
-  !! @authors      NT, TM
+  !! @authors      NT, TM, SI
   !! @param[in]    handle   : unit number of control file
   !! @param[out]   opt_info : OPTION section control parameters information
   !
@@ -149,9 +153,8 @@ contains
     type(s_opt_info),        intent(inout) :: opt_info
 
     ! local variables
-    integer                  :: i, ndis, nang, ntor, ncdis, ncang, nctor
-    character(MaxLine)       :: value
-    character(20)            :: dis_name, ang_name, tor_name
+    integer                  :: i, ndis, nang, ntor, ncdis, ncang, nctor, nwdis
+    character(MaxLine)       :: value, dis_name, ang_name, tor_name, wgt_name
 
 
     ! read parameters
@@ -163,6 +166,8 @@ contains
 
     call read_ctrlfile_logical(handle, Section, &
                               'allow_backup', opt_info%allow_backup)
+
+   
 
     ! read distance atom definitions
     !
@@ -182,6 +187,29 @@ contains
       call read_ctrlfile_string(handle, Section, dis_name, &
                                 opt_info%dis_atoms(i))
     end do
+
+    ! read weight for linear combination of distance 
+    !
+    nwdis = 0
+    do while (.true.)
+      value = ''
+      write(wgt_name,'(A11,I0)') 'dist_weight', nwdis + 1
+      call read_ctrlfile_string(handle, Section, wgt_name, value)
+      if (value == '') exit
+      nwdis = nwdis + 1
+    end do
+    if (nwdis == 0) then
+      allocate(opt_info%dist_weight(ndis))
+      opt_info%dist_weight = ''
+    else  
+      allocate(opt_info%dist_weight(nwdis))
+      opt_info%dist_weight = ''
+      do i = 1, nwdis
+        write(wgt_name,'(A11,I0)') 'dist_weight', i
+        call read_ctrlfile_string(handle, Section, wgt_name, &
+                                  opt_info%dist_weight(i))
+      end do 
+    end if
 
     ! read angle atom definitions
     !
@@ -296,6 +324,14 @@ contains
       write(MsgOut,'(A20,A2)') '  allow backup    = ', 'no'
     end if
 
+    if (nwdis > 0) then
+      write(MsgOut,'(A31,I10)') '   # of weight for distance  = ', nwdis
+      do i = 1, nwdis
+        write(MsgOut,'(A25,I0,A3,A)') &
+             '     weight for distance ', i, ' = ', trim(opt_info%dist_weight(i))
+      end do
+    end if
+
     if (ndis > 0) then
       write(MsgOut,'(A20,I10)') '   # of distance  = ', ndis
       do i = 1, ndis
@@ -354,7 +390,7 @@ contains
   !
   !  Subroutine    setup_option
   !> @brief        setup option information
-  !! @authors      NT
+  !! @authors      NT, SI
   !! @param[in]    opt_info : OPTION section control parameters information
   !! @param[in]    sel_info : SELECTION section control parameters information
   !! @param[in]    molecule : molecule information
@@ -373,7 +409,7 @@ contains
     
     ! local variables
     integer                  :: i, ndis, nang, ntor, ncdis, ncang, nctor
-
+    integer                  :: natm, nwdis, tnwdis
 
     ! check only
     !
@@ -383,22 +419,55 @@ contains
     !
     call setup_backup(opt_info%allow_backup)
 
+    ! linear combination of distance
+    !
+    ndis   = size(opt_info%dis_atoms)
+    write(*,*) "ndis= ", ndis
+    tnwdis = size(opt_info%dist_weight)
+
+    !if ((ndis == 1) .and. (tnwdis > 1)) then
+    !  call error_msg('Setup_Option> Total # of weight factor does match Toatal # of distance') 
+    !else if ((ndis > 1) .and. (ndis /= tnwdis)) then
+    !  call error_msg('Setup_Option> Total # of weight factor does match Toatal # of distance') 
+    !end if  
+
+    allocate(option%dist_weight(ndis, 50))
+    option%dist_weight = 1.0_wp
+
+    do i=1, ndis
+
+      natm  = split_num(opt_info%dis_atoms(i))
+      nwdis = split_num(opt_info%dist_weight(i))
+      write(*,*) "natm= ", natm
+      write(*,*) "nwdis= ", nwdis
+      !if ((nwdis > 1) .and. (nwdis /= (natm/2))) &
+      ! call error_msg('Setup_Option> # of weight factor does match # of distance')
+  
+      ! if nwdis == 0, weight should be defined.
+      if (nwdis > 0) &
+      call split(nwdis, nwdis, opt_info%dist_weight(i), option%dist_weight(i,:))
+
+    end do       
+
     ! distance
     !
-    ndis = size(opt_info%dis_atoms)
+    !ndis = size(opt_info%dis_atoms)
     option%out_dis = ndis > 0
 
     if (option%out_dis) then
 
       if (output%disfile == '')  call error_msg('Setup_Option> ERROR : disfile name is not specified')
+      if (natm > 50) call error_msg('Setup_Option> Maximum # of atom in one distance is 50')
+      if (mod(natm,2) /= 0) call error_msg('Setup_Option> Maximum # of atom must be even number')
 
-      allocate(option%dist_list(2,ndis), option%distance(ndis))
+      allocate(option%dist_list(50,ndis), option%distance(ndis), option%dist_num(ndis))
+      option%dist_list(50,:) = 0
 
       write(MsgOut,'(A)') 'Setup_Option> distance atom indices: '
       do i = 1, ndis
         call parse_atom_defs( &
-             molecule, opt_info%dis_atoms(i), option%dist_list(:,i))
-        write(MsgOut,'(I5,A,I7,I7)') i, ' ) ', option%dist_list(:,i)
+               molecule, opt_info%dis_atoms(i), option%dist_list(:,i), option%dist_num(i))
+        write(MsgOut,'(I5,A,50I7:)') i, ' ) ', option%dist_list(1:option%dist_num(i),i)
       end do
 
       write(MsgOut, '(A)') ' '
@@ -557,31 +626,32 @@ contains
   !
   !  Subroutine    parse_atom_defs
   !> @brief        parse distance/angle/torsion atom definition line
-  !! @authors      NT
+  !! @authors      NT, SI
   !! @param[in]    molecule : molecule information
   !! @param[in]    defs     : atom definitions
   !! @param[inout] atoms    : atom indices
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
   
-  subroutine parse_atom_defs(molecule, defs, atoms)
+  subroutine parse_atom_defs(molecule, defs, atoms, n_dist)
 
     ! formal argments
     type(s_molecule),        intent(in)    :: molecule
     character(*),            intent(in)    :: defs
     integer,                 intent(inout) :: atoms(:)
+    integer, optional,       intent(inout) :: n_dist    
 
     ! local variables
     integer                  :: idx, i
-    character(Maxline)       :: s(4)
+    character(Maxline)       :: s(50)
 
 
     atoms(:) = -1
 
     s(:) = ''
-    read(defs, *, err=900, end=100) s(1), s(2), s(3), s(4)
+    read(defs, *, err=900, end=100) (s(i), i=1, 50)
 
-100 do i = 1, 4
+100 do i = 1, 50
       if (s(i) /= '') then
         idx = get_atom_index(molecule, s(i))
         if (idx == -1) &
@@ -597,9 +667,10 @@ contains
     end do
 
     do i = 1, size(atoms)
-      if (atoms(i) == -1) &
-        call error_msg('Parse_atom_defs> read error. bad format : '//&
-                       trim(defs))
+      if (atoms(i) == -1) then
+        n_dist = i - 1
+        exit
+      end if
     end do
 
     return

@@ -36,11 +36,16 @@ module sp_enefunc_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! subroutines
@@ -56,8 +61,17 @@ module sp_enefunc_mod
   private :: setup_enefunc_impr_pio
   private :: setup_enefunc_cmap_pio
   private :: setup_enefunc_nonb_pio
+  private :: setup_enefunc_vsite2_pio
+  private :: setup_enefunc_vsite3_pio
+  private :: setup_enefunc_vsite3fd_pio
+  private :: setup_enefunc_vsite3fad_pio
+  private :: setup_enefunc_vsite3out_pio
+  private :: setup_enefunc_vsite4fdn_pio
+  private :: setup_enefunc_vsiten_pio
   private :: setup_enefunc_dispcorr
   private :: check_bonding
+  ! FEP
+  private :: setup_enefunc_dispcorr_fep
 
 contains
 
@@ -78,8 +92,8 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine define_enefunc(ene_info, par, prmtop, grotop, localres, molecule, &
-                            constraints, restraints, domain, enefunc)
+  subroutine define_enefunc(ene_info, par, prmtop, grotop, localres, &
+                            molecule, constraints, restraints, domain, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info
@@ -121,6 +135,12 @@ contains
     enefunc%minimum_contact   = ene_info%minimum_contact
     enefunc%err_minimum_contact = ene_info%err_minimum_contact
 
+    ! FEP
+    if (domain%fep_use) &
+      enefunc%fep_topology = molecule%fep_topology
+
+    enefunc%vacuum = ene_info%vacuum
+
     if (ene_info%structure_check == StructureCheckDomain) then
       enefunc%pairlist_check = .true.
       enefunc%bonding_check  = .true.
@@ -131,12 +151,18 @@ contains
     !
     if (par%num_bonds > 0) then
 
+      if (ene_info%forcefield /= ForcefieldCHARMM) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
+
       call define_enefunc_charmm(ene_info, par, localres, molecule, &
                                  constraints, restraints, domain, enefunc)
 
     ! amber
     !
     else if (prmtop%num_atoms > 0) then
+
+      if (ene_info%forcefield /= ForcefieldAMBER) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
 
       call define_enefunc_amber (ene_info, prmtop, molecule, &
                                  constraints, restraints, domain, enefunc)
@@ -145,6 +171,20 @@ contains
     !
     else if (grotop%num_atomtypes > 0) then
 
+!      if (domain%fep_use) &
+!        call error_msg('Define_Enefunc> FEP supports only CHARMM and AMBER forcefields.')
+      if (domain%fep_use) then
+        if (ene_info%forcefield == ForcefieldGROMARTINI .or. &
+            ene_info%forcefield == ForcefieldAAGO) &
+          call error_msg('Define_Enefunc> FEP does not support Martini and AAGo.')
+      end if
+
+      if (ene_info%forcefield /= ForcefieldGROAMBER .and.   &
+          ene_info%forcefield /= ForcefieldGROMARTINI .and. &
+          ene_info%forcefield /= ForcefieldAAGO .and.  &
+          ene_info%forcefield /= ForcefieldCAGO) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
+
       call define_enefunc_gromacs(ene_info, grotop, molecule, &
                                  constraints, restraints, domain, enefunc)
 
@@ -152,7 +192,12 @@ contains
 
     ! dispersion correction
     !
-    call setup_enefunc_dispcorr(ene_info, domain, enefunc)
+    if (domain%fep_use) then
+      ! FEP
+      call setup_enefunc_dispcorr_fep(ene_info, domain, enefunc)
+    else
+      call setup_enefunc_dispcorr(ene_info, domain, enefunc)
+    end if
 
     ! bonding_checker
     !
@@ -189,6 +234,7 @@ contains
 
     ! local variables
     integer                  :: ncel, ncelb
+
 
     enefunc%forcefield        = ene_info%forcefield
     enefunc%output_style      = ene_info%output_style
@@ -274,6 +320,34 @@ contains
     if(ene_info%table) &
     call setup_enefunc_table(ene_info, enefunc)
 
+    ! virtual site 2
+    !
+    call setup_enefunc_vsite2_pio(domain, enefunc)
+
+    ! virtual site 3
+    !
+    call setup_enefunc_vsite3_pio(domain, enefunc)
+
+    ! virtual site 3fd
+    !
+    call setup_enefunc_vsite3fd_pio(domain, enefunc)
+
+    ! virtual site 3fad
+    !
+    call setup_enefunc_vsite3fad_pio(domain, enefunc)
+
+    ! virtual site 3out
+    !
+    call setup_enefunc_vsite3out_pio(domain, enefunc)
+
+    ! virtual site 4fdn
+    !
+    call setup_enefunc_vsite4fdn_pio(domain, enefunc)
+
+    ! virtual site n
+    !
+    call setup_enefunc_vsiten_pio(domain, enefunc)
+
     ! restraint
     !
     call setup_enefunc_localres(localres, domain, enefunc)
@@ -286,18 +360,32 @@ contains
     if (main_rank) then
       write(MsgOut,'(A)') &
            'Define_Enefunc_Pio> Number of Interactions in Each Term'
-      write(MsgOut,'(A20,I10,A20,I10)')                  &
-           '  bond_ene        = ', enefunc%num_bond_all, &
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  bond_ene        = ', enefunc%num_bond_all,        &
            '  angle_ene       = ', enefunc%num_angl_all
-      write(MsgOut,'(A20,I10,A20,I10)')                  &
-           '  torsion_ene     = ', enefunc%num_dihe_all, &
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  torsion_ene     = ', enefunc%num_dihe_all,        &
            '  rb_torsion_ene  = ', enefunc%num_rb_dihe_all
-      write(MsgOut,'(A20,I10,A20,I10)')                  &
-           '  improper_ene    = ', enefunc%num_impr_all, &
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  improper_ene    = ', enefunc%num_impr_all,        &
            '  cmap_ene        = ', enefunc%num_cmap_all
-      write(MsgOut,'(A20,I10,A20,I10)')                  &
-           '  nb_exclusions   = ', enefunc%num_excl_all, &
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  nb_exclusions   = ', enefunc%num_excl_all,        &
            '  nb14_calc       = ', enefunc%num_nb14_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite2_ene       = ', enefunc%num_vsite2_all,      &
+           ' vsite3_ene       = ', enefunc%num_vsite3_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite3fd_ene     = ', enefunc%num_vsite3fd_all,    &
+           ' vsite3fad_ene    = ', enefunc%num_vsite3fad_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' vsite3out_ene    = ', enefunc%num_vsite3out_all,   &
+           ' vsite4fdn_ene    = ', enefunc%num_vsite4fdn_all
+      write(MsgOut,'(A20,I10)')                                 &
+           ' vsiten_ene       = ', enefunc%num_vsiten_all
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           ' restraint_groups = ', enefunc%num_restraintgroups, &
+           ' restraint_funcs  = ', enefunc%num_restraintfuncs
       write(MsgOut,'(A)') ' '
     end if
 
@@ -432,8 +520,11 @@ contains
         end if
       else
         if (table) then
-          call count_nonb_excl_solute(first, domain, enefunc)
-
+          if (domain%fep_use) then
+            call error_msg('Update_Enefunc> table is not available without constraints in FEP.')
+          else
+            call count_nonb_excl_solute(first, domain, enefunc)
+          end if
         else
           call count_nonb_excl(first, domain, enefunc)
 
@@ -574,7 +665,7 @@ contains
         call error_msg('Setup_Enefunc_Bond_Pio> Too many bonds.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -619,7 +710,7 @@ contains
         call error_msg('Setup_Enefunc_Bond_Constraint_Pio> Too many bonds.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -645,7 +736,7 @@ contains
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, constraints%num_bonds, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -687,7 +778,7 @@ contains
         call error_msg('Setup_Enefunc_Angl_Pio> Too many angles.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -728,7 +819,7 @@ contains
         call error_msg('Setup_Enefunc_Dihe_Pio> Too many dihedral angles.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -770,7 +861,7 @@ contains
         call error_msg('Setup_Enefunc_RB_Dihe_Pio> Too many dihedral angles.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_rb_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -812,7 +903,7 @@ contains
             'Setup_Enefunc_Impr_Pio> Too many improper dihedral angles')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_impr_all, 1, mpi_integer, mpi_sum, &
                        mpi_comm_country, ierror)
 #else
@@ -852,7 +943,7 @@ contains
         call error_msg('Setup_Enefunc_Cmap_Pio> Too many cmaps.')
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_cmap_all, 1, mpi_integer, mpi_sum, &
                        mpi_comm_country, ierror)
 #else
@@ -925,6 +1016,293 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_enefunc_vsite2_pio
+  !> @brief        define virtual site 2 term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite2_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite2
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite2) &
+        call error_msg('Setup_Enefunc_Vsite2_Pio> Too many virtual site 2.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite2_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite2_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite2_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3_pio
+  !> @brief        define virtual site 3 term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite3
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite3) &
+        call error_msg('Setup_Enefunc_Vsite3_Pio> Too many virtual site 3.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite3_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fd_pio
+  !> @brief        define virtual site 3fd term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fd_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite3fd
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite3fd) &
+        call error_msg('Setup_Enefunc_Vsite3fd_Pio> Too many virtual site 3fd.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite3fd_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3fd_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3fd_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fad_pio
+  !> @brief        define virtual site 3fad term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fad_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite3fad
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite3fad) &
+        call error_msg('Setup_Enefunc_Vsite3fad_Pio> Too many virtual site 3fad.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite3fad_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3fad_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3fad_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3out_pio
+  !> @brief        define virtual site 3out term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3out_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite3out
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite3out) &
+        call error_msg('Setup_Enefunc_Vsite3out_Pio> Too many virtual site 3out.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite3out_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite3out_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite3out_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite4fdn_pio
+  !> @brief        define virtual site 4fdn term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite4fdn_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsite4fdn
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsite4fdn) &
+        call error_msg('Setup_Enefunc_Vsite4fdn_Pio> Too many virtual site 4fdn.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsite4fdn_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsite4fdn_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsite4fdn_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsiten_pio
+  !> @brief        define virtual site n term in potential energy function
+  !! @authors      NT
+  !! @param[in]    domain  : domain information
+  !! @param[inout] enefunc : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsiten_pio(domain, enefunc)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                   :: i, found
+    integer,          pointer :: nvsite(:)
+
+
+    nvsite => enefunc%num_vsiten
+
+    found = 0
+    do i = 1, domain%num_cell_local
+      found = found + nvsite(i)
+      if (nvsite(i) > MaxVsiten) &
+        call error_msg('Setup_Enefunc_Vsiten_Pio> Too many virtual site n.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_vsiten_all, 1, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#else
+    enefunc%num_vsiten_all = found
+#endif
+
+    return
+
+  end subroutine setup_enefunc_vsiten_pio
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    setup_enefunc_dispcorr
   !> @brief        define dispersion correction term
   !! @authors      CK
@@ -933,6 +1311,7 @@ contains
   !! @param[inout] enefunc  : energy potential functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
+
   subroutine setup_enefunc_dispcorr(ene_info, domain, enefunc)
 
     ! formal arguments
@@ -989,7 +1368,7 @@ contains
       num_all_atoms = num_all_atoms + domain%num_atom(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(mpi_in_place, atype, ntypes, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #endif
@@ -1083,7 +1462,7 @@ contains
                           + enefunc%num_rb_dihedral(i) &
                           + enefunc%num_improper(i)
       end do
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_allreduce(mpi_in_place, num_all_atoms, 1, mpi_integer, &
                          mpi_sum, mpi_comm_country, ierror)
       call mpi_allreduce(mpi_in_place, nexpair, 1, mpi_integer, &
@@ -1372,5 +1751,607 @@ contains
     return
 
   end subroutine check_bonding
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_dispcorr_fep
+  !> @brief        define dispersion correction term for FEP
+  !! @authors      HO
+  !! @param[in]    ene_info : ENERGY section control parameters information
+  !! @param[inout] domain   : domain information
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_dispcorr_fep(ene_info, domain, enefunc)
+
+    ! formal arguments
+    type(s_ene_info),        intent(in)    :: ene_info
+    type(s_domain),  target, intent(inout) :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, iatmcls, ntypes
+    integer                  :: icel1, icel2, icel3, icel4
+    integer                  :: i1, i2, i3, i4
+!    integer                  :: num_all_atoms, natom2, nexpair
+!    real(dp)                 :: lj6_tot, lj6_diff, lj6_ex
+!    real(dp)                 :: factor, rpair
+    real(dp)                 :: diff_cs, diff_cs2, diff_cs3, diff_cs4
+    real(dp)                 :: cutoff , cutoff2, cutoff3, cutoff4
+    real(dp)                 :: cutoff5, cutoff6, cutoff7, cutoff8
+    real(dp)                 :: cutoff14
+    real(dp)                 :: inv_cutoff3, inv_cutoff6, inv_cutoff12
+    real(dp)                 :: switchdist , switchdist2, switchdist3
+    real(dp)                 :: switchdist4, switchdist5
+    real(dp)                 :: switchdist6, switchdist7, switchdist8
+    real(dp)                 :: shift_a, shift_b, shift_c
+    real(dp)                 :: vswitch, eswitch, vlong
+
+    integer,         pointer :: id_g2l(:,:)
+    integer,         pointer :: bondlist(:,:,:),anglelist(:,:,:)
+    integer,         pointer :: dihelist(:,:,:),rb_dihelist(:,:,:)
+    integer,         pointer :: atmcls(:,:),imprlist(:,:,:)
+!    integer,     allocatable :: atype(:)
+
+    ! FEP
+    integer                  :: num_all_atoms_preserve, natom_preserve2
+    integer                  :: num_all_atoms_vanish, natom_vanish2
+    integer                  :: num_all_atoms_appear, natom_appear2
+    integer                  :: nexpair_preserve, nexpair_vanish, nexpair_appear
+    integer                  :: fg1, fg2, pert_flag
+    integer                  :: table_pert(5,5)
+    real(dp)                 :: lj6_tot_preserve, lj6_tot_vanish, lj6_tot_appear
+    real(dp)                 :: lj6_diff_preserve, lj6_diff_vanish, lj6_diff_appear
+    real(dp)                 :: lj6_ex_preserve, lj6_ex_vanish, lj6_ex_appear
+    real(dp)                 :: factor_preserve, factor_vanish, factor_appear
+    real(dp)                 :: rpair_preserve, rpair_vanish, rpair_appear
+    integer,     allocatable :: atype_preserve(:), atype_vanish(:), atype_appear(:)
+
+    if (ene_info%dispersion_corr == Disp_corr_NONE) return
+
+    bondlist    => enefunc%bond_list
+    anglelist   => enefunc%angle_list
+    dihelist    => enefunc%dihe_list
+    rb_dihelist => enefunc%rb_dihe_list
+    imprlist    => enefunc%impr_list
+    atmcls      => domain%atom_cls_no
+    id_g2l      => domain%id_g2l
+
+    ntypes = enefunc%num_atom_cls
+!    allocate(atype(1:ntypes))
+    allocate(atype_preserve(1:ntypes), atype_vanish(1:ntypes), atype_appear(1:ntypes))
+
+!    atype(1:ntypes) = 0
+    atype_preserve(1:ntypes) = 0
+    atype_vanish(1:ntypes)   = 0
+    atype_appear(1:ntypes)   = 0
+!    num_all_atoms            = 0
+    num_all_atoms_preserve   = 0
+    num_all_atoms_vanish     = 0
+    num_all_atoms_appear     = 0
+
+    do i = 1, domain%num_cell_local
+      do j = 1, domain%num_atom(i)
+        iatmcls = atmcls(j,i)
+        if(enefunc%fep_topology == 2) then
+          if (domain%fepgrp(j,i) == 5) then
+            atype_preserve(iatmcls) = atype_preserve(iatmcls)+1
+            num_all_atoms_preserve = num_all_atoms_preserve + 1
+          else if (domain%fepgrp(j,i) == 1) then
+            atype_preserve(iatmcls) = atype_preserve(iatmcls)+1
+            num_all_atoms_preserve = num_all_atoms_preserve + 1
+          else if (domain%fepgrp(j,i) == 2) then
+            atype_preserve(iatmcls) = atype_preserve(iatmcls)+1
+            num_all_atoms_preserve = num_all_atoms_preserve + 1
+          else if (domain%fepgrp(j,i) == 3) then
+            atype_vanish(iatmcls) = atype_vanish(iatmcls)+1
+            num_all_atoms_vanish = num_all_atoms_vanish + 1
+          else if (domain%fepgrp(j,i) == 4) then
+            atype_appear(iatmcls) = atype_appear(iatmcls)+1
+            num_all_atoms_appear = num_all_atoms_appear + 1
+          end if
+        else
+          if (domain%fepgrp(j,i) == 5) then
+            atype_preserve(iatmcls) = atype_preserve(iatmcls)+1
+            num_all_atoms_preserve = num_all_atoms_preserve + 1
+          else if (domain%fepgrp(j,i) == 1) then
+            atype_vanish(iatmcls) = atype_vanish(iatmcls)+1
+            num_all_atoms_vanish = num_all_atoms_vanish + 1
+          else if (domain%fepgrp(j,i) == 2) then
+            atype_appear(iatmcls) = atype_appear(iatmcls)+1
+            num_all_atoms_appear = num_all_atoms_appear + 1
+          else if (domain%fepgrp(j,i) == 3) then
+            atype_vanish(iatmcls) = atype_vanish(iatmcls)+1
+            num_all_atoms_vanish = num_all_atoms_vanish + 1
+          else if (domain%fepgrp(j,i) == 4) then
+            atype_appear(iatmcls) = atype_appear(iatmcls)+1
+            num_all_atoms_appear = num_all_atoms_appear + 1
+          end if
+        end if
+      end do
+!      num_all_atoms = num_all_atoms + domain%num_atom(i)
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+!    call mpi_allreduce(mpi_in_place, atype, ntypes, mpi_integer, &
+!                       mpi_sum, mpi_comm_country, ierror)
+    call mpi_allreduce(mpi_in_place, atype_preserve, ntypes, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+    call mpi_allreduce(mpi_in_place, atype_vanish, ntypes, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+    call mpi_allreduce(mpi_in_place, atype_appear, ntypes, mpi_integer, &
+                       mpi_sum, mpi_comm_country, ierror)
+#endif
+
+    lj6_tot_preserve = 0.0_dp
+    lj6_tot_vanish   = 0.0_dp
+    lj6_tot_appear   = 0.0_dp
+    do i = 1, ntypes
+      do j = 1, ntypes
+!        lj6_tot = lj6_tot + enefunc%nonb_lj6(i,j)*atype(i)*atype(j)
+        lj6_tot_preserve = lj6_tot_preserve + enefunc%nonb_lj6(i,j)*atype_preserve(i)*atype_preserve(j)
+        lj6_tot_vanish   = lj6_tot_vanish   + enefunc%nonb_lj6(i,j)*atype_vanish(i)*atype_preserve(j)
+        lj6_tot_vanish   = lj6_tot_vanish   + enefunc%nonb_lj6(i,j)*atype_preserve(i)*atype_vanish(j)
+        lj6_tot_vanish   = lj6_tot_vanish   + enefunc%nonb_lj6(i,j)*atype_vanish(i)*atype_vanish(j)
+        lj6_tot_appear   = lj6_tot_appear   + enefunc%nonb_lj6(i,j)*atype_appear(i)*atype_preserve(j)
+        lj6_tot_appear   = lj6_tot_appear   + enefunc%nonb_lj6(i,j)*atype_preserve(i)*atype_appear(j)
+        lj6_tot_appear   = lj6_tot_appear   + enefunc%nonb_lj6(i,j)*atype_appear(i)*atype_appear(j)
+      end do
+    end do
+
+!    deallocate(atype)
+    deallocate(atype_preserve, atype_vanish, atype_appear)
+
+    ! FEP: Make a table for perturbation
+    do fg1 = 1, 5
+      do fg2 = 1, 5
+        if (enefunc%fep_topology == 2) then
+          if (((fg1==5).and.(fg2==5)) .or. &
+            ((fg1==1).and.(fg2==1)) .or. &
+            ((fg1==1).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==1)) .or. &
+            ((fg1==2).and.(fg2==2)) .or. &
+            ((fg1==2).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==2))) then
+            ! preserved-preserved
+            table_pert(fg1,fg2) = 5
+          else if (((fg1==3).and.(fg2==3)) .or. &
+            ((fg1==3).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==3)) .or. &
+            ((fg1==3).and.(fg2==1)) .or. &
+            ((fg1==1).and.(fg2==3))) then
+            ! dualA-dualA and dualA-other
+            table_pert(fg1,fg2) = 3
+          else if (((fg1==4).and.(fg2==4)) .or. &
+            ((fg1==4).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==4)) .or. &
+            ((fg1==4).and.(fg2==2)) .or. &
+            ((fg1==2).and.(fg2==4))) then
+            ! dualB-dualB and dualB-other
+            table_pert(fg1,fg2) = 4
+          end if
+        else
+          if ((fg1==5).and.(fg2==5)) then
+            ! preserved-preserved
+            table_pert(fg1,fg2) = 5
+          else if (((fg1==1).and.(fg2==1)) .or. &
+            ((fg1==1).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==1))) then
+            ! singleA-singleA and singleA-preserved
+            table_pert(fg1,fg2) = 1
+          else if (((fg1==2).and.(fg2==2)) .or. &
+            ((fg1==2).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==2))) then
+            ! singleB-singleB and singleB-preserved
+            table_pert(fg1,fg2) = 2
+          else if (((fg1==3).and.(fg2==3)) .or. &
+            ((fg1==3).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==3)) .or. &
+            ((fg1==3).and.(fg2==1)) .or. &
+            ((fg1==1).and.(fg2==3))) then
+            ! dualA-dualA and dualA-other
+            table_pert(fg1,fg2) = 3
+          else if (((fg1==4).and.(fg2==4)) .or. &
+            ((fg1==4).and.(fg2==5)) .or. &
+            ((fg1==5).and.(fg2==4)) .or. &
+            ((fg1==4).and.(fg2==2)) .or. &
+            ((fg1==2).and.(fg2==4))) then
+            ! dualB-dualB and dualB-other
+            table_pert(fg1,fg2) = 4
+          end if
+        end if
+      end do
+    end do
+
+    cutoff       = enefunc%cutoffdist
+    cutoff2      = cutoff*cutoff
+    cutoff3      = cutoff2*cutoff
+    inv_cutoff3  = 1.0_dp/cutoff3
+
+    eswitch = 0.0_dp
+    vswitch = 0.0_dp
+    vlong   = inv_cutoff3/3.0_dp
+
+    if (enefunc%forcefield == ForcefieldAMBER ) then
+
+      factor_preserve = 2.0_dp*PI*lj6_tot_preserve
+      enefunc%dispersion_energy_preserve = -factor_preserve*vlong
+      enefunc%dispersion_virial_preserve = -2.0_dp*factor_preserve*vlong
+
+      factor_vanish = 2.0_dp*PI*lj6_tot_vanish
+      enefunc%dispersion_energy_vanish = -factor_vanish*vlong
+      enefunc%dispersion_virial_vanish = -2.0_dp*factor_vanish*vlong
+
+      factor_appear = 2.0_dp*PI*lj6_tot_appear
+      enefunc%dispersion_energy_appear = -factor_appear*vlong
+      enefunc%dispersion_virial_appear = -2.0_dp*factor_appear*vlong
+
+    else if (enefunc%forcefield == ForcefieldGROAMBER) then
+      !
+      ! remove exclusion
+      !
+!      lj6_ex = 0.0_dp
+      lj6_ex_preserve = 0.0_dp
+      lj6_ex_vanish = 0.0_dp
+      lj6_ex_appear = 0.0_dp
+!      nexpair = 0
+      nexpair_preserve = 0
+      nexpair_vanish = 0
+      nexpair_appear = 0
+      do i = 1, domain%num_cell_local
+        ! self
+        do j = 1, domain%num_atom(i)
+          iatmcls = atmcls(j,i)
+!          lj6_ex  = lj6_ex + enefunc%nonb_lj6(iatmcls,iatmcls)
+
+          ! FEP
+          fg1 = domain%fepgrp(j,i) 
+          pert_flag = table_pert(fg1,fg1)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nonb_lj6(iatmcls,iatmcls)
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nonb_lj6(iatmcls,iatmcls)
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nonb_lj6(iatmcls,iatmcls)
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+        ! bonds
+        do j = 1, enefunc%num_bond(i)
+          icel1 = id_g2l(1,bondlist(1,j,i))
+          i1    = id_g2l(2,bondlist(1,j,i))
+          icel2 = id_g2l(1,bondlist(2,j,i))
+          i2    = id_g2l(2,bondlist(2,j,i))
+!          lj6_ex= lj6_ex + enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i2,icel2))
+
+          ! FEP
+          fg1 = domain%fepgrp(i1,icel1) 
+          fg2 = domain%fepgrp(i2,icel2) 
+          pert_flag = table_pert(fg1,fg2)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i2,icel2))
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i2,icel2))
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i2,icel2))
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+        ! angles
+        do j = 1, enefunc%num_angle(i)
+          icel1 = id_g2l(1,anglelist(1,j,i))
+          i1    = id_g2l(2,anglelist(1,j,i))
+          icel3 = id_g2l(1,anglelist(3,j,i))
+          i3    = id_g2l(2,anglelist(3,j,i))
+!          lj6_ex= lj6_ex + enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i3,icel3))
+
+          ! FEP
+          fg1 = domain%fepgrp(i1,icel1) 
+          fg2 = domain%fepgrp(i3,icel3) 
+          pert_flag = table_pert(fg1,fg2)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i3,icel3))
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i3,icel3))
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i3,icel3))
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+        ! dihedral
+        do j = 1, enefunc%num_dihedral(i)
+          icel1 = id_g2l(1,dihelist(1,j,i))
+          i1    = id_g2l(2,dihelist(1,j,i))
+          icel4 = id_g2l(1,dihelist(4,j,i))
+          i4    = id_g2l(2,dihelist(4,j,i))
+!          lj6_ex= lj6_ex + enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+
+          ! FEP
+          fg1 = domain%fepgrp(i1,icel1) 
+          fg2 = domain%fepgrp(i4,icel4) 
+          pert_flag = table_pert(fg1,fg2)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+        ! RB dihedral
+        do j = 1, enefunc%num_rb_dihedral(i)
+          icel1 = id_g2l(1,rb_dihelist(1,j,i))
+          i1    = id_g2l(2,rb_dihelist(1,j,i))
+          icel4 = id_g2l(1,rb_dihelist(4,j,i))
+          i4    = id_g2l(2,rb_dihelist(4,j,i))
+!          lj6_ex= lj6_ex + enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+
+          ! FEP
+          fg1 = domain%fepgrp(i1,icel1) 
+          fg2 = domain%fepgrp(i4,icel4) 
+          pert_flag = table_pert(fg1,fg2)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+        ! improper
+        do j = 1, enefunc%num_improper(i)
+          icel1 = id_g2l(1,imprlist(1,j,i))
+          i1    = id_g2l(2,imprlist(1,j,i))
+          icel4 = id_g2l(1,imprlist(4,j,i))
+          i4    = id_g2l(2,imprlist(4,j,i))
+!          lj6_ex= lj6_ex + enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+
+          ! FEP
+          fg1 = domain%fepgrp(i1,icel1) 
+          fg2 = domain%fepgrp(i4,icel4) 
+          pert_flag = table_pert(fg1,fg2)
+          if (pert_flag == 5) then
+            lj6_ex_preserve = lj6_ex_preserve + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_preserve = nexpair_preserve + 1
+          else if ((pert_flag == 1) .or. (pert_flag == 3)) then
+            lj6_ex_vanish = lj6_ex_vanish + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_vanish = nexpair_vanish + 1
+          else if ((pert_flag == 2) .or. (pert_flag == 4)) then
+            lj6_ex_appear = lj6_ex_appear + &
+              enefunc%nb14_lj6(atmcls(i1,icel1),atmcls(i4,icel4))
+            nexpair_appear = nexpair_appear + 1
+          end if
+
+        end do
+
+!        nexpair = nexpair + domain%num_atom(i)        &
+!                          + enefunc%num_bond(i)        &
+!                          + enefunc%num_angle(i)       &
+!                          + enefunc%num_dihedral(i)    &
+!                          + enefunc%num_rb_dihedral(i) &
+!                          + enefunc%num_improper(i)
+      end do
+#ifdef HAVE_MPI_GENESIS
+!      call mpi_allreduce(mpi_in_place, num_all_atoms, 1, mpi_integer, &
+!                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, num_all_atoms_preserve, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, num_all_atoms_vanish, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, num_all_atoms_appear, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+
+!      call mpi_allreduce(mpi_in_place, nexpair, 1, mpi_integer, &
+!                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, nexpair_preserve, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, nexpair_vanish, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, nexpair_appear, 1, mpi_integer, &
+                         mpi_sum, mpi_comm_country, ierror)
+
+!      call mpi_allreduce(mpi_in_place, lj6_ex, 1, mpi_real8, &
+!                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, lj6_ex_preserve, 1, mpi_real8, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, lj6_ex_vanish, 1, mpi_real8, &
+                         mpi_sum, mpi_comm_country, ierror)
+      call mpi_allreduce(mpi_in_place, lj6_ex_appear, 1, mpi_real8, &
+                         mpi_sum, mpi_comm_country, ierror)
+#endif
+!      lj6_diff = (lj6_tot - lj6_ex)
+      lj6_diff_preserve = lj6_tot_preserve - lj6_ex_preserve
+      lj6_diff_vanish = lj6_tot_vanish - lj6_ex_vanish
+      lj6_diff_appear = lj6_tot_appear - lj6_ex_appear
+
+!      natom2 = num_all_atoms*num_all_atoms
+      natom_preserve2 = num_all_atoms_preserve*num_all_atoms_preserve
+      natom_vanish2 = num_all_atoms_preserve*num_all_atoms_vanish &
+        + num_all_atoms_vanish*num_all_atoms_vanish
+      natom_appear2 = num_all_atoms_preserve*num_all_atoms_appear &
+        + num_all_atoms_appear*num_all_atoms_appear
+!      rpair  = real(natom2/(natom2-nexpair),dp)
+      if (natom_preserve2 /= nexpair_preserve) then
+        rpair_preserve  &
+          = real(natom_preserve2/(natom_preserve2-nexpair_preserve),dp)
+      else
+        rpair_preserve = 0.0_dp
+      end if
+      if (natom_vanish2 /= nexpair_vanish) then
+        rpair_vanish  &
+          = real(natom_vanish2/(natom_vanish2-nexpair_vanish),dp)
+      else
+        rpair_vanish = 0.0_dp
+      end if
+      if (natom_appear2 /= nexpair_appear) then
+        rpair_appear  &
+          = real(natom_appear2/(natom_appear2-nexpair_appear),dp)
+      else
+        rpair_appear = 0.0_dp
+      end if
+
+!      factor       = 2.0_dp*PI*rpair*lj6_diff
+      factor_preserve = 2.0_dp*PI*rpair_preserve*lj6_diff_preserve
+      factor_vanish = 2.0_dp*PI*rpair_vanish*lj6_diff_vanish
+      factor_appear = 2.0_dp*PI*rpair_appear*lj6_diff_appear
+
+      switchdist   = enefunc%switchdist
+      diff_cs      = (cutoff - switchdist)
+
+      if (diff_cs > EPS) then
+
+        if (enefunc%vdw_shift) then
+          cutoff4      = cutoff3*cutoff
+          cutoff5      = cutoff4*cutoff
+          cutoff6      = cutoff5*cutoff
+          cutoff7      = cutoff6*cutoff
+          cutoff8      = cutoff7*cutoff
+          cutoff14     = cutoff7*cutoff7
+          inv_cutoff6  = inv_cutoff3*inv_cutoff3
+          inv_cutoff12 = inv_cutoff6*inv_cutoff6
+  
+          diff_cs2     = diff_cs*diff_cs
+          diff_cs3     = diff_cs2*diff_cs
+          diff_cs4     = diff_cs3*diff_cs
+  
+          switchdist2  = switchdist*switchdist
+          switchdist3  = switchdist2*switchdist
+          switchdist4  = switchdist3*switchdist
+          switchdist5  = switchdist4*switchdist
+          switchdist6  = switchdist5*switchdist
+          switchdist7  = switchdist6*switchdist
+          switchdist8  = switchdist7*switchdist
+  
+          ! LJ6
+          !
+          shift_a = -(10.0_dp*cutoff - 7.0_dp*switchdist)/(cutoff8*diff_cs2)
+          shift_b =  ( 9.0_dp*cutoff - 7.0_dp*switchdist)/(cutoff8*diff_cs3)
+  
+          shift_c = inv_cutoff6 - 2.0_dp * shift_a * diff_cs3  &
+                    - 1.5_dp * shift_b * diff_cs4
+  
+          eswitch = -2.0_dp * shift_a * ((1.0_dp/6.0_dp)*cutoff6                &
+                                        -(3.0_dp/5.0_dp)*cutoff5*switchdist     &
+                                        +(3.0_dp/4.0_dp)*cutoff4*switchdist2    &
+                                        -(1.0_dp/3.0_dp)*cutoff3*switchdist3    &
+                                        +(1.0_dp/6.0e1_dp)*switchdist6)         &
+                    -1.5_dp * shift_b * ((1.0_dp/7.0_dp)*cutoff7                &
+                                        -(2.0_dp/3.0_dp)*cutoff6*switchdist     &
+                                        +(6.0_dp/5.0_dp)*cutoff5*switchdist2    &
+                                        -                cutoff4*switchdist3    &
+                                        +(1.0_dp/3.0_dp)*cutoff3*switchdist4    &
+                                        -(1.0_dp/1.05e2_dp)*switchdist7)        &
+                    -(1.0_dp/3.0_dp) * shift_c * (cutoff3)
+    
+          ! LJ12
+          !
+          shift_a = -(16.0_dp*cutoff - 13.0_dp*switchdist)/(cutoff14*diff_cs2)
+          shift_b =  (15.0_dp*cutoff - 13.0_dp*switchdist)/(cutoff14*diff_cs3)
+          shift_c = inv_cutoff12 - 2.0_dp * shift_a * diff_cs3  &
+                    - 1.5_dp * shift_b * diff_cs4
+  
+ 
+          shift_a = -(10.0_dp*cutoff - 7.0_dp*switchdist)/(cutoff8*diff_cs2)
+          shift_b =  ( 9.0_dp*cutoff - 7.0_dp*switchdist)/(cutoff8*diff_cs3)
+ 
+          vswitch = shift_a * ( (1.0_dp/6.0_dp)*cutoff6                         &
+                               -(2.0_dp/5.0_dp)*cutoff5*switchdist              &
+                               +(1.0_dp/4.0_dp)*cutoff4*switchdist2             &
+                               -(1.0_dp/6.0e1_dp)*switchdist6)                  &
+                   +shift_b * ( (1.0_dp/7.0_dp)*cutoff7                         &
+                               -(1.0_dp/2.0_dp)*cutoff6*switchdist              &
+                               +(3.0_dp/5.0_dp)*cutoff5*switchdist2             &
+                               -(1.0_dp/4.0_dp)*cutoff4*switchdist3             &
+                               +(1.0_dp/1.4e2_dp)*switchdist7)
+!          enefunc%dispersion_energy = factor*(eswitch-vlong)
+!          enefunc%dispersion_virial = -2.0_dp*factor*(-vswitch+vlong)
+          enefunc%dispersion_energy_preserve = factor_preserve*(eswitch-vlong)
+          enefunc%dispersion_virial_preserve &
+            = -2.0_dp*factor_preserve*(-vswitch+vlong)
+          enefunc%dispersion_energy_vanish = factor_vanish*(eswitch-vlong)
+          enefunc%dispersion_virial_vanish &
+            = -2.0_dp*factor_vanish*(-vswitch+vlong)
+          enefunc%dispersion_energy_appear = factor_appear*(eswitch-vlong)
+          enefunc%dispersion_virial_appear &
+            = -2.0_dp*factor_appear*(-vswitch+vlong)
+
+        else
+
+          eswitch = enefunc%eswitch
+          vswitch = enefunc%vswitch
+!          enefunc%dispersion_energy = factor*(eswitch-vlong)
+!          enefunc%dispersion_virial = -factor*(vswitch+vlong)
+          enefunc%dispersion_energy_preserve = factor_preserve*(eswitch-vlong)
+          enefunc%dispersion_virial_preserve = -factor_preserve*(vswitch+vlong)
+          enefunc%dispersion_energy_vanish = factor_vanish*(eswitch-vlong)
+          enefunc%dispersion_virial_vanish = -factor_vanish*(vswitch+vlong)
+          enefunc%dispersion_energy_appear = factor_appear*(eswitch-vlong)
+          enefunc%dispersion_virial_appear = -factor_appear*(vswitch+vlong)
+
+        end if
+
+      else 
+
+!        enefunc%dispersion_energy = factor*(eswitch-vlong)
+!        enefunc%dispersion_virial = -2.0_dp*factor*(-vswitch+vlong)
+        enefunc%dispersion_energy_preserve = factor_preserve*(eswitch-vlong)
+        enefunc%dispersion_virial_preserve &
+          = -2.0_dp*factor_preserve*(-vswitch+vlong)
+        enefunc%dispersion_energy_vanish = factor_vanish*(eswitch-vlong)
+        enefunc%dispersion_virial_vanish &
+          = -2.0_dp*factor_vanish*(-vswitch+vlong)
+        enefunc%dispersion_energy_appear = factor_appear*(eswitch-vlong)
+        enefunc%dispersion_virial_appear &
+          = -2.0_dp*factor_appear*(-vswitch+vlong)
+
+      end if
+
+    else
+
+      call error_msg('Setup_Enefunc_DispCorr> This force field is not allowed in FEP')
+
+    end if
+
+  end subroutine setup_enefunc_dispcorr_fep
 
 end module sp_enefunc_mod

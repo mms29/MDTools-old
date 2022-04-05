@@ -1,0 +1,1 @@
+../../../spdyn/sp_dynamics_str.fpp

@@ -2,7 +2,8 @@
 !
 !  Module   fileio_mod
 !> @brief   utilities for file I/O
-!! @authors Yuji Sugita (YS), Norio Takase (NT), Donatas Surblys(DS)
+!! @authors Yuji Sugita (YS), Norio Takase (NT), Donatas Surblys(DS),
+!           Kiyoshi Yagi (KY)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -17,6 +18,7 @@ module fileio_mod
   use constants_mod
   use messages_mod
   use string_mod
+  use mpi_parallel_mod
 
   implicit none
   private
@@ -29,11 +31,15 @@ module fileio_mod
   integer, public, parameter :: IOFileInput         = 1
   integer, public, parameter :: IOFileOutputNew     = 2
   integer, public, parameter :: IOFileOutputReplace = 3
+  integer, public, parameter :: IOFileOutputAppend  = 4
 
   integer, public, parameter :: IOFileBigEndian     = 1
   integer, public, parameter :: IOFileLittleEndian  = 2
   integer, public, parameter :: IOFileNativeEndian  = 3
 
+  integer, public, parameter :: IOFileSequentialAccess = 1
+  integer, public, parameter :: IOFileDirectAccess     = 2
+  integer, public, parameter :: IOFileStreamAccess     = 3
 
   ! module variables
   logical, private           :: io_initial = .false.
@@ -67,7 +73,7 @@ contains
   !
   !  Subroutine    open_file
   !> @brief        open a text file
-  !! @authors      YS, NT, DS
+  !! @authors      YS, NT, DS, KY
   !! @param[out]   unit_no  : unit number of a text file
   !! @param[in]    filename : file name of a text file
   !! @param[in]    in_out   : flag for the file (IOFileInput/IOFileOutput)
@@ -95,6 +101,10 @@ contains
     else if (in_out == IOFileOutputReplace) then
       open(unit_no, file=filename, status='replace', form='formatted', err=904)
 
+    else if (in_out == IOFileOutputAppend) then
+      open(unit_no, file=filename, status='unknown', form='formatted', &
+                    access='append', err=904)
+
     endif
 
     return
@@ -117,29 +127,34 @@ contains
   !
   !  Subroutine    open_binary_file
   !> @brief        open a binary file
-  !! @authors      YS, NT, DS
+  !! @authors      YS, NT, DS, TM
   !! @param[out]   unit_no   : unit number of a file
   !! @param[in]    filename  : file name of a file
   !! @param[in]    in_out    : flag for the file (IOFileInput/IOFileOutput)
   !! @param[in]    in_endian : endian for the file input
+  !! @param[in]    in_access : access mode for file io
   !! @note         get_unit_no is used
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine open_binary_file(unit_no, filename, in_out, in_endian)
+  subroutine open_binary_file(unit_no, filename, in_out, in_endian, in_access)
 
     ! parameters
     character(20),           parameter     :: EndianStr(3) =           &
                                                     (/'big_endian   ', &
                                                       'little_endian', &
                                                       'native       '/)
+    character(20),           parameter     :: AccessStr(3) =           &
+                                                    (/'sequential   ', &
+                                                      'direct       ', &
+                                                      'stream       '/)
 
     ! formal arguments
     integer,                 intent(out)   :: unit_no
     character(*),            intent(in)    :: filename
     integer,                 intent(in)    :: in_out
     integer,       optional, intent(in)    :: in_endian
-
+    integer,       optional, intent(in)    :: in_access
 
     unit_no = get_unit_no()
     if (unit_no == InvalidUnitNo) goto 901
@@ -151,12 +166,30 @@ contains
         if (in_endian < 0 .or. size(EndianStr) < in_endian) &
           call error_msg('Open_Binary_File> ERROR : bad endian.')
 
-        open(unit_no,                 &
-             file    = filename,      &
-             status  = 'old',         &
-             form    = 'unformatted', &
-             err     = 902,           &
-             convert = EndianStr(in_endian))
+        if (present(in_access)) then
+
+          if (in_access < 0 .or. size(AccessStr) < in_access) &
+            call error_msg('Open_Binary_File> ERROR : bad access mode.')
+
+            open(unit_no,                        &
+                 file    = filename,             &
+                 status  = 'old',                &
+                 form    = 'unformatted',        &
+                 err     = 902,                  &
+                 access  = AccessStr(in_access), &
+                 convert = EndianStr(in_endian))
+
+        else
+
+          open(unit_no,                 &
+               file    = filename,      &
+               status  = 'old',         &
+               form    = 'unformatted', &
+               err     = 902,           &
+               convert = EndianStr(in_endian))
+
+        end if
+
       else
 
         open(unit_no,                 &
@@ -169,11 +202,43 @@ contains
 
     else if (in_out == IOFileOutputNew) then
 
-      open(unit_no,                &
-           file   = filename,      &
-           status = 'new',         &
-           form   = 'unformatted', &
-           err=903)
+      if (present(in_endian)) then
+
+        if (in_endian < 0 .or. size(EndianStr) < in_endian) &
+          call error_msg('Open_Binary_File> ERROR : bad endian.')
+
+        if (present(in_access)) then
+
+          if (in_access < 0 .or. size(AccessStr) < in_access) &
+            call error_msg('Open_Binary_File> ERROR : bad access mode.')
+
+            open(unit_no,                        &
+                 file    = filename,             &
+                 status  = 'new',                &
+                 form    = 'unformatted',        &
+                 err     = 903,                  &
+                 access  = AccessStr(in_access), &
+                 convert = EndianStr(in_endian))
+
+        else
+
+          open(unit_no,                 &
+               file    = filename,      &
+               status  = 'new',         &
+               form    = 'unformatted', &
+               err     = 903,           &
+               convert = EndianStr(in_endian))
+
+        end if
+
+      else
+        open(unit_no,                &
+             file   = filename,      &
+             status = 'new',         &
+             form   = 'unformatted', &
+             err=903)
+
+      end if
 
     else if (in_out == IOFileOutputReplace) then
 
@@ -182,7 +247,15 @@ contains
            status = 'replace',     &
            form   = 'unformatted', &
            err    = 904)
+      
+    else if (in_out == IOFileOutputAppend) then
 
+      open(unit_no,                &
+           file   = filename,      &
+           status = 'unknown',     &
+           form   = 'unformatted', &
+           position = 'append',      &
+           err    = 905)
     endif
 
     return
@@ -199,27 +272,35 @@ contains
 904 call on_unknown_io_error(unit_no, filename, "unformatted")
     return
 
+905 call on_unknown_io_error(unit_no, filename, "unformatted")
+    return
+    
   end subroutine open_binary_file
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine    close_file
   !> @brief        close a file
-  !! @authors      YS
+  !! @authors      YS, KY
   !! @param[in]    unit_no : unit number of a file
   !! @note         free_unit_no is used
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine close_file(unit_no)
+  subroutine close_file(unit_no, stat)
 
     ! formal arguments
     integer,                 intent(in)    :: unit_no
+    character(*), optional,  intent(in)    :: stat
 
     if((unit_no .eq. MsgOut) .or. (unit_no .eq. ErrOut) &
        .or. (unit_no .eq. 6) .or. (unit_no .eq. 0)) return
 
-    close(unit_no)
+    if (present(stat)) then
+      close(unit_no, status=trim(stat))
+    else
+      close(unit_no)
+    end if
     call free_unit_no(unit_no)
 
     return
@@ -374,7 +455,7 @@ contains
     character(*), optional, intent(in) :: suffix
 
     character(MaxLine)      :: backup_suffix
-    character(MaxLine)      :: backup_filename
+    character(MaxFilename)  :: backup_filename
     character(MaxLine)      :: num_str
 
     logical                 :: file_exists
@@ -507,7 +588,8 @@ contains
     integer,      intent(in) :: unit_no
     character(*), intent(in) :: filename, form
 
-    call error_msg('Open_file> Unknon error while opening ' // trim(filename))
+    write(MsgOut,'("Open_file> rank=",i0)') my_world_rank
+    call error_msg('Open_file> Unknown error while opening ' // trim(filename))
 
   end subroutine on_unknown_io_error
 

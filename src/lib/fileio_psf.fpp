@@ -102,6 +102,9 @@ module fileio_psf_mod
   integer,      public, parameter :: PsfTypeCHARMMEXT = 3
   integer,      public, parameter :: PsfTypeXPLOREXT  = 4
 
+  ! local variables
+  logical,                private :: vervose = .true.  
+
   ! subroutines
   public  :: input_psf
   public  :: output_psf
@@ -134,6 +137,7 @@ module fileio_psf_mod
   private :: write_psf_acce
   private :: write_psf_nb
   private :: write_psf_grp
+  private :: write_psf_lpair 
   private :: write_psf_cmap
   private :: get_digit
 
@@ -709,31 +713,34 @@ contains
       total_charge     = aint(total_charge) / RoundDown
       psf%total_charge = total_charge
 
-      write(MsgOut,'(A)') 'Read_Psf> Summary of Psffile'
-      if (psf%type == PsfTypeXPLOR) then
-        write(MsgOut,'(A)') '  psftype         =      xplor'
-      else
-        write(MsgOut,'(A)') '  psftype         =     charmm'
-      endif
+      if (vervose) then
+        write(MsgOut,'(A)') 'Read_Psf> Summary of Psffile'
+        if (psf%type == PsfTypeXPLOR) then
+          write(MsgOut,'(A)') '  psftype         =      xplor'
+        else
+          write(MsgOut,'(A)') '  psftype         =     charmm'
+        endif
 
-      write(MsgOut,'(A20,I10,A20,I10)')                   &
-           '  num_atoms       = ', psf%num_atoms,         &
-           '  num_bonds       = ', psf%num_bonds
-      write(MsgOut,'(A20,I10,A20,I10)')                   &
-           '  num_angles      = ', psf%num_angles,        &
-           '  num_dihedrals   = ', psf%num_dihedrals
-      write(MsgOut,'(A20,I10,A20,I10)')                   &
-           '  num_impropers   = ', psf%num_impropers,     &
-           '  num_cmap_terms  = ', psf%num_cross_terms
-      write(MsgOut,'(A20,I10,A20,I10)')                   &
-           '  num_HB_donors   = ', psf%num_HB_donors,     &
-           '  num_HB_acceptors= ', psf%num_HB_acceptors
-      write(MsgOut,'(A20,I10,A20,I10)')                   &
-           '  num_NB_exclusion= ', psf%num_NB_exclusions, &
-           '  num_groups      = ', psf%num_groups
-      write(MsgOut,'(A20,F10.3)')                         &
-           '  total_charge    = ', psf%total_charge
-      write(MsgOut,'(A)') ' '
+        write(MsgOut,'(A20,I10,A20,I10)')                   &
+             '  num_atoms       = ', psf%num_atoms,         &
+             '  num_bonds       = ', psf%num_bonds
+        write(MsgOut,'(A20,I10,A20,I10)')                   &
+             '  num_angles      = ', psf%num_angles,        &
+             '  num_dihedrals   = ', psf%num_dihedrals
+        write(MsgOut,'(A20,I10,A20,I10)')                   &
+             '  num_impropers   = ', psf%num_impropers,     &
+             '  num_cmap_terms  = ', psf%num_cross_terms
+        write(MsgOut,'(A20,I10,A20,I10)')                   &
+             '  num_HB_donors   = ', psf%num_HB_donors,     &
+             '  num_HB_acceptors= ', psf%num_HB_acceptors
+        write(MsgOut,'(A20,I10,A20,I10)')                   &
+             '  num_NB_exclusion= ', psf%num_NB_exclusions, &
+             '  num_groups      = ', psf%num_groups
+        write(MsgOut,'(A20,F10.3)')                         &
+             '  total_charge    = ', psf%total_charge
+        write(MsgOut,'(A)') ' '
+        vervose = .false.
+      end if
     end if
 
     return
@@ -881,18 +888,7 @@ contains
         insertion = .false.
         do j = 1, len_trim(cres_nb)
           if (cres_nb(j:j) >= 'A' .and. cres_nb(j:j) <= 'Z' .or.  &
-              cres_nb(j:j) >= 'a' .and. cres_nb(j:j) <= 'z') then 
-              insertion = .true.
-              print*, psf%atom_no(i)
-              print*, psf%segment_name(i)
-              print*, cres_nb
-              print*, psf%residue_name(i)
-              print*, psf%atom_name(i)
-              print*, psf%atom_cls_name(i)
-              print*, psf%atom_no(i)
-              print*, "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM3"
-          endif
-
+              cres_nb(j:j) >= 'a' .and. cres_nb(j:j) <= 'z') insertion = .true.
         end do
         if (insertion) &
            call error_msg('Read_Psf_Atom> Insertion code is not allowed. '//&
@@ -1360,6 +1356,11 @@ contains
     !
     call write_psf_grp(file, psf)
 
+    !  write lpair section
+    !
+    call write_psf_lpair(file, psf)
+    
+
     !  write cmap section
     !
     call write_psf_cmap(file, psf)
@@ -1408,7 +1409,7 @@ contains
 
     end select
 
-    write(file,'(/I8,1X,"!NTITLE")') 1
+    write(file,'(/I10,1X,"!NTITLE")') 1
 
     call date_and_time(date, time, zone, date_time)
     write(file,'("*  DATE:",i6,"/",i0"/",i2,i7,":",i2.2,":",i2.2)') &
@@ -2040,6 +2041,50 @@ contains
     return
 
   end subroutine write_psf_grp
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    write_psf_lpair
+  !> @brief        write lone pair information to PSF file
+  !! @authors      Shingo Ito (SI)
+  !! @param[in]    file : unit number of PSF file
+  !! @param[in]    psf  : structureo of PSF information
+  !! @remark       It only print out "0 0" in PSF file.
+  !! @remark       Current GENESIS does not consider writing polarizable PSF.
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine write_psf_lpair(file, psf)
+
+    ! formal arguments
+    integer,                 intent(in)    :: file
+    type(s_psf),             intent(in)    :: psf
+
+    ! local variables
+    integer                  :: i, numlp, numlph, natom
+
+
+    numlp  = 0
+    numlph = 0
+    natom  = 0
+
+    select case (psf%type)
+    case (PsfTypeCHARMM, PsfTypeXPLOR)
+      ! write the number of lone pair
+      !
+      write(file, '(/I'//trim(get_digit(numlp))//', &
+                      I'//trim(get_digit(numlph))//', &
+                      1X,"!NUMLP NUMLPH")') numlp, numlph
+
+    case (PsfTypeCHARMMEXT, PsfTypeXPLOREXT)
+      ! write the number of lone pair
+      !
+      write(file, '(/2I10,1X,"!NUMLP NUMLPH")') numlp, numlph
+    end select
+ 
+    return
+
+  end subroutine write_psf_lpair
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

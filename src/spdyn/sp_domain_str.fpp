@@ -145,6 +145,50 @@ module sp_domain_str_mod
     integer,          allocatable :: ptl_exit(:)
     integer,          allocatable :: ptl_exit_index(:,:)
 
+    ! FEP
+    logical                       :: fep_use = .false. ! FEP flag
+    integer                       :: num_atom_single_all
+    real(wp)                      :: lambljA   ! lambda for LJ of part A
+    real(wp)                      :: lambljB   ! lambda for LJ of part B
+    real(wp)                      :: lambelA   ! lambda for elec of part A
+    real(wp)                      :: lambelB   ! lambda for elec of part B
+    real(wp)                      :: lambbondA ! lambda for bond of single A
+    real(wp)                      :: lambbondB ! lambda for bond of single B
+    real(wp)                      :: lambrest  ! lambda for restraint
+    ! number of preserved atoms
+    integer,          allocatable :: num_atom_preserve(:)
+    ! number of preserved atoms and appearing atoms
+    integer,          allocatable :: num_atom_appear_gr(:)
+    ! number of preserved atoms and vanishing atoms
+    integer,          allocatable :: num_atom_vanish_gr(:)
+    ! list of preserved atoms for PME calculations
+    integer,          allocatable :: pmelist_preserve(:,:)
+    ! list of preserved atoms and appearing atoms for PME calculations
+    integer,          allocatable :: pmelist_appear_gr(:,:)
+    ! list of preserved atoms and vanishing atoms for PME calculations
+    integer,          allocatable :: pmelist_vanish_gr(:,:)
+    ! number of single region. These are used to match coordinates
+    ! and velocities of single A and single B.
+    integer,          allocatable :: num_atom_singleA(:)
+    integer,          allocatable :: num_atom_singleB(:)
+    ! id_single?(i, j, 1) is the atom index in cell j in single region.
+    ! id_single?(i, j, 2) is the global atom index in single region.
+    ! id_single?(i, j, 3) is the sorted index in cell j in single region.
+    ! i is the index from 1 to num_atom_singleA(j).
+    ! j is the cell index.
+    integer,          allocatable :: id_singleA(:,:,:)
+    integer,          allocatable :: id_singleB(:,:,:)
+    ! temporary for forces from restraints 
+    real(wp),         allocatable :: f_fep_omp(:,:,:,:)
+    ! fepgrp represents atom group in FEP calculation.
+    ! fepgrp has a value of 1, 2, 3, 4, or 5, which represents
+    ! singleA, singleB, dualA, dualB, and preserved, respectively.
+#ifndef PGICUDA
+    integer,          allocatable :: fepgrp(:,:)
+#else
+    integer,   allocatable,pinned :: fepgrp(:,:)
+#endif
+
   end type s_domain
 
   ! parameters for allocatable variables
@@ -161,6 +205,8 @@ module sp_domain_str_mod
   integer,      public, parameter :: DomainPtlMove          = 11
   integer,      public, parameter :: DomainWaterMove        = 12
   integer,      public, parameter :: DomainUnivCellPairList = 13
+  integer,      public, parameter :: DomainDynvar_FEP       = 14
+  integer,      public, parameter :: DomainDynvar_Atom_FEP  = 15
 
   ! variables for maximum numbers in one cell
   integer,      public            :: MaxAtom                = 150
@@ -468,6 +514,54 @@ contains
       domain%num_water  (1:var_size) = 0
       domain%random     (1:var_size) = 0.0_wp
 
+    case (DomainDynvar_FEP)
+
+      if (allocated(domain%num_atom)) then
+        if (size(domain%num_atom) /= var_size) then
+#ifdef USE_GPU
+          call unset_pinned_memory(domain%num_atom)
+#endif
+          deallocate(domain%num_atom,          &
+                     domain%num_atom_preserve,  &
+                     domain%num_atom_singleA,   &
+                     domain%num_atom_singleB,   &
+                     domain%num_atom_appear_gr, &
+                     domain%num_atom_vanish_gr, &
+                     domain%num_atom_t0,       &
+                     domain%num_solute,        &
+                     domain%num_water,         &
+                     domain%random,            &
+                     stat = dealloc_stat)
+        end if
+      end if
+
+      if (.not. allocated(domain%num_atom)) then
+          allocate(domain%num_atom(var_size),    &
+                   domain%num_atom_preserve(var_size),    &
+                   domain%num_atom_singleA(var_size),     &
+                   domain%num_atom_singleB(var_size),     &
+                   domain%num_atom_appear_gr(var_size),   &
+                   domain%num_atom_vanish_gr(var_size),   &
+                   domain%num_atom_t0(var_size), &
+                   domain%num_solute(var_size),  &
+                   domain%num_water(var_size),   &
+                   domain%random(var_size),      &
+                   stat = alloc_stat)
+#ifdef USE_GPU
+        call set_pinned_memory(domain%num_atom, var_size*4)
+#endif
+      end if
+      domain%num_atom   (1:var_size) = 0
+      domain%num_atom_preserve   (1:var_size) = 0
+      domain%num_atom_singleA    (1:var_size) = 0
+      domain%num_atom_singleB    (1:var_size) = 0
+      domain%num_atom_appear_gr  (1:var_size) = 0
+      domain%num_atom_vanish_gr  (1:var_size) = 0
+      domain%num_atom_t0(1:var_size) = 0
+      domain%num_solute (1:var_size) = 0
+      domain%num_water  (1:var_size) = 0
+      domain%random     (1:var_size) = 0.0_wp
+
     case (DomainDynvar_Atom)
 
       if (allocated(domain%id_l2g)) then
@@ -564,6 +658,125 @@ contains
       domain%charge       (1:MaxAtom, 1:var_size)        = 0.0_wp
       domain%mass         (1:MaxAtom, 1:var_size)        = 0.0_wp
 
+    case (DomainDynvar_Atom_FEP)
+
+      if (allocated(domain%id_l2g)) then
+        if (size(domain%id_l2g(MaxAtom,:)) /= var_size) then
+#ifdef USE_GPU
+          call unset_pinned_memory(domain%atom_cls_no)
+          call unset_pinned_memory(domain%coord)
+          call unset_pinned_memory(domain%trans_vec)
+          call unset_pinned_memory(domain%translated)
+          call unset_pinned_memory(domain%force_omp)
+          call unset_pinned_memory(domain%force_pbc)
+          call unset_pinned_memory(domain%charge)
+          call unset_pinned_memory(domain%fepgrp)
+#endif
+          deallocate(domain%id_l2g,        &
+                     domain%solute_list,   &
+                     domain%water_list,    &
+                     domain%atom_cls_no,   &
+                     domain%coord,         &
+                     domain%coord_ref,     &
+                     domain%coord_old,     &
+                     domain%velocity,      &
+                     domain%velocity_ref,  &
+                     domain%velocity_full, &
+                     domain%trans_vec,     &
+                     domain%translated,    &
+                     domain%force,         &
+                     domain%force_short,   &
+                     domain%force_long,    &
+                     domain%force_omp,     &
+                     domain%force_pbc,     &
+                     domain%charge,        &
+                     domain%mass,          &
+                     domain%pmelist_preserve,    &
+                     domain%pmelist_appear_gr,   &
+                     domain%pmelist_vanish_gr,   &
+                     domain%id_singleA,     &
+                     domain%id_singleB,     &
+                     domain%fepgrp,             &
+                     domain%f_fep_omp,      &
+                     stat = dealloc_stat)
+        end if
+      end if
+
+      if (.not. allocated(domain%id_l2g)) then
+        allocate(domain%id_l2g       (MaxAtom, var_size),     &
+                 domain%solute_list  (MaxAtom, var_size),     &
+                 domain%water_list   (var_size1, MaxWater, var_size), &
+                 domain%atom_cls_no  (MaxAtom, var_size),     &
+                 domain%coord        (3, MaxAtom, var_size),  &
+                 domain%coord_ref    (3, MaxAtom, var_size),  &
+                 domain%coord_old    (3, MaxAtom, var_size),  &
+                 domain%velocity     (3, MaxAtom, var_size),  &
+                 domain%velocity_ref (3, MaxAtom, var_size),  &
+                 domain%velocity_full(3, MaxAtom, var_size),  &
+                 domain%trans_vec    (3, MaxAtom, var_size),  &
+                 domain%translated   (3, MaxAtom, var_size),  &
+                 domain%force        (3, MaxAtom, var_size),  &
+                 domain%force_short  (3, MaxAtom, var_size),  &
+                 domain%force_long   (3, MaxAtom, var_size),  &
+                 domain%force_omp    (3, MaxAtom, var_size, nthread), &
+                 domain%force_pbc    (3, MaxAtom, var_size, nthread), &
+                 domain%charge       (MaxAtom, var_size),     &
+                 domain%mass         (MaxAtom, var_size),     &
+                 domain%pmelist_preserve  (MaxAtom, var_size),  &
+                 domain%pmelist_appear_gr (MaxAtom, var_size),  &
+                 domain%pmelist_vanish_gr (MaxAtom, var_size),  &
+                 domain%id_singleA     (MaxAtom, var_size, 3),  &
+                 domain%id_singleB     (MaxAtom, var_size, 3),  &
+                 domain%fepgrp            (MaxAtom, var_size),  &
+                 domain%f_fep_omp(3, MaxAtom, var_size, nthread), &
+                 stat = alloc_stat)
+#ifdef USE_GPU
+        call set_pinned_memory(domain%atom_cls_no, MaxAtom*var_size*4)
+        call set_pinned_memory(domain%coord, 3*MaxAtom*var_size*8)
+        if (wp == sp) then
+          call set_pinned_memory(domain%trans_vec, 3*MaxAtom*var_size*4)
+          call set_pinned_memory(domain%translated,3*MaxAtom*var_size*4)
+          call set_pinned_memory(domain%force_omp, 3*MaxAtom*var_size*nthread*4)
+          call set_pinned_memory(domain%force_pbc, 3*MaxAtom*var_size*nthread*4)
+          call set_pinned_memory(domain%charge,      MaxAtom*var_size*4)
+        else
+          call set_pinned_memory(domain%trans_vec, 3*MaxAtom*var_size*8)
+          call set_pinned_memory(domain%translated,3*MaxAtom*var_size*8)
+          call set_pinned_memory(domain%force_omp, 3*MaxAtom*var_size*nthread*8)
+          call set_pinned_memory(domain%force_pbc, 3*MaxAtom*var_size*nthread*8)
+          call set_pinned_memory(domain%charge,      MaxAtom*var_size*8)
+        end if
+        call set_pinned_memory(domain%fepgrp, MaxAtom*var_size*4)
+#endif
+      end if
+
+      domain%id_l2g       (1:MaxAtom, 1:var_size)        = 0
+      domain%solute_list  (1:MaxAtom, 1:var_size)        = 0
+      domain%water_list   (1:var_size1, 1:MaxWater, 1:var_size ) = 0
+      domain%atom_cls_no  (1:MaxAtom, 1:var_size)        = 0
+      domain%coord        (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%coord_ref    (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%coord_old    (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%velocity     (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%velocity_ref (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%velocity_full(1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%trans_vec    (1:3, 1:MaxAtom, 1:var_size)   = 0.0_wp
+      domain%translated   (1:3, 1:MaxAtom, 1:var_size)   = 0.0_wp
+      domain%force        (1:3, 1:MaxAtom, 1:var_size)   = 0.0_dp
+      domain%force_short  (1:3, 1:MaxAtom, 1:var_size)   = 0.0_wp
+      domain%force_long   (1:3, 1:MaxAtom, 1:var_size)   = 0.0_wp
+      domain%force_omp    (1:3, 1:MaxAtom, 1:var_size, 1:nthread) = 0.0_wp
+      domain%force_pbc    (1:3, 1:MaxAtom, 1:var_size, 1:nthread) = 0.0_wp
+      domain%charge       (1:MaxAtom, 1:var_size)        = 0.0_wp
+      domain%mass         (1:MaxAtom, 1:var_size)        = 0.0_wp
+      domain%pmelist_preserve  (1:MaxAtom, 1:var_size)   = 0
+      domain%pmelist_appear_gr (1:MaxAtom, 1:var_size)   = 0
+      domain%pmelist_vanish_gr (1:MaxAtom, 1:var_size)   = 0
+      domain%id_singleA   (1:MaxAtom, 1:var_size, 1:3)   = 0
+      domain%id_singleB   (1:MaxAtom, 1:var_size, 1:3)   = 0
+      domain%fepgrp            (1:MaxAtom, 1:var_size)   = 5
+      domain%f_fep_omp(1:3, 1:MaxAtom, 1:var_size, 1:nthread) = 0.0_wp
+
     case (DomainGlobal)
 
       if (allocated(domain%id_g2l)) then
@@ -618,16 +831,16 @@ contains
       if (.not. allocated(domain%water%move)) &
         allocate(domain%water%move        (var_size),                            &
                  domain%water%stay        (var_size1),                           &
-                 domain%water%move_integer(var_size2, MaxWaterMove, var_size),   &
-                 domain%water%stay_integer(var_size2, MaxWater, var_size1),      &
+                 domain%water%move_integer(2*var_size2, MaxWaterMove, var_size),   &
+                 domain%water%stay_integer(3*var_size2, MaxWater, var_size1),      &
                  domain%water%move_real   (6*var_size2, MaxWaterMove, var_size), &
                  domain%water%stay_real   (6*var_size2, MaxWater, var_size1),    &
                  stat = alloc_stat)
 
       domain%water%move        (1:var_size)                       = 0
       domain%water%stay        (1:var_size1)                      = 0
-      domain%water%move_integer(1:var_size2, 1:MaxWaterMove, 1:var_size)  = 0
-      domain%water%stay_integer(1:var_size2, 1:MaxWater, 1:var_size1)     = 0
+      domain%water%move_integer(1:2*var_size2, 1:MaxWaterMove, 1:var_size)  = 0
+      domain%water%stay_integer(1:2*var_size2, 1:MaxWater, 1:var_size1)     = 0
       domain%water%move_real   (1:6*var_size2, 1:MaxWaterMove, 1:var_size) = 0.0_dp
       domain%water%stay_real   (1:6*var_size2, 1:MaxWater, 1:var_size1)    = 0.0_dp
 
@@ -776,6 +989,59 @@ contains
                    domain%charge,        &
                    domain%mass,          &
                    domain%random,        &
+                   stat = dealloc_stat)
+      end if
+
+    case (DomainDynvar_FEP)
+
+      if (allocated(domain%coord)) then
+#ifdef USE_GPU
+        call unset_pinned_memory(domain%num_atom)
+        call unset_pinned_memory(domain%atom_cls_no)
+        call unset_pinned_memory(domain%coord)
+        call unset_pinned_memory(domain%trans_vec)
+        call unset_pinned_memory(domain%translated)
+        call unset_pinned_memory(domain%force_omp)
+        call unset_pinned_memory(domain%force_pbc)
+        call unset_pinned_memory(domain%charge)
+        call unset_pinned_memory(domain%fepgrp)
+#endif
+        deallocate(domain%id_l2g,                  &
+                   domain%num_atom,                &
+                   domain%num_atom_preserve,       &
+                   domain%num_atom_singleA,        &
+                   domain%num_atom_singleB,        &
+                   domain%num_atom_appear_gr,      &
+                   domain%num_atom_vanish_gr,      &
+                   domain%pmelist_preserve,        &
+                   domain%pmelist_appear_gr,       &
+                   domain%pmelist_vanish_gr,       &
+                   domain%id_singleA,              &
+                   domain%id_singleB,              &
+                   domain%num_atom_t0,             &
+                   domain%num_solute,              &
+                   domain%num_water,               &
+                   domain%solute_list,             &
+                   domain%water_list,              &
+                   domain%atom_cls_no,             &
+                   domain%coord,                   &
+                   domain%coord_ref,               &
+                   domain%coord_old,               &
+                   domain%velocity,                &
+                   domain%velocity_ref,            &
+                   domain%velocity_full,           &
+                   domain%trans_vec,               &
+                   domain%translated,              &
+                   domain%force,                   &
+                   domain%force_short,             &
+                   domain%force_long,              &
+                   domain%force_omp,               &
+                   domain%force_pbc,               &
+                   domain%charge,                  &
+                   domain%mass,                    &
+                   domain%random,                  &
+                   domain%fepgrp,                  &
+                   domain%f_fep_omp,               &
                    stat = dealloc_stat)
       end if
 

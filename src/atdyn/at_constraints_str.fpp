@@ -2,7 +2,7 @@
 !
 !  Module   at_constraints_str_mod
 !> @brief   structure of constraints information
-!! @authors Takaharu Mori (TM)
+!! @authors Takaharu Mori (TM), Kiyoshi Yagi (KY)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -58,12 +58,17 @@ module at_constraints_str_mod
     real(wp)                      :: water_massH
     real(wp),         allocatable :: virial_tmp(:,:,:)
 
+    ! for fixed atoms
+    integer                       :: num_fixatm
+    logical, allocatable          :: fixatm(:)
+
   end type s_constraints
 
   ! parameters for allocatable variables
   integer,      public, parameter :: ConstraintsShake  = 1
   integer,      public, parameter :: ConstraintsLincs  = 2
   integer,      public, parameter :: ConstraintsSettle = 3
+  integer,      public, parameter :: ConstraintsFixatm = 4
 
   ! parameters
   integer,      public, parameter :: ConstraintAtomName  = 1
@@ -85,7 +90,7 @@ contains
   !
   !  Subroutine    init_constraints
   !> @brief        initialize constraints information
-  !! @authors      TM
+  !! @authors      TM, KY
   !! @param[out]   constraints : constraints information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -111,6 +116,7 @@ contains
     constraints%water_rOH       = 0.0_wp
     constraints%water_massO     = 0.0_wp
     constraints%water_massH     = 0.0_wp
+    constraints%num_fixatm      = 0
 
     return
 
@@ -120,7 +126,7 @@ contains
   !
   !  Subroutine    alloc_constraints
   !> @brief        allocate constraints information
-  !! @authors      TM
+  !! @authors      TM, KY
   !! @param[inout] constraints : constraints information
   !! @param[in]    variable    : selected variable
   !! @param[in]    var_size    : size of the selected variable
@@ -225,6 +231,19 @@ contains
 
       constraints%water_list(1:3,1:var_size1) = 0
 
+    case (ConstraintsFixatm)
+
+      if (allocated(constraints%fixatm)) then
+        if (size(constraints%fixatm(:)) == var_size1) return
+        deallocate(constraints%fixatm, &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(constraints%fixatm(var_size1), &
+               stat = alloc_stat)
+
+      constraints%fixatm(1:var_size1) = .false.
+
     case default
 
       call error_msg('Alloc_Constraints> bad variable')
@@ -243,7 +262,7 @@ contains
   !
   !  Subroutine    dealloc_constraints
   !> @brief        deallocate constraints information
-  !! @authors      TM
+  !! @authors      TM, KY
   !! @param[inout] constraints : constraints information
   !! @param[in]    variable    : selected variable
   !
@@ -296,6 +315,13 @@ contains
                     stat = dealloc_stat)
       end if
 
+    case (ConstraintsFixatm)
+
+      if (allocated(constraints%fixatm)) then
+        deallocate (constraints%fixatm, &
+                    stat = dealloc_stat)
+      end if
+
     case default
       call error_msg('Dealloc_Constraints> bad variable')
 
@@ -326,6 +352,7 @@ contains
     call dealloc_constraints(constraints, ConstraintsShake)
     call dealloc_constraints(constraints, ConstraintsLincs)
     call dealloc_constraints(constraints, ConstraintsSettle)
+    call dealloc_constraints(constraints, ConstraintsFixatm)
 
     return
 

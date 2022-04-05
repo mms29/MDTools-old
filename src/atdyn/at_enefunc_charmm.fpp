@@ -28,6 +28,7 @@ module at_enefunc_charmm_mod
   use nbond_list_mod
   use dihedral_libs_mod
   use molecules_str_mod
+  use fileio_table_mod
   use fileio_par_mod
   use fileio_gpr_mod
   use fileio_eef1_mod
@@ -64,20 +65,22 @@ contains
   !! @param[in]    ene_info   : ENERGY section control parameters information
   !! @param[in]    boundary   : boundary conditions information
   !! @param[in]    par        : CHARMM PAR information
+  !! @param[in]    table      : lookup table information
   !! @param[in]    molecule   : molecule information
   !! @param[in]    restraints : restraints information
   !! @param[inout] enefunc    : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine define_enefunc_charmm(ene_info, boundary, par, eef1, molecule, &
-                                   restraints, enefunc)
+  subroutine define_enefunc_charmm(ene_info, boundary, par, eelf1, table, &
+                                   molecule, restraints, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info 
     type(s_boundary),        intent(in)    :: boundary
     type(s_par),             intent(in)    :: par
-    type(s_eef1),            intent(in)    :: eef1
+    type(s_eef1),            intent(in)    :: eelf1
+    type(s_table),           intent(in)    :: table
     type(s_molecule),        intent(in)    :: molecule
     type(s_restraints),      intent(in)    :: restraints
     type(s_enefunc),         intent(inout) :: enefunc
@@ -114,7 +117,7 @@ contains
 
     ! lookup table
     !
-    call setup_enefunc_table(ene_info, molecule, enefunc)
+    call setup_enefunc_table(ene_info, table, molecule, enefunc)
 
     ! PME
     !
@@ -122,8 +125,8 @@ contains
 
     ! Implicit solvent
     !
-    call setup_enefunc_implicit_solvent(ene_info, boundary, par, &
-                                        eef1, molecule, enefunc)
+    call setup_enefunc_implicit_solvent_charmm(ene_info, boundary, &
+                                    molecule, par, eelf1, enefunc)
 
     ! restraints
     !
@@ -1168,6 +1171,15 @@ contains
       enefunc%nb14_qq_scale_c19 = 0.4_wp
     endif
 
+    if (enefunc%forcefield == ForcefieldKBGO) then
+      call alloc_enefunc(enefunc, EneFuncNonbGO, nonb_p)
+      do i = 1, nonb_p
+        enefunc%nonb_eps(i) = par%nonb_eps(i)
+        enefunc%nonb_rmin(i) = par%nonb_rmin(i)
+      end do
+
+    endif
+
 
     ! overwrite lennard-jones parameters by NBFIX parameters
     !
@@ -1235,6 +1247,11 @@ contains
       else
         call count_nonb_excl_par(molecule, enefunc)
       endif
+    endif
+
+    if (ene_info%num_basins > 1) then
+        call error_msg( &
+          'Setup_Enefunc_Nonb_Par> multibasin is not allowed in CHARMM-format')
     endif
 
     return

@@ -4,6 +4,7 @@
 !> @brief   structure of pairlist information
 !! @authors Yuji Sugita (YS), Takashi Imai (TI), Jaewoon Jung (JJ), 
 !!          Takaharu Mori (TM), Motoshi Kamiya (MK), Kiyoshi Yagi (KY)
+!!          Cheng Tan (CT)
 ! 
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -61,6 +62,99 @@ module at_pairlist_str_mod
     integer,          allocatable :: num_all(:)
     integer,          allocatable :: num_all_calc(:,:)
     integer,          allocatable :: all_calc_list(:,:)
+    ! for CG models: AICG2P + 3SPN.2C
+    logical                       :: allocate_nobc_cg
+    logical                       :: allocate_nobc_cg_pwmcos
+    logical                       :: allocate_nobc_cg_pwmcosns
+    logical                       :: allocate_nobc_cg_IDR_HPS
+    logical                       :: allocate_nobc_cg_IDR_KH
+    ! 
+    integer,          allocatable :: cg_DNA_basepair_list(:,:)
+    integer,          allocatable :: cg_DNA_exv_list(:,:)
+    integer,          allocatable :: cg_ele_list(:,:)
+    real(wp),         allocatable :: cg_ele_scaling_list(:,:)
+    integer,          allocatable :: cg_exv_list(:,:)
+    integer,          allocatable :: cg_pwmcos_list(:,:)
+    integer,          allocatable :: cg_pwmcosns_list(:,:)
+    integer,          allocatable :: cg_IDR_HPS_list(:,:)
+    integer,          allocatable :: cg_IDR_KH_list(:,:)
+    integer,          allocatable :: cg_KH_list(:,:)
+    integer,          allocatable :: cg_KH_model_list(:,:)
+    ! 
+    integer,          allocatable :: num_cg_DNA_basepair_calc(:,:)
+    integer,          allocatable :: num_cg_DNA_exv_calc(:,:)
+    integer,          allocatable :: num_cg_ele_calc(:,:)
+    integer,          allocatable :: num_cg_exv_calc(:,:)
+    integer,          allocatable :: num_cg_pwmcos_calc(:,:)
+    integer,          allocatable :: num_cg_pwmcosns_calc(:,:)
+    integer,          allocatable :: num_cg_IDR_HPS_calc(:,:)
+    integer,          allocatable :: num_cg_IDR_KH_calc(:,:)
+    integer,          allocatable :: num_cg_KH_calc(:,:)
+    ! 
+    integer,          allocatable :: num_cg_DNA_basepair_pre(:)
+    integer,          allocatable :: num_cg_DNA_exv_pre(:)
+    integer,          allocatable :: num_cg_ele_pre(:)
+    integer,          allocatable :: num_cg_exv_pre(:)
+    integer,          allocatable :: num_cg_pwmcos_pre(:)
+    integer,          allocatable :: num_cg_pwmcosns_pre(:)
+    integer,          allocatable :: num_cg_IDR_HPS_pre(:)
+    integer,          allocatable :: num_cg_IDR_KH_pre(:)
+    integer,          allocatable :: num_cg_KH_pre(:)
+    ! 
+    integer,          allocatable :: num_cg_DNA_basepair(:)
+    integer,          allocatable :: num_cg_DNA_exv(:)
+    integer,          allocatable :: num_cg_ele(:)
+    integer,          allocatable :: num_cg_exv(:)
+    integer,          allocatable :: num_cg_pwmcos(:)
+    integer,          allocatable :: num_cg_pwmcosns(:)
+    integer,          allocatable :: num_cg_IDR_HPS(:)
+    integer,          allocatable :: num_cg_IDR_KH(:)
+    integer,          allocatable :: num_cg_KH(:)
+    ! 
+    integer                       :: num_cg_DNA_basepair_max
+    integer                       :: num_cg_DNA_exv_max
+    integer                       :: num_cg_ele_max
+    integer                       :: num_cg_exv_max
+    integer                       :: num_cg_pwmcos_max
+    integer                       :: num_cg_pwmcosns_max
+    integer                       :: num_cg_IDR_HPS_max
+    integer                       :: num_cg_IDR_KH_max
+    integer                       :: num_cg_KH_max
+    ! 
+    integer,          allocatable :: cell_index_cg_all(:)
+    integer,          allocatable :: cell_linked_list_cg_all(:)
+    integer,          allocatable :: cell_linked_list_cg_DNA(:)
+    integer,          allocatable :: cell_linked_list_cg_DNA_phos(:)
+    integer,          allocatable :: cell_linked_list_cg_DNA_base(:)
+    integer,          allocatable :: cell_linked_list_cg_IDR_HPS(:)
+    integer,          allocatable :: cell_linked_list_cg_IDR_KH(:)
+    integer,          allocatable :: cell_linked_list_cg_KH(:)
+    integer,          allocatable :: cell_linked_list_cg_charged(:)
+    integer,          allocatable :: cell_head_index_cg_all(:)
+    integer,          allocatable :: cell_head_index_cg_DNA(:)
+    integer,          allocatable :: cell_head_index_cg_DNA_phos(:)
+    integer,          allocatable :: cell_head_index_cg_DNA_base(:)
+    integer,          allocatable :: cell_head_index_cg_IDR_HPS(:)
+    integer,          allocatable :: cell_head_index_cg_IDR_KH(:)
+    integer,          allocatable :: cell_head_index_cg_KH(:)
+    integer,          allocatable :: cell_head_index_cg_charged(:)
+    !
+    logical                       :: allocate_pbc_cg_exv
+    logical                       :: allocate_pbc_cg_ele
+    logical                       :: allocate_pbc_cg_DNA_bp
+    logical                       :: allocate_pbc_cg_DNA_exv
+    logical                       :: allocate_pbc_cg_pwmcos
+    logical                       :: allocate_pbc_cg_pwmcosns
+    logical                       :: allocate_pbc_cg_IDR_HPS
+    logical                       :: allocate_pbc_cg_IDR_KH
+    logical                       :: allocate_pbc_cg_KH
+
+    ! 
+    real(wp)                      :: cg_pairlistdist_ele
+    real(wp)                      :: cg_pairlistdist_126
+    real(wp)                      :: cg_pairlistdist_PWMcos
+    real(wp)                      :: cg_pairlistdist_DNAbp
+    real(wp)                      :: cg_pairlistdist_exv
   end type s_pairlist
 
   ! parameters for allocatable variables
@@ -76,6 +170,41 @@ module at_pairlist_str_mod
   integer,      public, parameter :: PairListAtomNobcGbsa    = 10
   integer,      public, parameter :: PairListIntNobcGbsa     = 11
   integer,      public, parameter :: PairListNthreadsGbsa    = 12
+  integer,      public, parameter :: PairListAtomNobcCG      = 13
+  integer,      public, parameter :: PairListNthreadsCG      = 14
+  integer,      public, parameter :: PairListCGDNABP         = 15
+  integer,      public, parameter :: PairListCGDNAexv        = 16
+  integer,      public, parameter :: PairListCGele           = 17
+  integer,      public, parameter :: PairListCGexv           = 18
+  integer,      public, parameter :: PairListCGPWMcos        = 19
+  integer,      public, parameter :: PairListCGPWMcosns      = 20
+  integer,      public, parameter :: PairListCGIDRHPS        = 21
+  integer,      public, parameter :: PairListCGIDRKH         = 22
+  integer,      public, parameter :: PairListCGKH            = 23
+  integer,      public, parameter :: PairListNthCGPWMcos     = 24
+  integer,      public, parameter :: PairListNthCGPWMcosns   = 25
+  ! 
+  integer,      public, parameter :: PairListNthreadsPbcCG   = 30
+  integer,      public, parameter :: PairListAtomPbcCGexv    = 31
+  integer,      public, parameter :: PairListAtomPbcCGele    = 32
+  integer,      public, parameter :: PairListAtomPbcCGDNAexv = 33
+  integer,      public, parameter :: PairListAtomPbcCGDNAbp  = 34
+  integer,      public, parameter :: PairListAtomPbcCGPWMcos = 35
+  integer,      public, parameter :: PairListAtomPbcCGPWMcosns = 36
+  integer,      public, parameter :: PairListAtomPbcCGIDRHPS = 37
+  integer,      public, parameter :: PairListAtomPbcCGIDRKH  = 38
+  integer,      public, parameter :: PairListAtomPbcCGKH     = 39
+  ! 
+  integer,      public, parameter :: PairListCellsPbcCG      = 50
+  integer,      public, parameter :: PairListPbcCGDNAbp      = 51
+  integer,      public, parameter :: PairListPbcCGDNAexv     = 52
+  integer,      public, parameter :: PairListPbcCGele        = 53
+  integer,      public, parameter :: PairListPbcCGexv        = 54
+  integer,      public, parameter :: PairListPbcCGPWMcos     = 55
+  integer,      public, parameter :: PairListPbcCGPWMcosns   = 56
+  integer,      public, parameter :: PairListPbcCGIDRHPS     = 57
+  integer,      public, parameter :: PairListPbcCGIDRKH      = 58
+  integer,      public, parameter :: PairListPbcCGKH         = 59
 
   ! subroutines
   public :: init_pairlist
@@ -101,17 +230,45 @@ contains
     type(s_pairlist),        intent(inout) :: pairlist
 
 
-    pairlist%table%num_nb15_max   = 0
-    pairlist%table%water_nb15_max = 0
+    pairlist%table%num_nb15_max          = 0
+    pairlist%table%water_nb15_max        = 0
 
-    pairlist%allocation           = .true.
-    pairlist%allocate_nobc        = .true.
-    pairlist%allocate_pbc         = .true.
-    pairlist%allocate_solsol      = .true.
-    pairlist%allocate_solwat      = .true.
-    pairlist%allocate_watwat      = .true.
-    pairlist%num_nb15_max         = 0
-    pairlist%pairlistdist         = 0.0_wp
+    pairlist%allocation                  = .true.
+    pairlist%allocate_nobc               = .true.
+    pairlist%allocate_pbc                = .true.
+    pairlist%allocate_solsol             = .true.
+    pairlist%allocate_solwat             = .true.
+    pairlist%allocate_watwat             = .true.
+    pairlist%allocate_nobc_cg            = .true.
+    pairlist%allocate_nobc_cg_pwmcos     = .true.
+    pairlist%allocate_nobc_cg_pwmcosns   = .true.
+    pairlist%allocate_nobc_cg_IDR_HPS    = .true.
+    pairlist%allocate_nobc_cg_IDR_KH     = .true.
+    pairlist%allocate_pbc_cg_exv         = .true.
+    pairlist%allocate_pbc_cg_ele         = .true.
+    pairlist%allocate_pbc_cg_DNA_bp      = .true.
+    pairlist%allocate_pbc_cg_DNA_exv     = .true.
+    pairlist%allocate_pbc_cg_pwmcos      = .true.
+    pairlist%allocate_pbc_cg_pwmcosns    = .true.
+    pairlist%allocate_pbc_cg_IDR_HPS     = .true.
+    pairlist%allocate_pbc_cg_IDR_KH      = .true.
+    pairlist%allocate_pbc_cg_KH          = .true.
+    pairlist%num_cg_DNA_basepair_max     = 0
+    pairlist%num_cg_DNA_exv_max          = 0
+    pairlist%num_cg_ele_max              = 0
+    pairlist%num_cg_exv_max              = 0
+    pairlist%num_cg_pwmcos_max           = 0
+    pairlist%num_cg_pwmcosns_max         = 0
+    pairlist%num_cg_IDR_HPS_max          = 0
+    pairlist%num_cg_IDR_KH_max           = 0
+    pairlist%num_cg_KH_max               = 0
+    pairlist%num_nb15_max                = 0
+    pairlist%pairlistdist                = 0.0_wp
+    pairlist%cg_pairlistdist_ele         = 0.0_wp
+    pairlist%cg_pairlistdist_126         = 0.0_wp
+    pairlist%cg_pairlistdist_PWMcos      = 0.0_wp
+    pairlist%cg_pairlistdist_DNAbp       = 0.0_wp
+    pairlist%cg_pairlistdist_exv         = 0.0_wp
 
     return
 
@@ -121,19 +278,20 @@ contains
   !
   !  Subroutine    alloc_pairlist
   !> @brief        allocate pairlist information
-  !! @authors      YS, TI, JJ, TM
+  !! @authors      YS, TI, JJ, TM, CT
   !! @param[inout] pairlist : pairlist information
   !! @param[in]    variable : allocatable variables
   !! @param[in]    var_size : size of variables
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine alloc_pairlist(pairlist, variable, var_size)
+  subroutine alloc_pairlist(pairlist, variable, var_size, var_size2)
 
     ! formal arguments
     type(s_pairlist),        intent(inout) :: pairlist
     integer,                 intent(in)    :: variable
     integer,                 intent(in)    :: var_size
+    integer,       optional, intent(in)    :: var_size2
 
     ! local variables
     integer                  :: alloc_stat
@@ -177,6 +335,128 @@ contains
 
       allocate(pairlist%nb15_calc_list(var_size,nthread), &
                stat = alloc_stat)
+      
+    case (PairListAtomNobcCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_calc)) then
+        if (size(pairlist%num_cg_DNA_basepair_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_DNA_basepair_calc, &
+            pairlist%num_cg_DNA_exv_calc,             &
+            pairlist%num_cg_ele_calc,                 &
+            pairlist%num_cg_exv_calc,                 &
+            pairlist%num_cg_IDR_HPS_calc,             &
+            pairlist%num_cg_IDR_KH_calc,              &
+            pairlist%num_cg_KH_calc,                  &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%num_cg_DNA_basepair_calc(var_size,nthread), &
+          pairlist%num_cg_DNA_exv_calc(var_size,nthread),           &
+          pairlist%num_cg_ele_calc(var_size,nthread),               &
+          pairlist%num_cg_exv_calc(var_size,nthread),               &
+          pairlist%num_cg_IDR_HPS_calc(var_size,nthread),           &
+          pairlist%num_cg_IDR_KH_calc(var_size,nthread),            &
+          pairlist%num_cg_KH_calc(var_size,nthread),                &
+          stat = alloc_stat)
+
+    case (PairListCGDNABP)
+
+      if (allocated(pairlist%cg_DNA_basepair_list)) then
+        if (size(pairlist%cg_DNA_basepair_list) == var_size*nthread) return
+        deallocate(pairlist%cg_DNA_basepair_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_DNA_basepair_list(var_size,nthread), &
+          stat = alloc_stat)
+
+    case (PairListCGDNAexv)
+      if (allocated(pairlist%cg_DNA_exv_list)) then
+        if (size(pairlist%cg_DNA_exv_list) == var_size*nthread) return
+        deallocate(pairlist%cg_DNA_exv_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_DNA_exv_list(var_size,nthread), &
+          stat = alloc_stat)
+
+    case (PairListCGele)
+      if (allocated(pairlist%cg_ele_list)) then
+        if (size(pairlist%cg_ele_list) == var_size*nthread) return
+        deallocate (pairlist%cg_ele_list, &
+            pairlist%cg_ele_scaling_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_ele_list(var_size,nthread), &
+          stat = alloc_stat)
+      allocate(pairlist%cg_ele_scaling_list(var_size,nthread), &
+          stat = alloc_stat)
+      pairlist%cg_ele_scaling_list(:, :) = 1.0_wp
+
+    case (PairListCGKH)
+      if (allocated(pairlist%cg_KH_list)) then
+        if (size(pairlist%cg_KH_list) == var_size*nthread) return
+        deallocate (pairlist%cg_KH_list, &
+            pairlist%cg_KH_model_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_KH_list(var_size,nthread), &
+          stat = alloc_stat)
+      allocate(pairlist%cg_KH_model_list(var_size,nthread), &
+          stat = alloc_stat)
+      pairlist%cg_KH_model_list(:, :) = 0
+
+    case (PairListCGIDRHPS)
+      if (allocated(pairlist%cg_IDR_HPS_list)) then
+        if (size(pairlist%cg_IDR_HPS_list) == var_size*nthread) return
+        deallocate (pairlist%cg_IDR_HPS_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_IDR_HPS_list(var_size,nthread), &
+          stat = alloc_stat)
+
+    case (PairListCGIDRKH)
+      if (allocated(pairlist%cg_IDR_KH_list)) then
+        if (size(pairlist%cg_IDR_KH_list) == var_size*nthread) return
+        deallocate (pairlist%cg_IDR_KH_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_IDR_KH_list(var_size,nthread), &
+          stat = alloc_stat)
+
+    case (PairListCGexv)
+      if (allocated(pairlist%cg_exv_list)) then
+        if (size(pairlist%cg_exv_list) == var_size*nthread) return
+        deallocate(pairlist%cg_exv_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_exv_list(var_size,nthread), &
+          stat = alloc_stat)
+
+    case (PairListCGPWMcos)
+      if (allocated(pairlist%cg_pwmcos_list)) then
+        if (size(pairlist%cg_pwmcos_list) == var_size*var_size2) return
+        deallocate(pairlist%cg_pwmcos_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_pwmcos_list(var_size,var_size2), &
+          stat = alloc_stat)
+
+    case (PairListCGPWMcosns)
+      if (allocated(pairlist%cg_pwmcosns_list)) then
+        if (size(pairlist%cg_pwmcosns_list) == var_size*var_size2) return
+        deallocate(pairlist%cg_pwmcosns_list, &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_pwmcosns_list(var_size,var_size2), &
+          stat = alloc_stat)
 
     case (PairListPbcSolute)
 
@@ -224,6 +504,102 @@ contains
       allocate(pairlist%num_nb15_pre(nthread), &
                pairlist%num_nb15    (nthread), &
                stat = alloc_stat)
+      
+    case (PairListNthreadsCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_pre)) then
+        if (size(pairlist%num_cg_DNA_basepair_pre) == nthread) return
+        deallocate(pairlist%num_cg_DNA_basepair_pre,       &
+            pairlist%num_cg_DNA_basepair,                  &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_DNA_basepair_pre (nthread), &
+          pairlist%num_cg_DNA_basepair          (nthread), &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_DNA_exv_pre)) then
+        if (size(pairlist%num_cg_DNA_exv_pre) == nthread) return
+        deallocate(pairlist%num_cg_DNA_exv_pre,            &
+            pairlist%num_cg_DNA_exv,                       &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_DNA_exv_pre (nthread),      &
+          pairlist%num_cg_DNA_exv          (nthread),      &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_ele_pre)) then
+        if (size(pairlist%num_cg_ele_pre) == nthread) return
+        deallocate(pairlist%num_cg_ele_pre,                &
+            pairlist%num_cg_ele,                           &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_ele_pre (nthread),          &
+          pairlist%num_cg_ele          (nthread),          &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_KH_pre)) then
+        if (size(pairlist%num_cg_KH_pre) == nthread) return
+        deallocate(pairlist%num_cg_KH_pre,                 &
+            pairlist%num_cg_KH,                            &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_KH_pre (nthread),           &
+          pairlist%num_cg_KH          (nthread),           &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_IDR_HPS_pre)) then
+        if (size(pairlist%num_cg_IDR_HPS_pre) == nthread) return
+        deallocate(pairlist%num_cg_IDR_HPS_pre,            &
+            pairlist%num_cg_IDR_HPS,                       &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_IDR_HPS_pre (nthread),      &
+          pairlist%num_cg_IDR_HPS          (nthread),      &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_IDR_KH_pre)) then
+        if (size(pairlist%num_cg_IDR_KH_pre) == nthread) return
+        deallocate(pairlist%num_cg_IDR_KH_pre,            &
+            pairlist%num_cg_IDR_KH,                       &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_IDR_KH_pre (nthread),      &
+          pairlist%num_cg_IDR_KH          (nthread),      &
+          stat = alloc_stat)
+
+      if (allocated(pairlist%num_cg_exv_pre)) then
+        if (size(pairlist%num_cg_exv_pre) == nthread) return
+        deallocate(pairlist%num_cg_exv_pre,                &
+            pairlist%num_cg_exv,                           &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_exv_pre (nthread),          &
+          pairlist%num_cg_exv          (nthread),          &
+          stat = alloc_stat)
+
+    case (PairListNthCGPWMcos)
+      
+      if (allocated(pairlist%num_cg_pwmcos_pre)) then
+        if (size(pairlist%num_cg_pwmcos_pre) == var_size) return
+        deallocate(pairlist%num_cg_pwmcos_pre,       &
+            pairlist%num_cg_pwmcos,                  &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_pwmcos_pre(var_size), &
+          pairlist%num_cg_pwmcos(var_size),          &
+          stat = alloc_stat)
+      
+    case (PairListNthCGPWMcosns)
+
+      if (allocated(pairlist%num_cg_pwmcosns_pre)) then
+        if (size(pairlist%num_cg_pwmcosns_pre) == var_size) return
+        deallocate(pairlist%num_cg_pwmcosns_pre,       &
+            pairlist%num_cg_pwmcosns,                  &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_pwmcosns_pre(var_size), &
+          pairlist%num_cg_pwmcosns(var_size),          &
+          stat = alloc_stat)
 
     case (PairListEcqm)
 
@@ -266,6 +642,283 @@ contains
       allocate(pairlist%num_all_pre(nthread), &
                pairlist%num_all    (nthread), &
                stat = alloc_stat)
+
+    ! =============
+    ! CG model: PBC
+    ! =============
+    ! 
+    case (PairListAtomPbcCGDNAexv)
+
+      if (allocated(pairlist%num_cg_DNA_exv_calc)) then
+        if (size(pairlist%num_cg_DNA_exv_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_DNA_exv_calc,                    &
+            pairlist%cell_linked_list_cg_DNA,                       &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_DNA_exv_calc(var_size,nthread),      &
+          pairlist%cell_linked_list_cg_DNA(var_size),               &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGDNAbp)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_calc)) then
+        if (size(pairlist%num_cg_DNA_basepair_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_DNA_basepair_calc,               &
+            pairlist%cell_linked_list_cg_DNA_base,                  &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_DNA_basepair_calc(var_size,nthread), &
+          pairlist%cell_linked_list_cg_DNA_base(var_size),          &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGele)
+
+      if (allocated(pairlist%num_cg_ele_calc)) then
+        if (size(pairlist%num_cg_ele_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_ele_calc,                           &
+            pairlist%cell_linked_list_cg_charged,                      &
+            pairlist%cell_linked_list_cg_DNA_phos,                     &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_ele_calc(var_size,nthread),             &
+          pairlist%cell_linked_list_cg_charged(var_size),              &
+          pairlist%cell_linked_list_cg_DNA_phos(var_size2),            &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGexv)
+
+      if (allocated(pairlist%num_cg_exv_calc)) then
+        if (size(pairlist%num_cg_exv_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_exv_calc,                        &
+            pairlist%cell_linked_list_cg_all,                       &
+            pairlist%cell_index_cg_all,                             &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_exv_calc(var_size,nthread),          &
+          pairlist%cell_linked_list_cg_all(var_size),               &
+          pairlist%cell_index_cg_all(var_size),                     &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGPWMcos)
+
+      if (allocated(pairlist%num_cg_pwmcos_calc)) then
+        if (size(pairlist%num_cg_pwmcos_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_pwmcos_calc,                     &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_pwmcos_calc(var_size,nthread),       &
+          stat = alloc_stat)
+      
+    case (PairListAtomPbcCGPWMcosns)
+
+      if (allocated(pairlist%num_cg_pwmcosns_calc)) then
+        if (size(pairlist%num_cg_pwmcosns_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_pwmcosns_calc,                     &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_pwmcosns_calc(var_size,nthread),       &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGIDRHPS)
+
+      if (allocated(pairlist%num_cg_IDR_HPS_calc)) then
+        if (size(pairlist%num_cg_IDR_HPS_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_IDR_HPS_calc,                    &
+            pairlist%cell_linked_list_cg_IDR_HPS,                   &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_IDR_HPS_calc(var_size,nthread),      &
+          pairlist%cell_linked_list_cg_IDR_HPS(var_size),           &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGIDRKH)
+
+      if (allocated(pairlist%num_cg_IDR_KH_calc)) then
+        if (size(pairlist%num_cg_IDR_KH_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_IDR_KH_calc,                    &
+            pairlist%cell_linked_list_cg_IDR_KH,                   &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_IDR_KH_calc(var_size,nthread),      &
+          pairlist%cell_linked_list_cg_IDR_KH(var_size),           &
+          stat = alloc_stat)
+
+    case (PairListAtomPbcCGKH)
+
+      if (allocated(pairlist%num_cg_KH_calc)) then
+        if (size(pairlist%num_cg_KH_calc) == var_size*nthread) return
+        deallocate(pairlist%num_cg_KH_calc,                        &
+            pairlist%cell_linked_list_cg_KH,                       &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_KH_calc(var_size,nthread),          &
+          pairlist%cell_linked_list_cg_KH(var_size),               &
+          stat = alloc_stat)
+
+    ! ---------------------------
+    ! numbering in each thread...
+    ! ---------------------------
+    ! 
+    case (PairListNthreadsPbcCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_pre)) then
+        if (size(pairlist%num_cg_DNA_basepair_pre) == nthread) return
+        deallocate(pairlist%num_cg_DNA_basepair_pre,       &
+            pairlist%num_cg_DNA_basepair,                  &
+            pairlist%num_cg_DNA_exv_pre,                   &
+            pairlist%num_cg_DNA_exv,                       &
+            pairlist%num_cg_ele_pre,                       &
+            pairlist%num_cg_ele,                           &
+            pairlist%num_cg_IDR_HPS_pre,                   &
+            pairlist%num_cg_IDR_HPS,                       &
+            pairlist%num_cg_IDR_KH_pre,                    &
+            pairlist%num_cg_IDR_KH,                        &
+            pairlist%num_cg_KH_pre,                        &
+            pairlist%num_cg_KH,                            &
+            pairlist%num_cg_exv_pre,                       &
+            pairlist%num_cg_exv,                           &
+            pairlist%num_cg_pwmcos_pre,                    &
+            pairlist%num_cg_pwmcos,                        &
+            pairlist%num_cg_pwmcosns_pre,                  &
+            pairlist%num_cg_pwmcosns,                      &
+            stat = dealloc_stat)
+      end if
+      allocate(pairlist%num_cg_DNA_basepair_pre (nthread), &
+          pairlist%num_cg_DNA_basepair          (nthread), &
+          pairlist%num_cg_DNA_exv_pre           (nthread), &
+          pairlist%num_cg_DNA_exv               (nthread), &
+          pairlist%num_cg_ele_pre               (nthread), &
+          pairlist%num_cg_ele                   (nthread), &
+          pairlist%num_cg_IDR_HPS_pre           (nthread), &
+          pairlist%num_cg_IDR_HPS               (nthread), &
+          pairlist%num_cg_IDR_KH_pre            (nthread), &
+          pairlist%num_cg_IDR_KH                (nthread), &
+          pairlist%num_cg_KH_pre                (nthread), &
+          pairlist%num_cg_KH                    (nthread), &
+          pairlist%num_cg_exv_pre               (nthread), &
+          pairlist%num_cg_exv                   (nthread), &
+          pairlist%num_cg_pwmcos_pre            (nthread), &
+          pairlist%num_cg_pwmcos                (nthread), &
+          pairlist%num_cg_pwmcosns_pre          (nthread), &
+          pairlist%num_cg_pwmcosns              (nthread), &
+          stat = alloc_stat)
+
+    ! ----------------
+    ! the real list...
+    ! ----------------
+    ! 
+    case (PairListPbcCGDNAbp)
+
+      if (allocated(pairlist%cg_DNA_basepair_list)) then
+        if (size(pairlist%cg_DNA_basepair_list) == var_size*nthread) return
+        deallocate(pairlist%cg_DNA_basepair_list, stat = dealloc_stat)
+      end if
+      allocate(pairlist%cg_DNA_basepair_list(var_size,nthread), stat = alloc_stat)
+
+    case (PairListPbcCGDNAexv)
+
+      if (allocated(pairlist%cg_DNA_exv_list)) then
+        if (size(pairlist%cg_DNA_exv_list) == var_size*nthread) return
+        deallocate(pairlist%cg_DNA_exv_list, stat = dealloc_stat)
+      end if
+      allocate(pairlist%cg_DNA_exv_list(var_size,nthread), stat = alloc_stat)
+
+    case (PairListPbcCGele)
+
+      if (allocated(pairlist%cg_ele_list)) then
+        if (size(pairlist%cg_ele_list) == var_size*nthread) return
+        deallocate (pairlist%cg_ele_list,                 &
+            pairlist%cg_ele_scaling_list,                 &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_ele_list(var_size,nthread),    &
+          pairlist%cg_ele_scaling_list(var_size,nthread), &
+          stat = alloc_stat)
+      pairlist%cg_ele_scaling_list(:, :) = 1.0_wp
+
+    case (PairListPbcCGIDRHPS)
+
+      if (allocated(pairlist%cg_IDR_HPS_list)) then
+        if (size(pairlist%cg_IDR_HPS_list) == var_size*nthread) return
+        deallocate (pairlist%cg_IDR_HPS_list, stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_IDR_HPS_list(var_size,nthread), stat = alloc_stat)
+
+    case (PairListPbcCGIDRKH)
+
+      if (allocated(pairlist%cg_IDR_KH_list)) then
+        if (size(pairlist%cg_IDR_KH_list) == var_size*nthread) return
+        deallocate (pairlist%cg_IDR_KH_list, stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_IDR_KH_list(var_size,nthread), stat = alloc_stat)
+
+    case (PairListPbcCGKH)
+
+      if (allocated(pairlist%cg_KH_list)) then
+        if (size(pairlist%cg_KH_list) == var_size*nthread) return
+        deallocate (pairlist%cg_KH_list, &
+            pairlist%cg_KH_model_list,   &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_KH_list(var_size,nthread), stat = alloc_stat)
+      allocate(pairlist%cg_KH_model_list(var_size,nthread), stat = alloc_stat)
+
+      pairlist%cg_KH_model_list(:, :) = 0
+
+    case (PairListPbcCGexv)
+      if (allocated(pairlist%cg_exv_list)) then
+        if (size(pairlist%cg_exv_list) == var_size*nthread) return
+        deallocate(pairlist%cg_exv_list, stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_exv_list(var_size,nthread), stat = alloc_stat)
+
+    case (PairListPbcCGPWMcos)
+      if (allocated(pairlist%cg_pwmcos_list)) then
+        if (size(pairlist%cg_pwmcos_list) == var_size*nthread) return
+        deallocate(pairlist%cg_pwmcos_list, stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_pwmcos_list(var_size,nthread), stat = alloc_stat)
+      
+    case (PairListPbcCGPWMcosns)
+      if (allocated(pairlist%cg_pwmcosns_list)) then
+        if (size(pairlist%cg_pwmcosns_list) == var_size*nthread) return
+        deallocate(pairlist%cg_pwmcosns_list, stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cg_pwmcosns_list(var_size,nthread), stat = alloc_stat)
+
+    ! ---------------------------
+    ! cell head of linked list...
+    ! ---------------------------
+    !
+    case (PairListCellsPbcCG)
+      if (allocated(pairlist%cell_head_index_cg_all)) then
+        deallocate(pairlist%cell_head_index_cg_all,       &
+            pairlist%cell_head_index_cg_DNA,              &
+            pairlist%cell_head_index_cg_DNA_phos,         &
+            pairlist%cell_head_index_cg_DNA_base,         &
+            pairlist%cell_head_index_cg_IDR_HPS,          &
+            pairlist%cell_head_index_cg_IDR_KH,           &
+            pairlist%cell_head_index_cg_KH,               &
+            pairlist%cell_head_index_cg_charged,          &
+            stat = dealloc_stat)
+      end if
+
+      allocate(pairlist%cell_head_index_cg_all(var_size), &
+          pairlist%cell_head_index_cg_DNA(var_size),      &
+          pairlist%cell_head_index_cg_DNA_phos(var_size), &
+          pairlist%cell_head_index_cg_DNA_base(var_size), &
+          pairlist%cell_head_index_cg_IDR_HPS(var_size),  &
+          pairlist%cell_head_index_cg_IDR_KH(var_size),   &
+          pairlist%cell_head_index_cg_KH(var_size),       &
+          pairlist%cell_head_index_cg_charged(var_size),  &
+          stat = alloc_stat)
 
     case  default
 
@@ -405,6 +1058,71 @@ contains
         deallocate (pairlist%nb15_calc_list, &
                     stat = dealloc_stat)
       end if
+      
+    case (PairListCGDNABP)
+
+      if (allocated(pairlist%cg_DNA_basepair_list)) then
+        deallocate (pairlist%cg_DNA_basepair_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGDNAexv)
+
+      if (allocated(pairlist%cg_DNA_exv_list)) then
+        deallocate (pairlist%cg_DNA_exv_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGele)
+
+      if (allocated(pairlist%cg_ele_list)) then
+        deallocate (pairlist%cg_ele_list, &
+            pairlist%cg_ele_scaling_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGIDRHPS)
+
+      if (allocated(pairlist%cg_IDR_HPS_list)) then
+        deallocate (pairlist%cg_IDR_HPS_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGIDRKH)
+
+      if (allocated(pairlist%cg_IDR_KH_list)) then
+        deallocate (pairlist%cg_IDR_KH_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGKH)
+
+      if (allocated(pairlist%cg_KH_list)) then
+        deallocate (pairlist%cg_KH_list, &
+            pairlist%cg_KH_model_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGexv)
+
+      if (allocated(pairlist%cg_exv_list)) then
+        deallocate (pairlist%cg_exv_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListCGPWMcos)
+
+      if (allocated(pairlist%cg_pwmcos_list)) then
+        deallocate (pairlist%cg_pwmcos_list, &
+            stat = dealloc_stat)
+      end if
+      
+    case (PairListCGPWMcosns)
+
+      if (allocated(pairlist%cg_pwmcosns_list)) then
+        deallocate (pairlist%cg_pwmcosns_list, &
+            stat = dealloc_stat)
+      end if
 
     case (PairListPbcSolute)
 
@@ -481,6 +1199,275 @@ contains
                     pairlist%num_all,         &
                     stat = dealloc_stat)
       end if
+      
+    case (PairListAtomNobcCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_calc)) then
+        deallocate(pairlist%num_cg_DNA_basepair_calc, &
+            pairlist%num_cg_DNA_exv_calc,             &
+            pairlist%num_cg_ele_calc,                 &
+            pairlist%num_cg_exv_calc,                 &
+            pairlist%num_cg_IDR_HPS_calc,             &
+            pairlist%num_cg_IDR_KH_calc,              &
+            pairlist%num_cg_KH_calc,                  &
+            stat = dealloc_stat)
+      end if
+      
+    case (PairListNthreadsCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_pre)) then
+        deallocate (pairlist%num_cg_DNA_basepair_pre, &
+            pairlist%num_cg_DNA_basepair,             &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_DNA_exv_pre))      then
+        deallocate (pairlist%num_cg_DNA_exv_pre,      &
+            pairlist%num_cg_DNA_exv,                  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_ele_pre))          then
+        deallocate (pairlist%num_cg_ele_pre,          &
+            pairlist%num_cg_ele,                      &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_IDR_HPS_pre))      then
+        deallocate (pairlist%num_cg_IDR_HPS_pre,      &
+            pairlist%num_cg_IDR_HPS,                  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_IDR_KH_pre))      then
+        deallocate (pairlist%num_cg_IDR_KH_pre,      &
+            pairlist%num_cg_IDR_KH,                  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_KH_pre))          then
+        deallocate (pairlist%num_cg_KH_pre,          &
+            pairlist%num_cg_KH,                      &
+            stat = dealloc_stat)
+      end if
+      if (allocated(pairlist%num_cg_exv_pre))          then
+        deallocate (pairlist%num_cg_exv_pre,          &
+            pairlist%num_cg_exv,                      &
+            stat = dealloc_stat)
+      end if
+    case (PairListNthCGPWMcos)
+      if (allocated(pairlist%num_cg_pwmcos))       then
+        deallocate (pairlist%num_cg_pwmcos,       &
+            stat = dealloc_stat)
+      end if
+    case (PairListNthCGPWMcosns)
+      if (allocated(pairlist%num_cg_pwmcosns))       then
+        deallocate (pairlist%num_cg_pwmcosns,       &
+            stat = dealloc_stat)
+      end if
+
+    ! =============
+    ! CG model: PBC
+    ! =============
+    ! 
+    case (PairListAtomPbcCGDNAexv)
+
+      if (allocated(pairlist%num_cg_DNA_exv_calc)) then
+        deallocate(pairlist%num_cg_DNA_exv_calc,      &
+            pairlist%cell_linked_list_cg_DNA,         &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGDNAbp)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_calc)) then
+        deallocate(pairlist%num_cg_DNA_basepair_calc, &
+            pairlist%cell_linked_list_cg_DNA_base,    &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGele)
+
+      if (allocated(pairlist%num_cg_ele_calc)) then
+        deallocate(pairlist%num_cg_ele_calc,          &
+            pairlist%cell_linked_list_cg_charged,     &
+            pairlist%cell_linked_list_cg_DNA_phos,    &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGexv)
+
+      if (allocated(pairlist%num_cg_exv_calc)) then
+        deallocate(pairlist%num_cg_exv_calc,          &
+            pairlist%cell_linked_list_cg_all,         &
+            pairlist%cell_index_cg_all,               &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGPWMcos)
+
+      if (allocated(pairlist%num_cg_pwmcos_calc)) then
+        deallocate(pairlist%num_cg_pwmcos_calc,       &
+            stat = dealloc_stat)
+      end if
+      
+    case (PairListAtomPbcCGPWMcosns)
+
+      if (allocated(pairlist%num_cg_pwmcosns_calc)) then
+        deallocate(pairlist%num_cg_pwmcosns_calc,       &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGIDRHPS)
+
+      if (allocated(pairlist%num_cg_IDR_HPS_calc)) then
+        deallocate(pairlist%num_cg_IDR_HPS_calc,      &
+            pairlist%cell_linked_list_cg_IDR_HPS,     &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGIDRKH)
+
+      if (allocated(pairlist%num_cg_IDR_KH_calc)) then
+        deallocate(pairlist%num_cg_IDR_KH_calc,      &
+            pairlist%cell_linked_list_cg_IDR_KH,     &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListAtomPbcCGKH)
+
+      if (allocated(pairlist%num_cg_KH_calc)) then
+        deallocate(pairlist%num_cg_KH_calc,      &
+            pairlist%cell_linked_list_cg_KH,     &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListNthreadsPbcCG)
+
+      if (allocated(pairlist%num_cg_DNA_basepair_pre)) then
+        deallocate(pairlist%num_cg_DNA_basepair_pre,  &
+            pairlist%num_cg_DNA_basepair,             &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_DNA_exv_pre)) then
+        deallocate(pairlist%num_cg_DNA_exv_pre,       &
+            pairlist%num_cg_DNA_exv,                  &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_ele_pre)) then
+        deallocate(pairlist%num_cg_ele_pre,           &
+            pairlist%num_cg_ele,                      &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_IDR_HPS_pre)) then
+        deallocate(pairlist%num_cg_IDR_HPS_pre,       &
+            pairlist%num_cg_IDR_HPS,                  &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_IDR_KH_pre)) then
+        deallocate(pairlist%num_cg_IDR_KH_pre,       &
+            pairlist%num_cg_IDR_KH,                  &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_KH_pre)) then
+        deallocate(pairlist%num_cg_KH_pre,       &
+            pairlist%num_cg_KH,                  &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_exv_pre)) then
+        deallocate(pairlist%num_cg_exv_pre,           &
+            pairlist%num_cg_exv,                      &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_pwmcos)) then
+        deallocate(pairlist%num_cg_pwmcos_pre,        &
+            pairlist%num_cg_pwmcos,                   &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(pairlist%num_cg_pwmcosns)) then
+        deallocate(pairlist%num_cg_pwmcosns_pre,        &
+            pairlist%num_cg_pwmcosns,                   &
+            stat = dealloc_stat)
+      end if
+
+    ! ----------------
+    ! the real list...
+    ! ----------------
+    ! 
+    case (PairListPbcCGDNAbp)
+
+      if (allocated(pairlist%cg_DNA_basepair_list)) then
+        deallocate(pairlist%cg_DNA_basepair_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGDNAexv)
+
+      if (allocated(pairlist%cg_DNA_exv_list)) then
+        deallocate(pairlist%cg_DNA_exv_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGele)
+
+      if (allocated(pairlist%cg_ele_list)) then
+        deallocate (pairlist%cg_ele_list, &
+            pairlist%cg_ele_scaling_list, &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGIDRHPS)
+
+      if (allocated(pairlist%cg_IDR_HPS_list)) then
+        deallocate (pairlist%cg_IDR_HPS_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGIDRKH)
+
+      if (allocated(pairlist%cg_IDR_KH_list)) then
+        deallocate (pairlist%cg_IDR_KH_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGKH)
+
+      if (allocated(pairlist%cg_KH_list)) then
+        deallocate (pairlist%cg_KH_list, &
+            pairlist%cg_KH_model_list,   &
+            stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGexv)
+      if (allocated(pairlist%cg_exv_list)) then
+        deallocate(pairlist%cg_exv_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGPWMcos)
+      if (allocated(pairlist%cg_pwmcos_list)) then
+        deallocate(pairlist%cg_pwmcos_list, stat = dealloc_stat)
+      end if
+
+    case (PairListPbcCGPWMcosns)
+      if (allocated(pairlist%cg_pwmcosns_list)) then
+        deallocate(pairlist%cg_pwmcosns_list, stat = dealloc_stat)
+      end if
+
+    ! ---------------------------
+    ! cell head of linked list...
+    ! ---------------------------
+    !
+    case (PairListCellsPbcCG)
+      if (allocated(pairlist%cell_head_index_cg_all)) then
+        deallocate(pairlist%cell_head_index_cg_all, &
+            pairlist%cell_head_index_cg_DNA,        &
+            pairlist%cell_head_index_cg_DNA_phos,   &
+            pairlist%cell_head_index_cg_DNA_base,   &
+            pairlist%cell_head_index_cg_IDR_HPS,    &
+            pairlist%cell_head_index_cg_IDR_KH,     &
+            pairlist%cell_head_index_cg_KH,         &
+            pairlist%cell_head_index_cg_charged,    &
+            stat = dealloc_stat)
+      end if
 
     case default
 
@@ -521,6 +1508,40 @@ contains
     call dealloc_pairlist(pairlist, PairListAtomNobcGbsa)
     call dealloc_pairlist(pairlist, PairListIntNobcGbsa)
     call dealloc_pairlist(pairlist, PairListNthreadsGbsa)
+    call dealloc_pairlist(pairlist, PairListNthreadsCG)
+    call dealloc_pairlist(pairlist, PairListAtomNobcCG)
+    call dealloc_pairlist(pairlist, PairListCGDNABP)
+    call dealloc_pairlist(pairlist, PairListCGDNAexv)
+    call dealloc_pairlist(pairlist, PairListCGele)
+    call dealloc_pairlist(pairlist, PairListCGexv)
+    call dealloc_pairlist(pairlist, PairListCGPWMcos)
+    call dealloc_pairlist(pairlist, PairListCGPWMcosns)
+    call dealloc_pairlist(pairlist, PairListCGIDRHPS)
+    call dealloc_pairlist(pairlist, PairListCGIDRKH)
+    call dealloc_pairlist(pairlist, PairListCGKH)
+    call dealloc_pairlist(pairlist, PairListNthCGPWMcos)
+    call dealloc_pairlist(pairlist, PairListNthCGPWMcosns)
+    ! 
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGexv)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGele)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGDNAexv)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGDNAbp)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGPWMcos)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGPWMcosns)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGIDRHPS)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGIDRKH)
+    call dealloc_pairlist(pairlist, PairListAtomPbcCGKH)
+    call dealloc_pairlist(pairlist, PairListNthreadsPbcCG)
+    call dealloc_pairlist(pairlist, PairListPbcCGDNAbp)
+    call dealloc_pairlist(pairlist, PairListPbcCGDNAexv)
+    call dealloc_pairlist(pairlist, PairListPbcCGexv)
+    call dealloc_pairlist(pairlist, PairListPbcCGele)
+    call dealloc_pairlist(pairlist, PairListPbcCGPWMcos)
+    call dealloc_pairlist(pairlist, PairListPbcCGPWMcosns)
+    call dealloc_pairlist(pairlist, PairListPbcCGIDRHPS)
+    call dealloc_pairlist(pairlist, PairListPbcCGIDRKH)
+    call dealloc_pairlist(pairlist, PairListPbcCGKH)
+    call dealloc_pairlist(pairlist, PairListCellsPbcCG)
 
     return
 

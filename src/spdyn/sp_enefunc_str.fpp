@@ -112,6 +112,13 @@ module sp_enefunc_str_mod
     integer                       :: num_impr_all
     integer                       :: num_cmap_all
     integer                       :: num_contact_all
+    integer                       :: num_vsite2_all
+    integer                       :: num_vsite3_all
+    integer                       :: num_vsite3fd_all
+    integer                       :: num_vsite3fad_all
+    integer                       :: num_vsite3out_all
+    integer                       :: num_vsite4fdn_all
+    integer                       :: num_vsiten_all
     integer                       :: num_excl_all
     integer                       :: num_nb14_all
 
@@ -132,8 +139,16 @@ module sp_enefunc_str_mod
     integer,          allocatable :: num_rb_dihedral(:)
     integer,          allocatable :: num_improper(:)
     integer,          allocatable :: num_cmap(:)
+    integer,          allocatable :: num_vsite2(:)
+    integer,          allocatable :: num_vsite3(:)
+    integer,          allocatable :: num_vsite3fd(:)
+    integer,          allocatable :: num_vsite3fad(:)
+    integer,          allocatable :: num_vsite3out(:)
+    integer,          allocatable :: num_vsite4fdn(:)
+    integer,          allocatable :: num_vsiten(:)
     integer,          allocatable :: num_restraint(:)
     integer,          allocatable :: num_contact(:)
+    integer,          allocatable :: num_excl(:)
 
     ! bond (size = num_local_bond for each cell)
     integer,          allocatable :: bond_list(:,:,:)
@@ -175,7 +190,41 @@ module sp_enefunc_str_mod
     ! contact (size = num_local_contact for each cell)
     integer,          allocatable :: contact_list(:,:,:)
     real(wp),         allocatable :: contact_lj12(:,:)
+    real(wp),         allocatable :: contact_lj10(:,:)
     real(wp),         allocatable :: contact_lj6(:,:)
+
+    ! exclusion
+    !
+    integer,          allocatable :: excl_list(:,:,:)
+
+    ! virtual site 2
+    integer,          allocatable :: vsite2_list(:,:,:)
+    real(wp),         allocatable :: vsite2_a(:,:)
+    ! virtual site 3
+    integer,          allocatable :: vsite3_list(:,:,:)
+    real(wp),         allocatable :: vsite3_a(:,:)
+    real(wp),         allocatable :: vsite3_b(:,:)
+    ! virtual site 3fd
+    integer,          allocatable :: vsite3fd_list(:,:,:)
+    real(wp),         allocatable :: vsite3fd_a(:,:)
+    real(wp),         allocatable :: vsite3fd_d(:,:)
+    ! virtual site 3fad
+    integer,          allocatable :: vsite3fad_list(:,:,:)
+    real(wp),         allocatable :: vsite3fad_theta(:,:)
+    real(wp),         allocatable :: vsite3fad_d(:,:)
+    ! virtual site 3out
+    integer,          allocatable :: vsite3out_list(:,:,:)
+    real(wp),         allocatable :: vsite3out_a(:,:)
+    real(wp),         allocatable :: vsite3out_b(:,:)
+    real(wp),         allocatable :: vsite3out_c(:,:)
+    ! virtual site 4fdn
+    integer,          allocatable :: vsite4fdn_list(:,:,:)
+    real(wp),         allocatable :: vsite4fdn_a(:,:)
+    real(wp),         allocatable :: vsite4fdn_b(:,:)
+    real(wp),         allocatable :: vsite4fdn_c(:,:)
+    ! virtual site n
+    integer,          allocatable :: vsiten_list(:,:,:)
+    integer,          allocatable :: vsiten_n(:,:)
 
     ! non-bonded (size = num_atom_cls)
     integer,          allocatable :: nonb_atom_cls(:)
@@ -351,11 +400,57 @@ module sp_enefunc_str_mod
     integer,          allocatable :: cmap_exit_index(:,:)
     integer,          allocatable :: buf_cmap_integer(:,:,:)
 
+    integer,          allocatable :: excl_exit(:)
+    integer,          allocatable :: excl_add(:)
+    integer,          allocatable :: excl_exit_index(:,:)
+    integer,          allocatable :: buf_excl_integer(:,:,:)
+
     integer,          allocatable :: contact_exit(:)
     integer,          allocatable :: contact_add(:)
     integer,          allocatable :: contact_exit_index(:,:)
     integer,          allocatable :: buf_contact_integer(:,:,:)
     real(wp),         allocatable :: buf_contact_real(:,:,:)
+
+    integer,          allocatable :: vsite2_exit(:)
+    integer,          allocatable :: vsite2_add(:)
+    integer,          allocatable :: vsite2_exit_index(:,:)
+    integer,          allocatable :: buf_vsite2_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite2_real(:,:,:)
+
+    integer,          allocatable :: vsite3_exit(:)
+    integer,          allocatable :: vsite3_add(:)
+    integer,          allocatable :: vsite3_exit_index(:,:)
+    integer,          allocatable :: buf_vsite3_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite3_real(:,:,:)
+
+    integer,          allocatable :: vsite3fd_exit(:)
+    integer,          allocatable :: vsite3fd_add(:)
+    integer,          allocatable :: vsite3fd_exit_index(:,:)
+    integer,          allocatable :: buf_vsite3fd_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite3fd_real(:,:,:)
+
+    integer,          allocatable :: vsite3fad_exit(:)
+    integer,          allocatable :: vsite3fad_add(:)
+    integer,          allocatable :: vsite3fad_exit_index(:,:)
+    integer,          allocatable :: buf_vsite3fad_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite3fad_real(:,:,:)
+
+    integer,          allocatable :: vsite3out_exit(:)
+    integer,          allocatable :: vsite3out_add(:)
+    integer,          allocatable :: vsite3out_exit_index(:,:)
+    integer,          allocatable :: buf_vsite3out_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite3out_real(:,:,:)
+
+    integer,          allocatable :: vsite4fdn_exit(:)
+    integer,          allocatable :: vsite4fdn_add(:)
+    integer,          allocatable :: vsite4fdn_exit_index(:,:)
+    integer,          allocatable :: buf_vsite4fdn_integer(:,:,:)
+    real(wp),         allocatable :: buf_vsite4fdn_real(:,:,:)
+
+    integer,          allocatable :: vsiten_exit(:)
+    integer,          allocatable :: vsiten_add(:)
+    integer,          allocatable :: vsiten_exit_index(:,:)
+    integer,          allocatable :: buf_vsiten_integer(:,:,:)
 
     integer,          allocatable :: restraint_exit(:)
     integer,          allocatable :: restraint_add(:)
@@ -377,6 +472,13 @@ module sp_enefunc_str_mod
     real(wp)                      :: vswitch
     real(wp)                      :: dispersion_energy
     real(wp)                      :: dispersion_virial
+    ! FEP
+    real(wp)                      :: dispersion_energy_preserve
+    real(wp)                      :: dispersion_energy_vanish
+    real(wp)                      :: dispersion_energy_appear
+    real(wp)                      :: dispersion_virial_preserve
+    real(wp)                      :: dispersion_virial_vanish
+    real(wp)                      :: dispersion_virial_appear
 
     ! statistical variables
     logical                       :: rpath_flag
@@ -405,9 +507,46 @@ module sp_enefunc_str_mod
     logical                       :: pressure_position
     logical                       :: pressure_rmsd
 
+    ! For vacuum
+    logical                       :: vacuum
+
     ! gamd
     logical                       :: gamd_use
     type(s_enefunc_gamd)          :: gamd
+
+    !FEP
+    real(wp)                      :: sc_alpha
+    real(wp)                      :: sc_beta
+    integer                       :: num_fep_neighbor
+    integer                       :: fep_direction
+    real(wp)                      :: lambljA
+    real(wp)                      :: lambljB
+    real(wp)                      :: lambelA
+    real(wp)                      :: lambelB
+    real(wp)                      :: lambbondA
+    real(wp)                      :: lambbondB
+    real(wp)                      :: lambrest
+    integer                       :: fep_topology
+    ! table_nonb_lambda is for parameters of lambda, softcore, and exclusion.
+    ! table_nonb_lambda(index, fepgrp1, fepgrp2)
+    ! index is an index for lambda, softcore, and exclusion (1-5). 1, 2, 3, and 4
+    ! correspond to lambdaA, lambdaB, softcore for A, and softcore for B.
+    ! 5 represents the excludion of interactions between partA-partB.
+    ! fepgrp1 and fepgrp2 are indicies for perturbed states of each atom
+    ! pair (1-5). If fepgrp has 1, 2, 3, 4, and 5, the perturbed state of 
+    ! an atom correpond to singleA, singleB, dualA, dualB, and preserved,
+    ! respectively.
+    real(wp)                      :: table_nonb_lambda(5,5,5)
+    ! table_bond_lambda(fepgrp1,fepgrp2)
+    ! table_angl_lambda(fepgrp1,fepgrp2,fepgrp3)
+    ! table_dihe_lambda(fepgrp1,fepgrp2,fepgrp3,fepgrp4)
+    ! table_cmap_lambda(fepgrp1*fepgrp2*fepgrp3*fepgrp4*
+    !                   fepgrp5*fepgrp6*fepgrp7*fepgrp8)
+    real(wp)                      :: table_bond_lambda(5,5)
+    real(wp)                      :: table_angl_lambda(5,5,5)
+    real(wp)                      :: table_dihe_lambda(5,5,5,5)
+    real(wp)                      :: table_cmap_lambda(5*5*5*5*5*5*5*5)
+    integer                       :: fepgrp_nonb(5,5)
 
   end type s_enefunc
 
@@ -438,8 +577,15 @@ module sp_enefunc_str_mod
   integer,      public, parameter :: EneFuncFitd          = 24
   integer,      public, parameter :: EneFuncRestDomain    = 25
   integer,      public, parameter :: EneFuncContact       = 26
-  integer,      public, parameter :: EneFuncGamdDih       = 27
-  integer,      public, parameter :: EneFuncGamdRest      = 28
+  integer,      public, parameter :: EneFuncVsite2        = 27
+  integer,      public, parameter :: EneFuncVsite3        = 28
+  integer,      public, parameter :: EneFuncVsite3fd      = 29
+  integer,      public, parameter :: EneFuncVsite3fad     = 30
+  integer,      public, parameter :: EneFuncVsite3out     = 31
+  integer,      public, parameter :: EneFuncVsite4fdn     = 32
+  integer,      public, parameter :: EneFuncVsiten        = 33
+  integer,      public, parameter :: EneFuncGamdDih       = 34
+  integer,      public, parameter :: EneFuncGamdRest      = 35
 
   ! parameters (forcefield)
   integer,      public, parameter :: ForcefieldCHARMM     = 1
@@ -447,11 +593,13 @@ module sp_enefunc_str_mod
   integer,      public, parameter :: ForcefieldGROAMBER   = 3
   integer,      public, parameter :: ForcefieldGROMARTINI = 4
   integer,      public, parameter :: ForcefieldAAGO       = 5
-  character(*), public, parameter :: ForceFieldTypes(5)   = (/'CHARMM    ', &
+  integer,      public, parameter :: ForcefieldCAGO       = 6
+  character(*), public, parameter :: ForceFieldTypes(6)   = (/'CHARMM    ', &
                                                               'AMBER     ', &
                                                               'GROAMBER  ', &
                                                               'GROMARTINI', &
-                                                              'AAGO      '/)
+                                                              'AAGO      ', &
+                                                              'CAGO      '/)
   ! FFT scheme
   integer,      public, parameter :: FFT_1dallgather      = 1
   integer,      public, parameter :: FFT_1dalltoall       = 2
@@ -478,23 +626,43 @@ module sp_enefunc_str_mod
                                                               'ENERGY', &
                                                               'EPRESS'/)
 
-  ! variables for maximum numbers in one cell (these number will be updated)
-  integer,      public            :: MaxBond   = 0
-  integer,      public            :: MaxAngle  = 0
-  integer,      public            :: MaxDihe   = 0
-  integer,      public            :: MaxImpr   = 0
-  integer,      public            :: MaxCmap   = 0
-  integer,      public            :: MaxRest   = 100
-  integer,      public            :: MaxExcl   = 36
-  integer,      public            :: MaxContact= 0
+  ! parameters (FEP calculation)
+  integer,      public, parameter :: FEP_PRESERVE         = 0
+  integer,      public, parameter :: FEP_APPEAR           = 1
+  integer,      public, parameter :: FEP_VANISH           = -1
 
-  integer,      public            :: BondMove  = 0
-  integer,      public            :: AngleMove = 0
-  integer,      public            :: DiheMove  = 0
-  integer,      public            :: ImprMove  = 0
-  integer,      public            :: CmapMove  = 10
-  integer,      public            :: RestMove  = 50
-  integer,      public            :: ContactMove  = 0
+  ! variables for maximum numbers in one cell (these number will be updated)
+
+  integer,      public            :: MaxBond       = 0
+  integer,      public            :: MaxAngle      = 0
+  integer,      public            :: MaxDihe       = 0
+  integer,      public            :: MaxImpr       = 0
+  integer,      public            :: MaxCmap       = 0
+  integer,      public            :: MaxVsite2     = 0
+  integer,      public            :: MaxVsite3     = 0
+  integer,      public            :: MaxVsite3fd   = 0
+  integer,      public            :: MaxVsite3fad  = 0
+  integer,      public            :: MaxVsite3out  = 0
+  integer,      public            :: MaxVsite4fdn  = 0
+  integer,      public            :: MaxVsiten     = 0
+  integer,      public            :: MaxRest       = 100
+  integer,      public            :: MaxExcl       = 36
+  integer,      public            :: MaxContact    = 0
+
+  integer,      public            :: BondMove      = 0
+  integer,      public            :: AngleMove     = 0
+  integer,      public            :: DiheMove      = 0
+  integer,      public            :: ImprMove      = 0
+  integer,      public            :: CmapMove      = 10
+  integer,      public            :: Vsite2Move    = 0
+  integer,      public            :: Vsite3Move    = 0
+  integer,      public            :: Vsite3fdMove  = 0
+  integer,      public            :: Vsite3fadMove = 0
+  integer,      public            :: Vsite3outMove = 0
+  integer,      public            :: Vsite4fdnMove = 0
+  integer,      public            :: VsitenMove    = 0
+  integer,      public            :: ContactMove   = 0
+  integer,      public            :: RestMove      = 50
 
   integer,      public, parameter :: MaxAtomCls = 1000
   integer,      public            :: max_class
@@ -646,8 +814,16 @@ contains
                      enefunc%num_improper,    &
                      enefunc%num_cmap,        &
                      enefunc%num_contact,     &
+                     enefunc%num_excl,        &
                      enefunc%num_restraint,   &
-                     enefunc%nfitting)
+                     enefunc%nfitting,        &
+                     enefunc%num_vsite2,      &
+                     enefunc%num_vsite3,      &
+                     enefunc%num_vsite3fd,    &
+                     enefunc%num_vsite3fad,   &
+                     enefunc%num_vsite3out,   &
+                     enefunc%num_vsite4fdn,   &
+                     enefunc%num_vsiten)
       end if
 
       if (.not. allocated(enefunc%num_bond)) &
@@ -658,6 +834,14 @@ contains
                  enefunc%num_improper   (var_size), &
                  enefunc%num_cmap       (var_size), &
                  enefunc%num_contact    (var_size), &
+                 enefunc%num_excl       (var_size), &
+                 enefunc%num_vsite2     (var_size), &
+                 enefunc%num_vsite3     (var_size), &
+                 enefunc%num_vsite3fd   (var_size), &
+                 enefunc%num_vsite3fad  (var_size), &
+                 enefunc%num_vsite3out  (var_size), &
+                 enefunc%num_vsite4fdn  (var_size), &
+                 enefunc%num_vsiten     (var_size), &
                  enefunc%num_restraint  (var_size), &
                  enefunc%nfitting       (var_size), &
                  stat = alloc_stat)
@@ -669,6 +853,14 @@ contains
       enefunc%num_improper   (1:var_size) = 0
       enefunc%num_cmap       (1:var_size) = 0
       enefunc%num_contact    (1:var_size) = 0
+      enefunc%num_excl       (1:var_size) = 0
+      enefunc%num_vsite2     (1:var_size) = 0
+      enefunc%num_vsite3     (1:var_size) = 0
+      enefunc%num_vsite3fd   (1:var_size) = 0
+      enefunc%num_vsite3fad  (1:var_size) = 0
+      enefunc%num_vsite3out  (1:var_size) = 0
+      enefunc%num_vsite4fdn  (1:var_size) = 0
+      enefunc%num_vsiten     (1:var_size) = 0
       enefunc%num_restraint  (1:var_size) = 0
       enefunc%nfitting       (1:var_size) = 0
 
@@ -701,6 +893,7 @@ contains
         if (size(enefunc%contact_list(1,1,:)) /= var_size) &
           deallocate(enefunc%contact_list,   &
                      enefunc%contact_lj12,   &
+                     enefunc%contact_lj10,   &
                      enefunc%contact_lj6,    &
                      stat = dealloc_stat)
       end if
@@ -708,11 +901,13 @@ contains
       if (.not. allocated(enefunc%contact_list)) &
         allocate(enefunc%contact_list(2, MaxContact, var_size), &
                  enefunc%contact_lj12(MaxContact, var_size),    &
+                 enefunc%contact_lj10(MaxContact, var_size),    &
                  enefunc%contact_lj6(MaxContact, var_size),     &
                  stat = alloc_stat)
 
       enefunc%contact_list(1:2, 1:MaxContact, 1:var_size) = 0
       enefunc%contact_lj12(1:MaxContact, 1:var_size)      = 0.0_wp
+      enefunc%contact_lj10(1:MaxContact, 1:var_size)      = 0.0_wp
       enefunc%contact_lj6 (1:MaxContact, 1:var_size)      = 0.0_wp
 
     case (EneFuncAngl)
@@ -954,6 +1149,146 @@ contains
       enefunc%nb14_qq_scale1 (1:MaxDihe, 1:var_size)           = 0.0_wp
       enefunc%nb14_lj_scale1 (1:MaxDihe, 1:var_size)           = 0.0_wp
 
+    case (EneFuncVsite2)
+
+      if (allocated(enefunc%vsite2_list)) then
+        if (size(enefunc%vsite2_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite2_list, &
+                     enefunc%vsite2_a,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite2_list)) &
+        allocate(enefunc%vsite2_list(3, MaxVsite2, var_size), &
+                 enefunc%vsite2_a   (   MaxVsite2, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite2_list(1:3, 1:MaxVsite2, 1:var_size) = 0
+      enefunc%vsite2_a   (     1:MaxVsite2, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsite3)
+
+      if (allocated(enefunc%vsite3_list)) then
+        if (size(enefunc%vsite3_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite3_list, &
+                     enefunc%vsite3_a,    &
+                     enefunc%vsite3_b,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite3_list)) &
+        allocate(enefunc%vsite3_list(4, MaxVsite3, var_size), &
+                 enefunc%vsite3_a   (   MaxVsite3, var_size), &
+                 enefunc%vsite3_b   (   MaxVsite3, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite3_list(1:4, 1:MaxVsite3, 1:var_size) = 0
+      enefunc%vsite3_a   (     1:MaxVsite3, 1:var_size) = 0.0_wp
+      enefunc%vsite3_b   (     1:MaxVsite3, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsite3fd)
+
+      if (allocated(enefunc%vsite3fd_list)) then
+        if (size(enefunc%vsite3fd_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite3fd_list, &
+                     enefunc%vsite3fd_a,    &
+                     enefunc%vsite3fd_d,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite3fd_list)) &
+        allocate(enefunc%vsite3fd_list(4, MaxVsite3fd, var_size), &
+                 enefunc%vsite3fd_a   (   MaxVsite3fd, var_size), &
+                 enefunc%vsite3fd_d   (   MaxVsite3fd, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite3fd_list(1:4, 1:MaxVsite3fd, 1:var_size) = 0
+      enefunc%vsite3fd_a   (     1:MaxVsite3fd, 1:var_size) = 0.0_wp
+      enefunc%vsite3fd_d   (     1:MaxVsite3fd, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsite3fad)
+
+      if (allocated(enefunc%vsite3fad_list)) then
+        if (size(enefunc%vsite3fad_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite3fad_list,  &
+                     enefunc%vsite3fad_theta, &
+                     enefunc%vsite3fad_d,     &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite3fad_list)) &
+        allocate(enefunc%vsite3fad_list (4, MaxVsite3fad, var_size), &
+                 enefunc%vsite3fad_theta(   MaxVsite3fad, var_size), &
+                 enefunc%vsite3fad_d    (   MaxVsite3fad, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite3fad_list (1:4, 1:MaxVsite3fad, 1:var_size) = 0
+      enefunc%vsite3fad_theta(     1:MaxVsite3fad, 1:var_size) = 0.0_wp
+      enefunc%vsite3fad_d    (     1:MaxVsite3fad, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsite3out)
+
+      if (allocated(enefunc%vsite3out_list)) then
+        if (size(enefunc%vsite3out_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite3out_list, &
+                     enefunc%vsite3out_a,    &
+                     enefunc%vsite3out_b,    &
+                     enefunc%vsite3out_c,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite3out_list)) &
+        allocate(enefunc%vsite3out_list(4, MaxVsite3out, var_size), &
+                 enefunc%vsite3out_a   (   MaxVsite3out, var_size), &
+                 enefunc%vsite3out_b   (   MaxVsite3out, var_size), &
+                 enefunc%vsite3out_c   (   MaxVsite3out, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite3out_list(1:4, 1:MaxVsite3out, 1:var_size) = 0
+      enefunc%vsite3out_a   (     1:MaxVsite3out, 1:var_size) = 0.0_wp
+      enefunc%vsite3out_b   (     1:MaxVsite3out, 1:var_size) = 0.0_wp
+      enefunc%vsite3out_c   (     1:MaxVsite3out, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsite4fdn)
+
+      if (allocated(enefunc%vsite4fdn_list)) then
+        if (size(enefunc%vsite4fdn_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsite4fdn_list, &
+                     enefunc%vsite4fdn_a,    &
+                     enefunc%vsite4fdn_b,    &
+                     enefunc%vsite4fdn_c,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsite4fdn_list)) &
+        allocate(enefunc%vsite4fdn_list(5, MaxVsite4fdn, var_size), &
+                 enefunc%vsite4fdn_a   (   MaxVsite4fdn, var_size), &
+                 enefunc%vsite4fdn_b   (   MaxVsite4fdn, var_size), &
+                 enefunc%vsite4fdn_c   (   MaxVsite4fdn, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsite4fdn_list(1:5, 1:MaxVsite4fdn, 1:var_size) = 0
+      enefunc%vsite4fdn_a   (     1:MaxVsite4fdn, 1:var_size) = 0.0_wp
+      enefunc%vsite4fdn_b   (     1:MaxVsite4fdn, 1:var_size) = 0.0_wp
+      enefunc%vsite4fdn_c   (     1:MaxVsite4fdn, 1:var_size) = 0.0_wp
+
+    case (EneFuncVsiten)
+
+      if (allocated(enefunc%vsiten_list)) then
+        if (size(enefunc%vsiten_list(1,1,:)) .ne. var_size) &
+          deallocate(enefunc%vsiten_list, &
+                     enefunc%vsiten_n,    &
+                     stat = dealloc_stat)
+      end if
+
+      if (.not. allocated(enefunc%vsiten_list)) &
+        allocate(enefunc%vsiten_list(10, MaxVsiten, var_size), &
+                 enefunc%vsiten_n   (    MaxVsiten, var_size), &
+                 stat = alloc_stat)
+
+      enefunc%vsiten_list(1:10, 1:MaxVsiten, 1:var_size) = 0
+      enefunc%vsiten_n   (      1:MaxVsiten, 1:var_size) = 0
+
     case (EneFuncRefg)
 
       if (allocated(enefunc%restraint_numatoms)) then
@@ -1141,6 +1476,44 @@ contains
                      enefunc%cmap_add,              &
                      enefunc%cmap_exit_index,       &
                      enefunc%buf_cmap_integer,      &
+                     enefunc%excl_exit,             &
+                     enefunc%excl_add,              &
+                     enefunc%excl_exit_index,       &
+                     enefunc%buf_excl_integer,      &
+                     enefunc%vsite2_exit,           &
+                     enefunc%vsite2_add,            &
+                     enefunc%vsite2_exit_index,     &
+                     enefunc%buf_vsite2_integer,    &
+                     enefunc%buf_vsite2_real,       &
+                     enefunc%vsite3_exit,           &
+                     enefunc%vsite3_add,            &
+                     enefunc%vsite3_exit_index,     &
+                     enefunc%buf_vsite3_integer,    &
+                     enefunc%buf_vsite3_real,       &
+                     enefunc%vsite3fd_exit,         &
+                     enefunc%vsite3fd_add,          &
+                     enefunc%vsite3fd_exit_index,   &
+                     enefunc%buf_vsite3fd_integer,  &
+                     enefunc%buf_vsite3fd_real,     &
+                     enefunc%vsite3fad_exit,        &
+                     enefunc%vsite3fad_add,         &
+                     enefunc%vsite3fad_exit_index,  &
+                     enefunc%buf_vsite3fad_integer, &
+                     enefunc%buf_vsite3fad_real,    &
+                     enefunc%vsite3out_exit,        &
+                     enefunc%vsite3out_add,         &
+                     enefunc%vsite3out_exit_index,  &
+                     enefunc%buf_vsite3out_integer, &
+                     enefunc%buf_vsite3out_real,    &
+                     enefunc%vsite4fdn_exit,        &
+                     enefunc%vsite4fdn_add,         &
+                     enefunc%vsite4fdn_exit_index,  &
+                     enefunc%buf_vsite4fdn_integer, &
+                     enefunc%buf_vsite4fdn_real,    &
+                     enefunc%vsiten_exit,           &
+                     enefunc%vsiten_add,            &
+                     enefunc%vsiten_exit_index,     &
+                     enefunc%buf_vsiten_integer,    &
                      enefunc%restraint_exit,        &
                      enefunc%restraint_add,         &
                      enefunc%restraint_exit_index,  &
@@ -1155,91 +1528,167 @@ contains
       end if
 
       if (.not. allocated(enefunc%bond_exit)) &
-        allocate(enefunc%bond_exit            (var_size),               &
-                 enefunc%bond_add             (var_size1),              &
-                 enefunc%bond_exit_index      (BondMove, var_size),     &
-                 enefunc%buf_bond_integer     (3, BondMove, var_size1), &
-                 enefunc%buf_bond_real        (2, BondMove, var_size1), &
-                 enefunc%angle_exit           (var_size),               &
-                 enefunc%angle_add            (var_size1),              &
-                 enefunc%angle_exit_index     (AngleMove, var_size),    &
-                 enefunc%buf_angle_integer    (4, AngleMove, var_size1),&
-                 enefunc%buf_angle_real       (4, AngleMove, var_size1),&
-                 enefunc%dihed_exit           (var_size),               &
-                 enefunc%dihed_add            (var_size1),              &
-                 enefunc%dihed_exit_index     (DiheMove, var_size),     &
-                 enefunc%buf_dihed_integer    (6, DiheMove, var_size1), &
-                 enefunc%buf_dihed_real       (2, DiheMove, var_size1), &
-                 enefunc%rb_dihed_exit        (var_size),               &
-                 enefunc%rb_dihed_add         (var_size1),              &
-                 enefunc%rb_dihed_exit_index  (DiheMove, var_size),     &
-                 enefunc%buf_rb_dihed_integer (4, DiheMove, var_size1), &
-                 enefunc%buf_rb_dihed_real    (6, DiheMove, var_size1), &
-                 enefunc%impr_exit            (var_size),               &
-                 enefunc%impr_add             (var_size1),              &
-                 enefunc%impr_exit_index      (ImprMove, var_size),     &
-                 enefunc%buf_impr_integer     (5, ImprMove, var_size1), &
-                 enefunc%buf_impr_real        (2, ImprMove, var_size1), &
-                 enefunc%cmap_exit            (var_size),               &
-                 enefunc%cmap_add             (var_size1),              &
-                 enefunc%cmap_exit_index      (CmapMove, var_size),     &
-                 enefunc%buf_cmap_integer     (9, CmapMove, var_size1), &
-                 enefunc%contact_exit         (var_size),               &
-                 enefunc%contact_add          (var_size1),              &
-                 enefunc%contact_exit_index   (ContactMove, var_size),  &
-                 enefunc%buf_contact_integer  (2, ContactMove, var_size1), &
-                 enefunc%buf_contact_real     (2, ContactMove, var_size1), &
-                 enefunc%restraint_exit       (var_size),               &
-                 enefunc%restraint_add        (var_size1),              &
-                 enefunc%restraint_exit_index (RestMove, var_size),     &
-                 enefunc%buf_restraint_integer(RestMove, var_size1),    &
-                 enefunc%buf_restraint_real   (7, RestMove, var_size1), &
-                 enefunc%fitting_exit         (var_size),               &
-                 enefunc%fitting_add          (var_size1),              &
-                 enefunc%fitting_exit_index   (RestMove, var_size),     &
-                 enefunc%buf_fitting_integer  (RestMove, var_size1),    &
-                 enefunc%buf_fitting_real     (7, RestMove, var_size1), &
+        allocate(enefunc%bond_exit            (var_size),                    &
+                 enefunc%bond_add             (var_size1),                   &
+                 enefunc%bond_exit_index      (BondMove, var_size),          &
+                 enefunc%buf_bond_integer     (3, BondMove, var_size1),      &
+                 enefunc%buf_bond_real        (2, BondMove, var_size1),      &
+                 enefunc%angle_exit           (var_size),                    &
+                 enefunc%angle_add            (var_size1),                   &
+                 enefunc%angle_exit_index     (AngleMove, var_size),         &
+                 enefunc%buf_angle_integer    (4, AngleMove, var_size1),     &
+                 enefunc%buf_angle_real       (4, AngleMove, var_size1),     &
+                 enefunc%dihed_exit           (var_size),                    &
+                 enefunc%dihed_add            (var_size1),                   &
+                 enefunc%dihed_exit_index     (DiheMove, var_size),          &
+                 enefunc%buf_dihed_integer    (6, DiheMove, var_size1),      &
+                 enefunc%buf_dihed_real       (2, DiheMove, var_size1),      &
+                 enefunc%rb_dihed_exit        (var_size),                    &
+                 enefunc%rb_dihed_add         (var_size1),                   &
+                 enefunc%rb_dihed_exit_index  (DiheMove, var_size),          &
+                 enefunc%buf_rb_dihed_integer (4, DiheMove, var_size1),      &
+                 enefunc%buf_rb_dihed_real    (6, DiheMove, var_size1),      &
+                 enefunc%impr_exit            (var_size),                    &
+                 enefunc%impr_add             (var_size1),                   &
+                 enefunc%impr_exit_index      (ImprMove, var_size),          &
+                 enefunc%buf_impr_integer     (5, ImprMove, var_size1),      &
+                 enefunc%buf_impr_real        (2, ImprMove, var_size1),      &
+                 enefunc%cmap_exit            (var_size),                    &
+                 enefunc%cmap_add             (var_size1),                   &
+                 enefunc%cmap_exit_index      (CmapMove, var_size),          &
+                 enefunc%buf_cmap_integer     (9, CmapMove, var_size1),      &
+                 enefunc%contact_exit         (var_size),                    &
+                 enefunc%contact_add          (var_size1),                   &
+                 enefunc%contact_exit_index   (ContactMove, var_size),       &
+                 enefunc%excl_exit            (var_size),                    &
+                 enefunc%excl_add             (var_size1),                   &
+                 enefunc%excl_exit_index      ((BondMove+AngleMove),var_size),&
+                 enefunc%buf_excl_integer     (2, (BondMove+AngleMove), var_size1), &
+                 enefunc%buf_contact_integer  (2, ContactMove, var_size1),   &
+                 enefunc%buf_contact_real     (3, ContactMove, var_size1),   &
+                 enefunc%restraint_exit       (var_size),                    &
+                 enefunc%restraint_add        (var_size1),                   &
+                 enefunc%restraint_exit_index (RestMove, var_size),          &
+                 enefunc%buf_restraint_integer(RestMove, var_size1),         &
+                 enefunc%buf_restraint_real   (7, RestMove, var_size1),      &
+                 enefunc%vsite2_exit          (var_size),                    &
+                 enefunc%vsite2_add           (var_size1),                   &
+                 enefunc%vsite2_exit_index    (Vsite2Move, var_size),        &
+                 enefunc%buf_vsite2_integer   (3, Vsite2Move,var_size1),     &
+                 enefunc%buf_vsite2_real      (1, Vsite2Move,var_size1),     &
+                 enefunc%vsite3_exit          (var_size),                    &
+                 enefunc%vsite3_add           (var_size1),                   &
+                 enefunc%vsite3_exit_index    (Vsite3Move, var_size),        &
+                 enefunc%buf_vsite3_integer   (4, Vsite3Move,var_size1),     &
+                 enefunc%buf_vsite3_real      (2, Vsite3Move,var_size1),     &
+                 enefunc%vsite3fd_exit        (var_size),                    &
+                 enefunc%vsite3fd_add         (var_size1),                   &
+                 enefunc%vsite3fd_exit_index  (Vsite3fdMove, var_size),      &
+                 enefunc%buf_vsite3fd_integer (4, Vsite3fdMove, var_size1),  &
+                 enefunc%buf_vsite3fd_real    (2, Vsite3fdMove, var_size1),  &
+                 enefunc%vsite3fad_exit       (var_size),                    &
+                 enefunc%vsite3fad_add        (var_size1),                   &
+                 enefunc%vsite3fad_exit_index (Vsite3fadMove, var_size),     &
+                 enefunc%buf_vsite3fad_integer(4, Vsite3fadMove, var_size1), &
+                 enefunc%buf_vsite3fad_real   (2, Vsite3fadMove, var_size1), &
+                 enefunc%vsite3out_exit       (var_size),                    &
+                 enefunc%vsite3out_add        (var_size1),                   &
+                 enefunc%vsite3out_exit_index (Vsite3outMove, var_size),     &
+                 enefunc%buf_vsite3out_integer(4, Vsite3outMove, var_size1), &
+                 enefunc%buf_vsite3out_real   (3, Vsite3outMove, var_size1), &
+                 enefunc%vsite4fdn_exit       (var_size),                    &
+                 enefunc%vsite4fdn_add        (var_size1),                   &
+                 enefunc%vsite4fdn_exit_index (Vsite4fdnMove, var_size),     &
+                 enefunc%buf_vsite4fdn_integer(5, Vsite4fdnMove, var_size1), &
+                 enefunc%buf_vsite4fdn_real   (3, Vsite4fdnMove, var_size1), &
+                 enefunc%vsiten_exit          (var_size),                    &
+                 enefunc%vsiten_add           (var_size1),                   &
+                 enefunc%vsiten_exit_index    (VsitenMove, var_size),        &
+                 enefunc%buf_vsiten_integer   (10, VsitenMove, var_size1),   &
+                 enefunc%fitting_exit         (var_size),                    &
+                 enefunc%fitting_add          (var_size1),                   &
+                 enefunc%fitting_exit_index   (RestMove, var_size),          &
+                 enefunc%buf_fitting_integer  (RestMove, var_size1),         &
+                 enefunc%buf_fitting_real     (7, RestMove, var_size1),      &
                  stat = alloc_stat)
 
-      enefunc%bond_exit            (1:var_size)                    = 0
-      enefunc%bond_add             (1:var_size1)                   = 0
-      enefunc%bond_exit_index      (1:BondMove, 1:var_size)        = 0
-      enefunc%buf_bond_integer     (1:3, 1:BondMove, 1:var_size1)  = 0
-      enefunc%buf_bond_real        (1:2, 1:BondMove, 1:var_size1)  = 0.0_wp
-      enefunc%angle_exit           (1:var_size)                    = 0
-      enefunc%angle_add            (1:var_size1)                   = 0
-      enefunc%angle_exit_index     (1:AngleMove, 1:var_size)       = 0
-      enefunc%buf_angle_integer    (1:4, 1:AngleMove, 1:var_size1) = 0
-      enefunc%buf_angle_real       (1:4, 1:AngleMove, 1:var_size1) = 0.0_wp
-      enefunc%dihed_exit           (1:var_size)                    = 0
-      enefunc%dihed_add            (1:var_size1)                   = 0
-      enefunc%dihed_exit_index     (1:DiheMove, 1:var_size)        = 0
-      enefunc%buf_dihed_integer    (1:6, 1:DiheMove, 1:var_size1)  = 0
-      enefunc%buf_dihed_real       (1:2, 1:DiheMove, 1:var_size1)  = 0.0_wp
-      enefunc%rb_dihed_exit        (1:var_size)                    = 0
-      enefunc%rb_dihed_add         (1:var_size1)                   = 0
-      enefunc%rb_dihed_exit_index  (1:DiheMove, 1:var_size)        = 0
-      enefunc%buf_rb_dihed_integer (1:4, 1:DiheMove, 1:var_size1)  = 0
-      enefunc%buf_rb_dihed_real    (1:6, 1:DiheMove, 1:var_size1)  = 0.0_wp
-      enefunc%impr_exit            (1:var_size)                    = 0
-      enefunc%impr_add             (1:var_size1)                   = 0
-      enefunc%impr_exit_index      (1:ImprMove, 1:var_size)        = 0
-      enefunc%buf_impr_integer     (1:5, 1:ImprMove, 1:var_size1)  = 0
-      enefunc%buf_impr_real        (1:2, 1:ImprMove, 1:var_size1)  = 0.0_wp
-      enefunc%cmap_exit            (1:var_size)                    = 0
-      enefunc%cmap_add             (1:var_size1)                   = 0
-      enefunc%cmap_exit_index      (1:CmapMove, 1:var_size)        = 0
-      enefunc%buf_cmap_integer     (1:9, 1:CmapMove, 1:var_size1)  = 0
+      enefunc%bond_exit            (1:var_size)                        = 0
+      enefunc%bond_add             (1:var_size1)                       = 0
+      enefunc%bond_exit_index      (1:BondMove, 1:var_size)            = 0
+      enefunc%buf_bond_integer     (1:3, 1:BondMove, 1:var_size1)      = 0
+      enefunc%buf_bond_real        (1:2, 1:BondMove, 1:var_size1)      = 0.0_wp
+      enefunc%angle_exit           (1:var_size)                        = 0
+      enefunc%angle_add            (1:var_size1)                       = 0
+      enefunc%angle_exit_index     (1:AngleMove, 1:var_size)           = 0
+      enefunc%buf_angle_integer    (1:4, 1:AngleMove, 1:var_size1)     = 0
+      enefunc%buf_angle_real       (1:4, 1:AngleMove, 1:var_size1)     = 0.0_wp
+      enefunc%dihed_exit           (1:var_size)                        = 0
+      enefunc%dihed_add            (1:var_size1)                       = 0
+      enefunc%dihed_exit_index     (1:DiheMove, 1:var_size)            = 0
+      enefunc%buf_dihed_integer    (1:6, 1:DiheMove, 1:var_size1)      = 0
+      enefunc%buf_dihed_real       (1:2, 1:DiheMove, 1:var_size1)      = 0.0_wp
+      enefunc%rb_dihed_exit        (1:var_size)                        = 0
+      enefunc%rb_dihed_add         (1:var_size1)                       = 0
+      enefunc%rb_dihed_exit_index  (1:DiheMove, 1:var_size)            = 0
+      enefunc%buf_rb_dihed_integer (1:4, 1:DiheMove, 1:var_size1)      = 0
+      enefunc%buf_rb_dihed_real    (1:6, 1:DiheMove, 1:var_size1)      = 0.0_wp
+      enefunc%impr_exit            (1:var_size)                        = 0
+      enefunc%impr_add             (1:var_size1)                       = 0
+      enefunc%impr_exit_index      (1:ImprMove, 1:var_size)            = 0
+      enefunc%buf_impr_integer     (1:5, 1:ImprMove, 1:var_size1)      = 0
+      enefunc%buf_impr_real        (1:2, 1:ImprMove, 1:var_size1)      = 0.0_wp
+      enefunc%cmap_exit            (1:var_size)                        = 0
+      enefunc%cmap_add             (1:var_size1)                       = 0
+      enefunc%cmap_exit_index      (1:CmapMove, 1:var_size)            = 0
+      enefunc%buf_cmap_integer     (1:9, 1:CmapMove, 1:var_size1)      = 0
+      enefunc%excl_exit            (1:var_size)                        = 0
+      enefunc%excl_add             (1:var_size1)                       = 0
+      enefunc%excl_exit_index      (1:(BondMove+AngleMove),1:var_size) = 0
+      enefunc%buf_excl_integer     (1:2, 1:(BondMove+AngleMove), 1:var_size1) = 0
+      enefunc%vsite2_exit          (1:var_size)                        = 0
+      enefunc%vsite2_add           (1:var_size1)                       = 0
+      enefunc%vsite2_exit_index    (1:Vsite2Move, 1:var_size)          = 0
+      enefunc%buf_vsite2_integer   (1:3, 1:Vsite2Move,1:var_size1)     = 0
+      enefunc%buf_vsite2_real      (1:1, 1:Vsite2Move,1:var_size1)     = 0.0_wp
+      enefunc%vsite3_exit          (1:var_size)                        = 0
+      enefunc%vsite3_add           (1:var_size1)                       = 0
+      enefunc%vsite3_exit_index    (1:Vsite3Move, 1:var_size)          = 0
+      enefunc%buf_vsite3_integer   (1:4, 1:Vsite3Move,1:var_size1)     = 0
+      enefunc%buf_vsite3_real      (1:2, 1:Vsite3Move,1:var_size1)     = 0.0_wp
+      enefunc%vsite3fd_exit        (1:var_size)                        = 0
+      enefunc%vsite3fd_add         (1:var_size1)                       = 0
+      enefunc%vsite3fd_exit_index  (1:Vsite3fdMove, 1:var_size)        = 0
+      enefunc%buf_vsite3fd_integer (1:4, 1:Vsite3fdMove, 1:var_size1)  = 0
+      enefunc%buf_vsite3fd_real    (1:2, 1:Vsite3fdMove, 1:var_size1)  = 0.0_wp
+      enefunc%vsite3fad_exit       (1:var_size)                        = 0
+      enefunc%vsite3fad_add        (1:var_size1)                       = 0
+      enefunc%vsite3fad_exit_index (1:Vsite3fadMove, 1:var_size)       = 0
+      enefunc%buf_vsite3fad_integer(1:4, 1:Vsite3fadMove, 1:var_size1) = 0
+      enefunc%buf_vsite3fad_real   (1:2, 1:Vsite3fadMove, 1:var_size1) = 0.0_wp
+      enefunc%vsite3out_exit       (1:var_size)                        = 0
+      enefunc%vsite3out_add        (1:var_size1)                       = 0
+      enefunc%vsite3out_exit_index (1:Vsite3outMove, 1:var_size)       = 0
+      enefunc%buf_vsite3out_integer(1:4, 1:Vsite3outMove, 1:var_size1) = 0
+      enefunc%buf_vsite3out_real   (1:3, 1:Vsite3outMove, 1:var_size1) = 0.0_wp
+      enefunc%vsite4fdn_exit       (1:var_size)                        = 0
+      enefunc%vsite4fdn_add        (1:var_size1)                       = 0
+      enefunc%vsite4fdn_exit_index (1:Vsite4fdnMove, 1:var_size)       = 0
+      enefunc%buf_vsite4fdn_integer(1:5, 1:Vsite4fdnMove, 1:var_size1) = 0
+      enefunc%buf_vsite4fdn_real   (1:3, 1:Vsite4fdnMove, 1:var_size1) = 0.0_wp
+      enefunc%vsiten_exit          (1:var_size)                        = 0
+      enefunc%vsiten_add           (1:var_size1)                       = 0
+      enefunc%vsiten_exit_index    (1:VsitenMove, 1:var_size)          = 0
+      enefunc%buf_vsiten_integer   (1:10, 1:VsitenMove, 1:var_size1)   = 0
+      enefunc%restraint_exit       (1:var_size)                        = 0
+      enefunc%restraint_add        (1:var_size1)                       = 0
+      enefunc%restraint_exit_index (1:RestMove, 1:var_size)            = 0
+      enefunc%buf_restraint_integer(1:RestMove, 1:var_size1)           = 0
+      enefunc%buf_restraint_real   (1:7, RestMove, 1:var_size1)        = 0.0_wp
       enefunc%contact_exit         (1:var_size)                    = 0
       enefunc%contact_add          (1:var_size1)                   = 0
       enefunc%contact_exit_index   (1:ContactMove, 1:var_size)        = 0
       enefunc%buf_contact_integer  (1:2, 1:ContactMove, 1:var_size1)  = 0
-      enefunc%buf_contact_real     (1:2, 1:ContactMove, 1:var_size1)  = 0.0_wp
-      enefunc%restraint_exit       (1:var_size)                    = 0
-      enefunc%restraint_add        (1:var_size1)                   = 0
-      enefunc%restraint_exit_index (1:RestMove, 1:var_size)        = 0
-      enefunc%buf_restraint_integer(1:RestMove, 1:var_size1)       = 0
-      enefunc%buf_restraint_real   (1:7, RestMove, 1:var_size1)    = 0.0_wp
+      enefunc%buf_contact_real     (1:3, 1:ContactMove, 1:var_size1)  = 0.0_wp
       enefunc%fitting_exit         (1:var_size)                    = 0
       enefunc%fitting_add          (1:var_size1)                   = 0
       enefunc%fitting_exit_index   (1:RestMove, 1:var_size)        = 0
@@ -1504,6 +1953,7 @@ contains
                    enefunc%num_improper,    &
                    enefunc%num_cmap,        &
                    enefunc%num_restraint,   &
+                   enefunc%num_excl,        &
                    stat = dealloc_stat)
       end if
 
@@ -1573,6 +2023,7 @@ contains
       if (allocated(enefunc%contact_list)) then
         deallocate(enefunc%contact_list,   &
                    enefunc%contact_lj12,   &
+                   enefunc%contact_lj10,   &
                    enefunc%contact_lj6,    &
                    stat = dealloc_stat)
       end if
@@ -1621,6 +2072,69 @@ contains
                    enefunc%nb14_lj_scale,   &
                    enefunc%nb14_qq_scale1,   &
                    enefunc%nb14_lj_scale1,   &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite2)
+
+      if (allocated(enefunc%vsite2_list)) then
+        deallocate(enefunc%vsite2_list, &
+                   enefunc%vsite2_a,    &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite3)
+
+      if (allocated(enefunc%vsite3_list)) then
+        deallocate(enefunc%vsite3_list, &
+                   enefunc%vsite3_a,    &
+                   enefunc%vsite3_b,    &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite3fd)
+
+      if (allocated(enefunc%vsite3fd_list)) then
+        deallocate(enefunc%vsite3fd_list, &
+                   enefunc%vsite3fd_a,    &
+                   enefunc%vsite3fd_d,    &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite3fad)
+
+      if (allocated(enefunc%vsite3fad_list)) then
+        deallocate(enefunc%vsite3fad_list,  &
+                   enefunc%vsite3fad_theta, &
+                   enefunc%vsite3fad_d,     &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite3out)
+
+      if (allocated(enefunc%vsite3out_list)) then
+        deallocate(enefunc%vsite3out_list, &
+                   enefunc%vsite3out_a,    &
+                   enefunc%vsite3out_b,    &
+                   enefunc%vsite3out_c,    &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsite4fdn)
+
+      if (allocated(enefunc%vsite4fdn_list)) then
+        deallocate(enefunc%vsite4fdn_list, &
+                   enefunc%vsite4fdn_a,    &
+                   enefunc%vsite4fdn_b,    &
+                   enefunc%vsite4fdn_c,    &
+                   stat = dealloc_stat)
+      end if
+
+    case (EneFuncVsiten)
+
+      if (allocated(enefunc%vsiten_list)) then
+        deallocate(enefunc%vsiten_list, &
+                   enefunc%vsiten_n,    &
                    stat = dealloc_stat)
       end if
 
@@ -1718,6 +2232,44 @@ contains
                    enefunc%cmap_add,              &
                    enefunc%cmap_exit_index,       &
                    enefunc%buf_cmap_integer,      &
+                   enefunc%excl_exit,             &
+                   enefunc%excl_add,              &
+                   enefunc%excl_exit_index,       &
+                   enefunc%buf_excl_integer,      &
+                   enefunc%vsite2_exit,           &
+                   enefunc%vsite2_add,            &
+                   enefunc%vsite2_exit_index,     &
+                   enefunc%buf_vsite2_integer,    &
+                   enefunc%buf_vsite2_real,       &
+                   enefunc%vsite3_exit,           &
+                   enefunc%vsite3_add,            &
+                   enefunc%vsite3_exit_index,     &
+                   enefunc%buf_vsite3_integer,    &
+                   enefunc%buf_vsite3_real,       &
+                   enefunc%vsite3fd_exit,         &
+                   enefunc%vsite3fd_add,          &
+                   enefunc%vsite3fd_exit_index,   &
+                   enefunc%buf_vsite3fd_integer,  &
+                   enefunc%buf_vsite3fd_real,     &
+                   enefunc%vsite3fad_exit,        &
+                   enefunc%vsite3fad_add,         &
+                   enefunc%vsite3fad_exit_index,  &
+                   enefunc%buf_vsite3fad_integer, &
+                   enefunc%buf_vsite3fad_real,    &
+                   enefunc%vsite3out_exit,        &
+                   enefunc%vsite3out_add,         &
+                   enefunc%vsite3out_exit_index,  &
+                   enefunc%buf_vsite3out_integer, &
+                   enefunc%buf_vsite3out_real,    &
+                   enefunc%vsite4fdn_exit,        &
+                   enefunc%vsite4fdn_add,         &
+                   enefunc%vsite4fdn_exit_index,  &
+                   enefunc%buf_vsite4fdn_integer, &
+                   enefunc%buf_vsite4fdn_real,    &
+                   enefunc%vsiten_exit,           &
+                   enefunc%vsiten_add,            &
+                   enefunc%vsiten_exit_index,     &
+                   enefunc%buf_vsiten_integer,    &
                    enefunc%restraint_exit,        &
                    enefunc%restraint_add,         &
                    enefunc%restraint_exit_index,  &
@@ -1860,6 +2412,13 @@ contains
     call dealloc_enefunc(enefunc, EneFuncNbon)
     call dealloc_enefunc(enefunc, EneFuncNonb)
     call dealloc_enefunc(enefunc, EneFuncNonbList)
+    call dealloc_enefunc(enefunc, EneFuncVsite2)
+    call dealloc_enefunc(enefunc, EneFuncVsite3)
+    call dealloc_enefunc(enefunc, EneFuncVsite3fd)
+    call dealloc_enefunc(enefunc, EneFuncVsite3fad)
+    call dealloc_enefunc(enefunc, EneFuncVsite3out)
+    call dealloc_enefunc(enefunc, EneFuncVsite4fdn)
+    call dealloc_enefunc(enefunc, EneFuncVsiten)
     call dealloc_enefunc(enefunc, EneFuncRefg)
     call dealloc_enefunc(enefunc, EneFuncReff)
     call dealloc_enefunc(enefunc, EneFuncRefc)

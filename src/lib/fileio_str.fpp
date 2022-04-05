@@ -25,6 +25,9 @@ module fileio_str_mod
   implicit none
   private
 
+  ! local variables
+  logical,                private :: vervose = .true.  
+
   ! subroutines
   public  :: input_str
   private :: next_stream
@@ -53,7 +56,7 @@ contains
     type(s_par)              :: par0
     type(s_top)              :: top0
     integer                  :: file, i
-    character(100)           :: filename, str_name
+    character(MaxFilename)   :: filename, str_name
 
 
     i  = 0
@@ -107,7 +110,7 @@ contains
     end do
 
 
-    if (main_rank) then
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Input_Str> Summary of Top information'
       write(MsgOut,'(A20,I10,A20,I10)') &
            '  num_atom_class  = ', top%num_atom_cls, &
@@ -115,7 +118,7 @@ contains
       write(MsgOut,'(A)') ' '
     end if
 
-    if (main_rank) then
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Input_Str> Summary of Par information'
       write(MsgOut,'(A20,I10,A20,I10)')               &
            '  num_bonds       = ', par%num_bonds,     & 
@@ -130,6 +133,7 @@ contains
            '  num_cmap_terms  = ', par%num_cmaps
       write(MSgOut,'(A)') ' '
     end if
+    vervose = .false.
 
 
     return

@@ -18,6 +18,7 @@ module rc_option_mod
   use rc_option_str_mod
   use pbc_correct_mod
   use trajectory_str_mod
+  use output_mod
   use select_mod
   use select_atoms_mod
   use molecules_str_mod
@@ -40,6 +41,8 @@ module rc_option_mod
     integer             :: exchange_period = 0
     integer             :: crdout_period   = 0
     integer             :: eneout_period   = 0
+    integer             :: logout_period   = 0
+    integer             :: trjout_period   = 0
     integer             :: trjout_format   = TrjFormatDCD
     integer             :: trjout_type     = TrjTypeCoorBox
     integer             :: trjout_atom     = 1
@@ -76,6 +79,8 @@ contains
     write(MsgOut,'(A)') 'exchange_period = 0              # exchange_period in [REMD]'
     write(MsgOut,'(A)') 'crdout_period   = 0              # crdout_period in [DYNAMICS]'
     write(MsgOut,'(A)') 'eneout_period   = 0              # eneout_period in [DYNAMICS]'
+    write(MsgOut,'(A)') 'logout_period   = 0              # output frequency of logfile'
+    write(MsgOut,'(A)') 'trjout_period   = 0              # output frequency of trjfile'
     write(MsgOut,'(A)') 'trjout_format   = DCD            # (PDB/DCD)'
     write(MsgOut,'(A)') 'trjout_type     = COOR+BOX       # (COOR/COOR+BOX)'
     write(MsgOut,'(A)') 'trjout_atom     = 1              # atom group'
@@ -142,6 +147,12 @@ contains
     call read_ctrlfile_integer(handle, Section, 'eneout_period',   &
                                opt_info%eneout_period)
 
+    call read_ctrlfile_integer(handle, Section, 'logout_period',   &
+                               opt_info%logout_period)
+
+    call read_ctrlfile_integer(handle, Section, 'trjout_period',   &
+                               opt_info%trjout_period)
+
     call read_ctrlfile_type   (handle, Section, 'trjout_format',   &
                                opt_info%trjout_format, TrjFormatTypes)
 
@@ -195,6 +206,10 @@ contains
          opt_info%crdout_period
     write(MsgOut,'(A20,I10)')  '  eneout_period   = ', &
          opt_info%eneout_period
+    write(MsgOut,'(A20,I10)')  '  logout_period   = ', &
+         opt_info%logout_period
+    write(MsgOut,'(A20,I10)')  '  trjout_period   = ', &
+         opt_info%trjout_period
     write(MsgOut,'(A20,A10)')  '  trjout format   = ', &
          TrjFormatTypes(opt_info%trjout_format)
     write(MsgOut,'(A20,A10)')  '  trjout type     = ', &
@@ -229,6 +244,7 @@ contains
   !! @authors      NT
   !! @param[in]    opt_info : OPTION section control parameters information
   !! @param[in]    sel_info : SELECTION section control parameters information
+  !! @param[in]    out_info : OUTPUT section control parameters information
   !! @param[inout] molecule : molecule information
   !! @param[out]   option   : option information
   !
@@ -236,12 +252,14 @@ contains
   
   subroutine setup_option(opt_info, &
                           sel_info, &
+                          out_info, &
                           molecule, &
                           option)
   
     ! formal argments
     type(s_opt_info),        intent(in)    :: opt_info
     type(s_sel_info),        intent(in)    :: sel_info
+    type(s_out_info),        intent(in)    :: out_info
     type(s_molecule),        intent(inout) :: molecule
     type(s_option),          intent(inout) :: option
 
@@ -267,24 +285,44 @@ contains
     option%crdout_period   = opt_info%crdout_period
     option%eneout_period   = opt_info%eneout_period
 
-    ! trajectory format
-    option%trjout_format   = opt_info%trjout_format
+    ! logfile output frequency
+    if (opt_info%logout_period == 0) then
+      option%logout_period   = opt_info%eneout_period
+      write(MsgOut,'(A)') 'Setup_Option> logout_period is set to eneout_period.'
+    else
+      option%logout_period   = opt_info%logout_period
+    end if
 
-    ! trajectory type
-    option%trjout_type     = opt_info%trjout_type
+    if (out_info%trjfile /= '') then
 
-    ! trajectory atom
-    if (opt_info%trjout_atom > size(sel_info%groups)) &
-      call error_msg('Setup_Option> trj-out atom selection is out of range.')
+      ! trajectory output frequency
+      if (opt_info%trjout_period == 0) then
+        option%trjout_period   = option%crdout_period
+        write(MsgOut,'(A)') 'Setup_Option> trjout_period is set to crdout_period.'
+      else
+        option%trjout_period   = opt_info%trjout_period
+      end if
 
-    option%trjout_atom_exp = sel_info%groups(opt_info%trjout_atom)
+      ! trajectory format
+      option%trjout_format   = opt_info%trjout_format
 
-    call select_atom(molecule, &
-                     option%trjout_atom_exp, &
-                     option%trjout_atom)
+      ! trajectory type
+      option%trjout_type     = opt_info%trjout_type
 
-    write(MsgOut,'(A,I8)') 'Setup_Option> trj-out atom count: ', &
-         size(option%trjout_atom%idx)
+      ! trajectory atom
+      if (opt_info%trjout_atom > size(sel_info%groups)) &
+        call error_msg('Setup_Option> trj-out atom selection is out of range.')
+
+      option%trjout_atom_exp = sel_info%groups(opt_info%trjout_atom)
+
+      call select_atom(molecule, &
+                       option%trjout_atom_exp, &
+                       option%trjout_atom)
+
+      write(MsgOut,'(A,I8)') 'Setup_Option> trj-out atom count: ', &
+           size(option%trjout_atom%idx)
+
+    end if
 
     ! centering
     option%centering = opt_info%centering

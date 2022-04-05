@@ -14,7 +14,7 @@
 
 module constants_mod
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -25,29 +25,51 @@ module constants_mod
   integer,  public, parameter :: sp = selected_real_kind(6, 37)
   integer,  public, parameter :: dp = selected_real_kind(15, 307)
 
-#ifdef _SINGLE
-
-  integer,  public, parameter :: wp = sp
-
-#ifdef MPI
-
-  integer,  public, parameter :: mpi_wp_real    = MPI_Real4
-  integer,  public, parameter :: mpi_wp_complex = MPI_Complex
+#if defined(_SINGLE)
 
   character(6), public, parameter :: precision_char = "single"
+
+  integer,  public, parameter :: wp  = sp
+  integer,  public, parameter :: wip = sp
+
+#ifdef HAVE_MPI_GENESIS
+
+  integer,  public, parameter :: mpi_wp_real     = MPI_Real4
+  integer,  public, parameter :: mpi_wp_complex  = MPI_Complex
+  integer,  public, parameter :: mpi_wip_real    = MPI_Real4
+  integer,  public, parameter :: mpi_wip_complex = MPI_Complex
+
+#endif
+
+#elif defined(_MIXED)
+
+  character(6), public, parameter :: precision_char = "mixed"
+
+  integer,  public, parameter :: wp  = sp
+  integer,  public, parameter :: wip = dp
+
+#ifdef HAVE_MPI_GENESIS
+
+  integer,  public, parameter :: mpi_wp_real     = MPI_Real4
+  integer,  public, parameter :: mpi_wp_complex  = MPI_Complex
+  integer,  public, parameter :: mpi_wip_real    = MPI_Real8
+  integer,  public, parameter :: mpi_wip_complex = MPI_Double_complex
 
 #endif
 
 #else
 
-  integer,  public, parameter :: wp = dp
-
-#ifdef MPI
-
-  integer,  public, parameter :: mpi_wp_real    = MPI_Real8
-  integer,  public, parameter :: mpi_wp_complex = MPI_Double_complex
-
   character(6), public, parameter :: precision_char = "double"
+
+  integer,  public, parameter :: wp  = dp
+  integer,  public, parameter :: wip = dp
+
+#ifdef HAVE_MPI_GENESIS
+
+  integer,  public, parameter :: mpi_wp_real     = MPI_Real8
+  integer,  public, parameter :: mpi_wp_complex  = MPI_Double_complex
+  integer,  public, parameter :: mpi_wip_real    = MPI_Real8
+  integer,  public, parameter :: mpi_wip_complex = MPI_Double_complex
 
 #endif
 
@@ -56,7 +78,13 @@ module constants_mod
   ! constants
   real(wp), public, parameter :: PI               = 3.14159265358979323846_wp
   real(wp), public, parameter :: RAD              = PI/180.0_wp
+#if defined(_SINGLE)
+  real(wp), public, parameter :: EPS              = 1.0e-5_wp
+#elif defined(_MIXED)
+  real(wp), public, parameter :: EPS              = 1.0e-5_wp
+#else
   real(wp), public, parameter :: EPS              = 1.0e-10_wp
+#endif
   real(wp), public, parameter :: HALF             = 0.5_wp
   real(wp), public, parameter :: ONE_THIRD        = 1.0_wp/3.0_wp
   real(wp), public, parameter :: AKMA_PS          = 4.88882129e-02_wp
@@ -70,6 +98,7 @@ module constants_mod
   real(wp), public, parameter :: JOU2CAL          = 1.0_wp / CAL2JOU
   real(wp), public, parameter :: ATM2BAR          = 1.01325_wp
   real(wp), public, parameter :: BAR2ATM          = 1.0_wp / ATM2BAR
+  real(wp), public, parameter :: INVSQRTPI        = 0.564189583547756_wp
   real(wp), public, parameter :: CONV_UNIT_ENE    = 627.5095_wp
   real(wp), public, parameter :: CONV_UNIT_LEN    = 0.52917721092_wp
   real(wp), public, parameter :: CONV_UNIT_FORCE  = CONV_UNIT_ENE / CONV_UNIT_LEN
@@ -77,6 +106,8 @@ module constants_mod
   real(wp), public, parameter :: HARTREE_WAVENUM  = 2.19474631e+05_wp
   real(wp), public, parameter :: VLIGHT_IN_AU     = 1.3703599918E+02_wp
   real(wp), public, parameter :: AVOGADRO         = 6.02214129e+23_wp
+  real(wp), public, parameter :: ELECTRIC_CONST   = 8.854187813e-12_wp
+  real(wp), public, parameter :: ELEMENT_CHARGE   = 1.602176634e-19_wp
 
   real(wp), public, save      :: ELECOEF          = ELECOEF_CHARMM
 
@@ -84,6 +115,7 @@ module constants_mod
 
 #ifdef _SINGLE
   real(wp), public, parameter :: EPS_CMAP         = 1.0e-3_wp
+!  real(wp), public, parameter :: EPS_CMAP         = 1.0e-2_wp
 #else
   real(wp), public, parameter :: EPS_CMAP         = 1.0e-4_wp
 #endif
@@ -92,5 +124,14 @@ module constants_mod
   integer, public, parameter :: tristate_NOT_SET = -1
   integer, public, parameter :: tristate_FALSE   =  0
   integer, public, parameter :: tristate_TRUE    =  1
+
+  ! AICG2+ preinstalled values
+  real(wp), public, parameter :: AICG2P_FBA_MIN_ANG_FORCE = -30.0_wp ! kcal/mol
+  real(wp), public, parameter :: AICG2P_FBA_MAX_ANG_FORCE = +30.0_wp ! kcal/mol
+  real(wp), public, parameter :: AICG2P_FBA_MIN_ANG       = 1.31_wp
+  real(wp), public, parameter :: AICG2P_FBA_MAX_ANG       = 2.87_wp
+  real(wp), public, parameter :: AICG2P_FBA_DTHEATA       = 1.0e-4_wp
+  real(wp), public, parameter :: AICG2P_K_ANG             = 1.0_wp
+  real(wp), public, parameter :: AICG2P_K_DIHE            = 1.0_wp
 
 end module constants_mod

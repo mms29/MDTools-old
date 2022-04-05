@@ -53,6 +53,14 @@ module sp_dynamics_str_mod
     logical             :: steered_md
     real(wp)            :: initial_rmsd
     real(wp)            :: final_rmsd
+    logical             :: shrink_box
+    integer             :: shrink_period
+    real(wp)            :: dbox_x
+    real(wp)            :: dbox_y
+    real(wp)            :: dbox_z
+    ! FEP
+    integer             :: fepout_period
+    integer             :: equilsteps
   end type s_dynamics
 
   ! parameters
@@ -114,6 +122,9 @@ contains
     dynamics%iend_step            = 0
     dynamics%verbose              = .false.
     dynamics%iseed_read           = .false.
+    ! FEP
+    dynamics%fepout_period        = 0
+    dynamics%equilsteps           = 0
 
     return
 

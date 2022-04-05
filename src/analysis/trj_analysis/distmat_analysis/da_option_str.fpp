@@ -24,16 +24,16 @@ module da_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical             :: check_only
+    logical                :: check_only
+                          
+    integer                :: calc_mode
+    character(MaxLineLong) :: analysis_atom_exp_1
+    type(s_selatoms)       :: analysis_atom_1
 
-    integer             :: calc_mode
-    character(MaxLine)  :: analysis_atom_exp_1
-    type(s_selatoms)    :: analysis_atom_1
-
-    character(MaxLine)  :: analysis_atom_exp_2
-    type(s_selatoms)    :: analysis_atom_2
-
-    integer             :: matrix_shape
+    character(MaxLineLong) :: analysis_atom_exp_2
+    type(s_selatoms)       :: analysis_atom_2
+                          
+    integer                :: matrix_shape
 
   end type s_option
 

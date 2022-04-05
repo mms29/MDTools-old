@@ -49,6 +49,10 @@ module ta_option_str_mod
     integer,          allocatable :: ctor_group(:,:)
     real(wp),         allocatable :: ctorsion(:)
 
+    logical                       :: out_sum_dis
+    integer,          allocatable :: dist_num(:)
+    real(wp),         allocatable :: dist_weight(:,:)    
+
     type(s_selatoms), allocatable :: selatoms(:)
 
   end type s_option

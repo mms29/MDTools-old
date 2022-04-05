@@ -145,7 +145,7 @@ contains
     ! local variables
     integer                  :: file, tim, i, j, k, istep
     integer                  :: nbrella, ndim, nstep, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
 
 
     write(MsgOut,'(a)') 'Build_Data_K_Cv> '
@@ -242,7 +242,7 @@ contains
     type(s_trj_file)         :: file
     integer                  :: i, j, k, istep
     integer                  :: nbrella, ndim, nstep, natom, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
 
 
     write(MsgOut,'(a)') 'Build_Data_K_Dcd> '
@@ -1200,7 +1200,8 @@ contains
 
     ! local variables
     integer                  :: file
-    character(MaxLine)       :: filename, line
+    character(MaxFilename)   :: filename
+    character(MaxLine)       :: line
 
 
     filename = get_replicate_name1(cvfile, 1)
@@ -1235,7 +1236,7 @@ contains
     type(s_trj_file)         :: file
     integer                  :: i, file_size, hdr_size, step_size
     integer(4)               :: icntrl(20), ntitle
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(80)            :: title(10)
     character(4)             :: hdr
     logical                  :: exist
@@ -1378,7 +1379,7 @@ contains
     nrow = size(x(1,:))
     ncol = size(x(:,1))
 
-    !$omp parallel do private(max_x, irow)
+    !$omp parallel do private(max_x, irow, exp_total)
     !
 
     do icol = 1, ncol
