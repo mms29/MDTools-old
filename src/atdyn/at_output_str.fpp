@@ -31,6 +31,7 @@ module at_output_str_mod
     integer                :: rpathunit
     integer                :: rstmepunit
     integer                :: gamdunit
+    integer                :: rpathlogunit
 
     character(MaxFilename) :: logfile
     character(MaxFilename) :: dcdfile
@@ -41,6 +42,7 @@ module at_output_str_mod
     character(MaxFilename) :: rpathfile
     character(MaxFilename) :: rstmepfile
     character(MaxFilename) :: gamdfile
+    character(MaxFilename) :: rpathlogfile
 
     logical                :: out_dcd_header    = .true.
     logical                :: out_dcdvel_header = .true.
@@ -54,6 +56,7 @@ module at_output_str_mod
     logical                :: rpathout   = .false.
     logical                :: rstmepout  = .false.
     logical                :: gamdout    = .false.
+    logical                :: rpathlogout= .false.
 
     logical                :: replica    = .false.
     logical                :: rpath      = .false.

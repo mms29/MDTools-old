@@ -23,12 +23,13 @@ module sp_enefunc_amber_mod
   use sp_enefunc_str_mod
   use sp_energy_str_mod
   use sp_domain_str_mod
+  use dihedral_libs_mod
   use molecules_str_mod
   use fileio_prmtop_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -43,6 +44,7 @@ module sp_enefunc_amber_mod
   private :: setup_enefunc_angl_constraint
   private :: setup_enefunc_dihe
   private :: setup_enefunc_impr
+  private :: setup_enefunc_cmap
   private :: setup_enefunc_nonb
 
 contains
@@ -95,11 +97,11 @@ contains
 
       ! bond
       !
-      call setup_enefunc_bond(prmtop, domain, enefunc)
+      call setup_enefunc_bond(prmtop, molecule, domain, enefunc)
 
       ! angle
       !
-      call setup_enefunc_angl(prmtop, domain, enefunc)
+      call setup_enefunc_angl(prmtop, molecule, domain, enefunc)
 
     else
 
@@ -117,11 +119,15 @@ contains
 
     ! dihedral
     !
-    call setup_enefunc_dihe(prmtop, domain, enefunc)
+    call setup_enefunc_dihe(prmtop, molecule, domain, enefunc)
 
     ! improper
     !
-    call setup_enefunc_impr(prmtop, domain, enefunc)
+    call setup_enefunc_impr(prmtop, molecule, domain, enefunc)
+
+    ! cmap
+    !
+    call setup_enefunc_cmap(ene_info, molecule, prmtop, domain, enefunc)
 
     ! nonbonded
     !
@@ -129,7 +135,9 @@ contains
 
     ! lookup table
     !
-    call setup_enefunc_table(ene_info, enefunc)
+    if (.not. enefunc%vacuum) then
+      call setup_enefunc_table(ene_info, enefunc)
+    end if
 
     ! restraints
     !
@@ -147,6 +155,8 @@ contains
       write(MsgOut,'(A20,I10,A20,I10)')                         &
            '  torsion_ene     = ', enefunc%num_dihe_all,        &
            '  improper_ene    = ', enefunc%num_impr_all
+      write(MsgOut,'(A20,I10)')                                 &
+           '  cmap_ene        = ', enefunc%num_cmap_all
       if (.not. ene_info%table) then
         write(MsgOut,'(A20,I10,A20,I10)')                       &
            '  nb_exclusions   = ', enefunc%num_excl_all,        &
@@ -174,10 +184,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_bond(prmtop, domain, enefunc)
+  subroutine setup_enefunc_bond(prmtop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -190,7 +201,7 @@ contains
     integer,         pointer :: ncel, cell_pair(:,:)
     integer,         pointer :: id_g2l(:,:)
     integer,         pointer :: nbond
-
+    integer                  :: ii1, ii2
 
     ncel      => domain%num_cell_local
     cell_pair => domain%cell_pair
@@ -205,6 +216,13 @@ contains
 
       i1 = prmtop%bond_inc_hy(1,i) / 3 + 1
       i2 = prmtop%bond_inc_hy(2,i) / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the bond is not set to any group of FEP, exclude this bond .
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        if (molecule%fepgrp_bond(ii1,ii2) == 0) cycle
+      end if
 
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i2)
@@ -238,6 +256,13 @@ contains
       i1 = prmtop%bond_wo_hy(1,i) / 3 + 1
       i2 = prmtop%bond_wo_hy(2,i) / 3 + 1
 
+      if (domain%fep_use) then
+        ! FEP: If the bond is not set to any group of FEP, exclude this bond .
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        if (molecule%fepgrp_bond(ii1,ii2) == 0) cycle
+      end if
+
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i2)
 
@@ -270,7 +295,7 @@ contains
       found = found + bond(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -305,7 +330,7 @@ contains
     type(s_enefunc),     target, intent(inout) :: enefunc
 
     ! local variables
-    integer                      :: i, j, k, m, ih, icel_local, connect
+    integer                      :: i, j, k, l, m, ih, icel_local, connect
     integer                      :: i1, i2, ih1, ih2, icel1, icel2, icel
     integer                      :: nbond_a, nbond_c
     integer                      :: wat_bonds, wat_found
@@ -317,7 +342,7 @@ contains
     integer,             pointer :: bond(:), list(:,:,:), ncel
     integer,             pointer :: cell_pair(:,:), id_g2l(:,:), id_l2g(:,:)
     integer,             pointer :: HGr_local(:,:), HGr_bond_list(:,:,:,:)
-
+    integer                      :: ii1, ii2
 
     ncel          => domain%num_cell_local
     cell_pair     => domain%cell_pair
@@ -342,6 +367,13 @@ contains
 
       i1 = prmtop%bond_wo_hy(1,i) / 3 + 1
       i2 = prmtop%bond_wo_hy(2,i) / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the bond is not set to any group of FEP, exclude this bond .
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        if (molecule%fepgrp_bond(ii1,ii2) == 0) cycle
+      end if
 
       ri1 = molecule%residue_name(i1)
       ri2 = molecule%residue_name(i2)
@@ -398,6 +430,34 @@ contains
               ih1 = id_l2g(HGr_bond_list(1,k,j,icel),icel)
               do ih = 1, j
                 ih2 = id_l2g(HGr_bond_list(ih+1,k,j,icel),icel)
+
+                if (domain%fep_use) then
+                  ! FEP: Hydrogen rewiring
+                  ! In singleA-dualB bonds, one end has atom index of singleA, 
+                  ! and so par%bond_dist_min becomes singleA-dualB value.
+                  ! However, in real, the bonds should be considered as
+                  ! singleB-dualB. The parameter of singleB-dualB should be
+                  ! used. To avoid this problem, for singleA-dualB bond
+                  ! including hydrogen, the atom index of singleA is replaced
+                  ! with the corresponding atom index of singleB.
+                  if ((int(molecule%fepgrp(ih1)) == 1) .and. &
+                    (int(molecule%fepgrp(ih2)) == 4)) then
+                    do l = 1, molecule%num_atoms_fep(1)
+                      if (molecule%id_singleA(l) == ih1) then
+                        ih1 = molecule%id_singleB(l)
+                        exit
+                      end if
+                    end do
+                  else if ((int(molecule%fepgrp(ih1)) == 4) .and. &
+                    (int(molecule%fepgrp(ih2)) == 1)) then
+                    do l = 1, molecule%num_atoms_fep(2)
+                      if (molecule%id_singleB(l) == ih2) then
+                        ih2 = molecule%id_singleA(l)
+                        exit
+                      end if
+                    end do
+                  end if
+                end if
 
                 if (ih1 == i1 .and. ih2 == i2 .or. &
                     ih2 == i1 .and. ih1 == i2) then
@@ -471,7 +531,7 @@ contains
 
     end if
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(nbond_a, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
     call mpi_allreduce(nbond_c, constraints%num_bonds, 1, mpi_integer, &
@@ -518,10 +578,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_angl(prmtop, domain, enefunc)
+  subroutine setup_enefunc_angl(prmtop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),          intent(in)  :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -533,7 +594,7 @@ contains
     integer,         pointer :: angle(:), alist(:,:,:)
     integer,         pointer :: ncel, cell_pair(:,:), id_g2l(:,:)
     integer,         pointer :: nangl
-
+    integer                  :: ii1, ii2, ii3
 
     ncel      => domain%num_cell_local
     cell_pair => domain%cell_pair
@@ -550,6 +611,14 @@ contains
       i1 = prmtop%angl_inc_hy(1,i) / 3 + 1
       i2 = prmtop%angl_inc_hy(2,i) / 3 + 1
       i3 = prmtop%angl_inc_hy(3,i) / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the angle is not set to any group of FEP, exclude this angle.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        if (molecule%fepgrp_angl(ii1,ii2,ii3) == 0) cycle
+      end if
 
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i3)
@@ -583,6 +652,14 @@ contains
       i2 = prmtop%angl_wo_hy(2,i) / 3 + 1
       i3 = prmtop%angl_wo_hy(3,i) / 3 + 1
 
+      if (domain%fep_use) then
+        ! FEP: If the angle is not set to any group of FEP, exclude this angle.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        if (molecule%fepgrp_angl(ii1,ii2,ii3) == 0) cycle
+      end if
+
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i3)
 
@@ -614,7 +691,7 @@ contains
       found = found + angle(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -657,7 +734,7 @@ contains
     integer,         pointer :: angle(:), alist(:,:,:)
     integer,         pointer :: ncel, cell_pair(:,:), id_g2l(:,:)
     integer,         pointer :: nangl
-
+    integer                  :: ii1, ii2, ii3
 
     ncel      => domain%num_cell_local
     cell_pair => domain%cell_pair
@@ -674,6 +751,14 @@ contains
       i1 = prmtop%angl_inc_hy(1,i) / 3 + 1
       i2 = prmtop%angl_inc_hy(2,i) / 3 + 1
       i3 = prmtop%angl_inc_hy(3,i) / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the angle is not set to any group of FEP, exclude this angle.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        if (molecule%fepgrp_angl(ii1,ii2,ii3) == 0) cycle
+      end if
 
       res1 = molecule%residue_name(i1)
       res2 = molecule%residue_name(i2)
@@ -717,6 +802,14 @@ contains
       i2 = prmtop%angl_wo_hy(2,i) / 3 + 1
       i3 = prmtop%angl_wo_hy(3,i) / 3 + 1
 
+      if (domain%fep_use) then
+        ! FEP: If the angle is not set to any group of FEP, exclude this angle.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        if (molecule%fepgrp_angl(ii1,ii2,ii3) == 0) cycle
+      end if
+
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i3)
 
@@ -748,14 +841,16 @@ contains
       found = found + angle(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
     enefunc%num_angl_all = found
 #endif
 
-    if (enefunc%num_angl_all /= prmtop%num_anglh + prmtop%num_mangla) &
+    if (enefunc%num_angl_all /= prmtop%num_anglh + prmtop%num_mangla .and. &
+        enefunc%num_angl_all /= prmtop%num_anglh + prmtop%num_mangla       &
+                               -enefunc%table%num_water)                   &
       call error_msg( &
         'Setup_Enefunc_Angl_Constraint> Some angle paremeters are missing.')
 
@@ -774,10 +869,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_dihe(prmtop, domain, enefunc)
+  subroutine setup_enefunc_dihe(prmtop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -791,7 +887,7 @@ contains
     integer,            pointer :: id_g2l(:,:)
     integer,            pointer :: ndihe
     integer,            pointer :: notation
-
+    integer                     :: ii1, ii2, ii3, ii4
 
     ncel      => domain%num_cell_local
     cell_pair => domain%cell_pair
@@ -821,6 +917,15 @@ contains
       i2 =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
       i3 = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
       i4 =      prmtop%dihe_inc_hy(4,i)  / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        ii4 = molecule%fepgrp(i4)
+        if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+      end if
 
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i4)
@@ -865,6 +970,15 @@ contains
       i3 = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
       i4 =      prmtop%dihe_wo_hy(4,i)  / 3 + 1
 
+      if (domain%fep_use) then
+        ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        ii4 = molecule%fepgrp(i4)
+        if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+      end if
+
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i4)
 
@@ -903,7 +1017,7 @@ contains
       found = found + dihe(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -925,10 +1039,11 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_impr(prmtop, domain, enefunc)
+  subroutine setup_enefunc_impr(prmtop, molecule, domain, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_domain),  target, intent(in)    :: domain
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -942,7 +1057,7 @@ contains
     integer,            pointer :: id_g2l(:,:)
     integer,            pointer :: nimpr
     integer,            pointer :: notation
-
+    integer                     :: ii1, ii2, ii3, ii4
 
     ncel      => domain%num_cell_local
     cell_pair => domain%cell_pair
@@ -964,6 +1079,15 @@ contains
       i2 =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
       i3 = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
       i4 = iabs(prmtop%dihe_inc_hy(4,i)) / 3 + 1
+
+      if (domain%fep_use) then
+        ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        ii4 = molecule%fepgrp(i4)
+        if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+      end if
 
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i4)
@@ -1008,6 +1132,15 @@ contains
       i3 = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
       i4 = iabs(prmtop%dihe_wo_hy(4,i)) / 3 + 1
 
+      if (domain%fep_use) then
+        ! FEP: If the dihe is not set to any group of FEP, exclude this dihe.
+        ii1 = molecule%fepgrp(i1)
+        ii2 = molecule%fepgrp(i2)
+        ii3 = molecule%fepgrp(i3)
+        ii4 = molecule%fepgrp(i4)
+        if (molecule%fepgrp_dihe(ii1,ii2,ii3,ii4) == 0) cycle
+      end if
+
       icel1 = id_g2l(1,i1)
       icel2 = id_g2l(1,i4)
 
@@ -1047,7 +1180,7 @@ contains
       found = found + impr(i)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_impr_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -1057,6 +1190,151 @@ contains
     return
 
   end subroutine setup_enefunc_impr
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_cmap
+  !> @brief        define CMAP term in potential energy function
+  !! @authors      NT
+  !! @param[in]    ene_info : energy input information
+  !! @param[in]    molecule : molecule information
+  !! @param[in]    prmtop   : AMBER parameter topology information
+  !! @param[inout] domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_cmap(ene_info, molecule, prmtop, domain, enefunc)
+
+    ! formal arguments
+    type(s_ene_info),        intent(in)    :: ene_info
+    type(s_molecule),        intent(in)    :: molecule
+    type(s_prmtop),          intent(in)    :: prmtop
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k, l, ityp
+    integer                  :: ncmap_p, found, ngrid0
+    integer                  :: list(8), icel1, icel2, icel_local
+    integer                  :: flag_cmap_type, alloc_stat, dealloc_stat
+    character(6)             :: ci1, ci2, ci3, ci4, ci5, ci6, ci7, ci8
+    logical                  :: periodic
+
+    integer,            pointer :: ncel, cell_pair(:,:), id_g2l(:,:)
+
+    real(wp),       allocatable :: c_ij(:,:,:,:)
+
+    ncel           => domain%num_cell_local
+    cell_pair      => domain%cell_pair
+    id_g2l         => domain%id_g2l
+
+    periodic = ene_info%cmap_pspline
+    ncmap_p  = prmtop%num_cmaptype
+
+    ngrid0 = 0
+    do i = 1, ncmap_p
+      ngrid0 = max(ngrid0, prmtop%cmap_resolution(i))
+    end do
+
+    call alloc_enefunc(enefunc, EneFuncCmap, ncel, ngrid0, ncmap_p)
+
+    alloc_stat = 0
+    allocate(c_ij(4,4,ngrid0,ngrid0), stat = alloc_stat)
+    if (alloc_stat /= 0) &
+      call error_msg_alloc
+
+    do i = 1, ncmap_p
+      enefunc%cmap_resolution(i) = prmtop%cmap_resolution(i)
+    end do
+
+    ! derive cmap coefficients by bicubic interpolation
+    !
+    do ityp = 1, ncmap_p
+
+      if (periodic) then
+        call derive_cmap_amber_coefficients_p(ityp, prmtop, c_ij)
+      else
+        call derive_cmap_amber_coefficients_np(ityp, prmtop, c_ij)
+      end if
+
+      do l = 1, ngrid0
+        do k = 1, ngrid0
+          do j = 1, 4
+            do i = 1, 4
+              enefunc%cmap_coef(i,j,k,l,ityp) = c_ij(i,j,k,l)
+            end do
+          end do
+        end do
+      end do
+    end do
+
+    enefunc%num_cmap(1:ncel) = 0
+
+    do i = 1, prmtop%num_cmap
+
+      list(1:4) = prmtop%cmap_list(1:4,i)
+      list(5:8) = prmtop%cmap_list(2:5,i)
+
+      icel1 = id_g2l(1,list(1))
+      icel2 = id_g2l(1,list(8))
+
+      if (icel1 /= 0 .and. icel2 /= 0) then
+
+        icel_local = cell_pair(icel1,icel2)
+
+        if (icel_local > 0 .and. icel_local <= ncel) then
+
+          enefunc%num_cmap(icel_local) = enefunc%num_cmap(icel_local) + 1
+          k = enefunc%num_cmap(icel_local)
+          enefunc%cmap_list(1:8,k,icel_local) = list(1:8)
+          enefunc%cmap_type(k,icel_local) = prmtop%cmap_list(6,i)
+
+        end if
+      end if
+
+    end do
+
+    deallocate(c_ij, stat=dealloc_stat)
+    if (dealloc_stat /= 0) &
+      call error_msg_dealloc
+
+    ! write summary
+    !
+    if (main_rank) then
+      if (periodic) then
+        write(MsgOut,'(A)') &
+    'Setup_Enefunc_Cmap> Periodic-boundary spline is used to derive cmap coefs.'
+        write(MsgOut,'(A)') ''
+      else
+        write(MsgOut,'(A)') &
+            'Setup_Enefunc_Cmap> Natural spline is used to derive cmap coefs.'
+        write(MsgOut,'(A)') ''
+      end if
+    end if
+
+    ! stop if parameter is missing
+    !
+    found = 0
+    do i = 1, ncel
+      found = found + enefunc%num_cmap(i)
+      if (enefunc%num_cmap(i) > MaxCmap) &
+        call error_msg('Setup_Enefunc_Cmap> Too many cmaps.')
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(found, enefunc%num_cmap_all, 1, mpi_integer, mpi_sum, &
+                       mpi_comm_country, ierror)
+#else
+    enefunc%num_cmap_all = found
+#endif
+
+    if (enefunc%num_cmap_all /=  prmtop%num_cmap) &
+      call error_msg('Setup_Enefunc_Cmap> Some cmap parameters are missing.')
+
+    return
+
+  end subroutine setup_enefunc_cmap
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1219,11 +1497,15 @@ contains
         domain%atom_cls_no(ix,i) = atmcls_map_g2l(domain%atom_cls_no(ix,i))
       end do
     end do
-    if (constraints%rigid_bond .or. enefunc%table%water_table) then
-      domain%water%atom_cls_no(1:3)  &
-        = atmcls_map_g2l(domain%water%atom_cls_no(1:3))
-      enefunc%table%atom_cls_no_O = atmcls_map_g2l(enefunc%table%atom_cls_no_O)
-      enefunc%table%atom_cls_no_H = atmcls_map_g2l(enefunc%table%atom_cls_no_H)
+    if (enefunc%table%num_water > 0) then
+      if (constraints%rigid_bond .or. enefunc%table%water_table) then
+        domain%water%atom_cls_no(1:3) = &
+            atmcls_map_g2l(domain%water%atom_cls_no(1:3))
+        enefunc%table%atom_cls_no_O   = &
+            atmcls_map_g2l(enefunc%table%atom_cls_no_O)
+        enefunc%table%atom_cls_no_H   = &
+            atmcls_map_g2l(enefunc%table%atom_cls_no_H)
+      end if
     end if
 
     deallocate(check_cls,     &

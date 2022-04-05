@@ -24,9 +24,10 @@ module ra_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical             :: check_only
-    character(MaxLine)  :: analysis_atom_exp
-    type(s_selatoms)    :: analysis_atom
+    logical                :: check_only
+    logical                :: mass_weight
+    character(MaxLineLong) :: analysis_atom_exp
+    type(s_selatoms)       :: analysis_atom
 
   end type s_option
 

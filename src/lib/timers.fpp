@@ -18,7 +18,7 @@ module timers_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -65,23 +65,32 @@ module timers_mod
   integer, public, parameter :: TimerSolvation  = 32
   integer, public, parameter :: TimerGB         = 33
   integer, public, parameter :: TimerSA         = 34
+  integer, public, parameter :: TimerCompBrown  = 35
+  integer, public, parameter :: TimerCompMob    = 36
+  integer, public, parameter :: TimerMorph      = 37
+  integer, public, parameter :: TimerBaseStack  = 38
+  integer, public, parameter :: TimerBasePair   = 39
+  integer, public, parameter :: TimerCGDNAexv   = 40
+  integer, public, parameter :: TimerCGDebye    = 41
+  integer, public, parameter :: TimerCGPWMcos   = 42
+  integer, public, parameter :: TimerCGPWMcosns = 43
+  integer, public, parameter :: TimerCGexv      = 44
+  integer, public, parameter :: TimerContact    = 45
+  integer, public, parameter :: TimerCGIDRHPS   = 46
+  integer, public, parameter :: TimerCGIDRKH    = 47
+  integer, public, parameter :: TimerCGKH       = 48
 
   integer,         parameter :: InvalidID       = -1
-  integer,         parameter :: NumTimers = 34  !< total number of timers
-  integer,         parameter :: MaxProc   = 100 !< maximum number of processes
+  integer,         parameter :: NumTimers       = 48  !< total number of timers
+  integer,         parameter :: MaxProc         = 100 !< maximum number of processes
 
   ! variables
-  real(dp)        , public   :: total_time(MaxProc)
-
-  integer                    :: timer_id  (  MaxProc)
-  integer*8                  :: proc_time1(  MaxProc) !< starting time 
-  logical                    :: flags     (1:MaxProc) = .false.
+  real(dp),        public    :: total_time(NumTimers)
+  real(dp),        save      :: proc_time_st(NumTimers)
 
   ! functions
   public  :: timer
   public  :: output_time
-  private :: process_start
-  private :: process_end
   private :: get_unix_time
   private :: days
 
@@ -108,11 +117,12 @@ contains
 
     case (TimerOn)
 
-      timer_id(mode)   = process_start()
+      proc_time_st(mode) = get_unix_time()
 
     case (TimerOff)
 
-      total_time(mode) = total_time(mode) + process_end(timer_id(mode))
+      total_time(mode) = total_time(mode) &
+                       + (get_unix_time()-proc_time_st(mode))*1.0d-6
 
     end select
 
@@ -153,7 +163,7 @@ contains
              stat=alloc_stat)
     if (alloc_stat /= 0) call error_msg_alloc
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(total_time, NumTimers, mpi_double_precision, &
                        tottime,    NumTimers, mpi_double_precision, &
                        mpi_comm_world, ierror)
@@ -171,73 +181,90 @@ contains
 
     ! count the number of real and resiprocal part nodes
     !
-    num_realnodes  = 0
-    num_recipnodes = 0
-    do i = 1, nproc_world
-      if (node_real(i))  num_realnodes  = num_realnodes  + 1
-      if (node_recip(i)) num_recipnodes = num_recipnodes + 1
-    end do
+    if (main_rank) then
+      num_realnodes  = 0
+      num_recipnodes = 0
+      do i = 1, nproc_world
+        if (node_real(i))  num_realnodes  = num_realnodes  + 1
+        if (node_recip(i)) num_recipnodes = num_recipnodes + 1
+      end do
 
     ! calculate total time over all nodes
     !
-    sumtime(1:NumTimers) = 0.0_dp
-    do i = 1, NumTimers
-      maxtime(i) = tottime(i,1)
-      mintime(i) = tottime(i,1)
-      do j = 1, nproc_world
-        sumtime(i) = sumtime(i) + tottime(i,j)
-        if (maxtime(i) < tottime(i,j)) then
-          maxtime(i) = tottime(i,j)
-        endif
-        if (mintime(i) > tottime(i,j)) then
-          mintime(i) = tottime(i,j)
-        endif
+      sumtime(1:NumTimers) = 0.0_dp
+      do i = 1, NumTimers
+        maxtime(i) = tottime(i,1)
+        mintime(i) = tottime(i,1)
+        do j = 1, nproc_world
+          sumtime(i) = sumtime(i) + tottime(i,j)
+          if (maxtime(i) < tottime(i,j)) then
+            maxtime(i) = tottime(i,j)
+          endif
+          if (mintime(i) > tottime(i,j)) then
+            mintime(i) = tottime(i,j)
+          endif
+        end do
       end do
-    end do
 
-    ! average over all ranks
-    !
-    avetime(TimerTotal)      = sumtime(TimerTotal)      / nproc_world
-    avetime(TimerEnergy)     = sumtime(TimerEnergy)     / nproc_world
-    avetime(TimerBond)       = sumtime(TimerBond)       / num_realnodes
-    avetime(TimerAngle)      = sumtime(TimerAngle)      / num_realnodes
-    avetime(TimerDihedral)   = sumtime(TimerDihedral)   / num_realnodes
-    avetime(TimerRestraint)  = sumtime(TimerRestraint)  / num_realnodes
-    avetime(TimerNonBond)    = sumtime(TimerNonBond)    / nproc_world
-    avetime(TimerPmeReal)    = sumtime(TimerPmeReal)    / num_realnodes
-    if (num_recipnodes == 0) then
-      avetime(TimerPmeRecip) = 0.0_dp
-    else
-      avetime(TimerPmeRecip) = sumtime(TimerPmeRecip)   / num_recipnodes
-    end if
-    avetime(TimerPairList)   = sumtime(TimerPairList)   / num_realnodes
-    avetime(TimerDynamics)   = sumtime(TimerDynamics)   / nproc_world
-    avetime(TimerConstraint) = sumtime(TimerConstraint) / nproc_world
-    avetime(TimerUpdate)     = sumtime(TimerUpdate)     / nproc_world
-    avetime(TimerComm1)      = sumtime(TimerComm1)      / nproc_world
-    avetime(TimerComm2)      = sumtime(TimerComm2)      / nproc_world
-    avetime(TimerComm3)      = sumtime(TimerComm3)      / nproc_world
-    avetime(TimerIntegrator) = sumtime(TimerIntegrator) / nproc_world
-    avetime(TimerSolvation)  = sumtime(TimerSolvation)  / nproc_world
-    avetime(TimerGB)         = sumtime(TimerGB)         / nproc_world
-    avetime(TimerSA)         = sumtime(TimerSA)         / nproc_world
+      ! average over all ranks
+      !
+      avetime(TimerTotal)      = sumtime(TimerTotal)      / nproc_world
+      avetime(TimerEnergy)     = sumtime(TimerEnergy)     / nproc_world
+      avetime(TimerBond)       = sumtime(TimerBond)       / num_realnodes
+      avetime(TimerAngle)      = sumtime(TimerAngle)      / num_realnodes
+      avetime(TimerDihedral)   = sumtime(TimerDihedral)   / num_realnodes
+      avetime(TimerBaseStack)  = sumtime(TimerBaseStack)  / num_realnodes
+      avetime(TimerBasePair)   = sumtime(TimerBasePair)   / num_realnodes
+      avetime(TimerCGDNAexv)   = sumtime(TimerCGDNAexv)   / num_realnodes
+      avetime(TimerCGDebye)    = sumtime(TimerCGDebye)    / num_realnodes
+      avetime(TimerCGPWMcos)   = sumtime(TimerCGPWMcos)   / num_realnodes
+      avetime(TimerCGPWMcosns) = sumtime(TimerCGPWMcosns) / num_realnodes
+      avetime(TimerCGexv)      = sumtime(TimerCGexv)      / num_realnodes
+      avetime(TimerContact)    = sumtime(TimerContact)    / num_realnodes
+      avetime(TimerCGIDRHPS)   = sumtime(TimerCGIDRHPS)   / num_realnodes
+      avetime(TimerCGIDRKH)    = sumtime(TimerCGIDRKH)    / num_realnodes
+      avetime(TimerCGKH)       = sumtime(TimerCGKH)       / num_realnodes
+      avetime(TimerRestraint)  = sumtime(TimerRestraint)  / num_realnodes
+      avetime(TimerNonBond)    = sumtime(TimerNonBond)    / nproc_world
+      avetime(TimerPmeReal)    = sumtime(TimerPmeReal)    / num_realnodes
+      if (num_recipnodes == 0) then
+        avetime(TimerPmeRecip) = 0.0_dp
+      else
+        avetime(TimerPmeRecip) = sumtime(TimerPmeRecip)   / num_recipnodes
+      end if
+      avetime(TimerPairList)   = sumtime(TimerPairList)   / num_realnodes
+      avetime(TimerDynamics)   = sumtime(TimerDynamics)   / nproc_world
+      avetime(TimerConstraint) = sumtime(TimerConstraint) / nproc_world
+      avetime(TimerUpdate)     = sumtime(TimerUpdate)     / nproc_world
+      avetime(TimerComm1)      = sumtime(TimerComm1)      / nproc_world
+      avetime(TimerComm2)      = sumtime(TimerComm2)      / nproc_world
+      avetime(TimerComm3)      = sumtime(TimerComm3)      / nproc_world
+      avetime(TimerIntegrator) = sumtime(TimerIntegrator) / nproc_world
+      avetime(TimerSolvation)  = sumtime(TimerSolvation)  / nproc_world
+      avetime(TimerGB)         = sumtime(TimerGB)         / nproc_world
+      avetime(TimerSA)         = sumtime(TimerSA)         / nproc_world
 
-    avetime(TimerQMMM ) = sumtime(TimerQMMM ) / nproc_world
+      avetime(TimerQMMM ) = sumtime(TimerQMMM ) / nproc_world
 
-    avetime(TimerTest1) = sumtime(TimerTest1) / nproc_world
-    avetime(TimerTest2) = sumtime(TimerTest2) / nproc_world
-    avetime(TimerTest3) = sumtime(TimerTest3) / nproc_world
-    avetime(TimerTest4) = sumtime(TimerTest4) / nproc_world
-    avetime(TimerTest5) = sumtime(TimerTest5) / nproc_world
-    avetime(TimerTest6) = sumtime(TimerTest6) / nproc_world
-    avetime(TimerTest7) = sumtime(TimerTest7) / nproc_world
-    avetime(TimerTest8) = sumtime(TimerTest8) / nproc_world
-    avetime(TimerTest9) = sumtime(TimerTest9) / nproc_world
-    avetime(TimerTest10) = sumtime(TimerTest10) / nproc_world
+      avetime(TimerTest1) = sumtime(TimerTest1) / nproc_world
+      avetime(TimerTest2) = sumtime(TimerTest2) / nproc_world
+      avetime(TimerTest3) = sumtime(TimerTest3) / nproc_world
+      avetime(TimerTest4) = sumtime(TimerTest4) / nproc_world
+      avetime(TimerTest5) = sumtime(TimerTest5) / nproc_world
+      avetime(TimerTest6) = sumtime(TimerTest6) / nproc_world
+      avetime(TimerTest7) = sumtime(TimerTest7) / nproc_world
+      avetime(TimerTest8) = sumtime(TimerTest8) / nproc_world
+      avetime(TimerTest9) = sumtime(TimerTest9) / nproc_world
+      avetime(TimerTest10) = sumtime(TimerTest10) / nproc_world
 
-    ! write detailed timer profile of the main_rank
-    !
-    if (main_rank) then
+      avetime(TimerMorph)      = sumtime(TimerMorph) / nproc_world
+      avetime(TimerRespa)      = sumtime(TimerRespa)      / nproc_world
+      avetime(TimerCompBrown)  = sumtime(TimerCompBrown)  / nproc_world
+      avetime(TimerCompMob)    = sumtime(TimerCompMob)    / nproc_world
+
+      ! write detailed timer profile of the main_rank
+      !
+!    if (main_rank) then
       avetime_setup   = avetime(TimerTotal) - avetime(TimerDynamics)
 
       write(MsgOut,'(a)') 'Output_Time> Averaged timer profile (Min, Max)'
@@ -264,9 +291,53 @@ contains
                                 ' (',mintime(TimerDihedral),',',               &
                                  maxtime(TimerDihedral),')'
       write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '    base stacking =',avetime(TimerBaseStack), &
+                                ' (',mintime(TimerBaseStack),',',              &
+                                 maxtime(TimerBaseStack),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
                                 '    nonbond       =',avetime(TimerNonBond),   &
                                 ' (',mintime(TimerNonBond),',',                &
                                  maxtime(TimerNonBond),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG exv      =',avetime(TimerCGexv),     &
+                                ' (',mintime(TimerCGexv),',',                  &
+                                maxtime(TimerCGexv),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG DNA bp   =',avetime(TimerBasePair),  &
+                                ' (',mintime(TimerBasePair),',',               &
+                                maxtime(TimerBasePair),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG DNA exv  =',avetime(TimerCGDNAexv),  &
+                                ' (',mintime(TimerCGDNAexv),',',               &
+                                maxtime(TimerCGDNAexv),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG ele      =',avetime(TimerCGDebye),   &
+                                ' (',mintime(TimerCGDebye),',',                &
+                                maxtime(TimerCGDebye),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG PWMcos   =',avetime(TimerCGPWMcos),  &
+                                ' (',mintime(TimerCGPWMcos),',',               &
+                                maxtime(TimerCGPWMcos),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG PWMcosns =',avetime(TimerCGPWMcosns),&
+                                ' (',mintime(TimerCGPWMcosns),',',             &
+                                maxtime(TimerCGPWMcosns),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG IDR-HPS  =',avetime(TimerCGIDRHPS),  &
+                                ' (',mintime(TimerCGIDRHPS),',',               &
+                                maxtime(TimerCGIDRHPS),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG IDR-KH   =',avetime(TimerCGIDRKH),   &
+                                ' (',mintime(TimerCGIDRKH),',',                &
+                                maxtime(TimerCGIDRKH),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      CG KH       =',avetime(TimerCGKH),      &
+                                ' (',mintime(TimerCGKH),',',                   &
+                                maxtime(TimerCGKH),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '      Contact     =',avetime(TimerContact),   &
+                                ' (',mintime(TimerContact),',',                &
+                                maxtime(TimerContact),')'
       write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
                                 '      pme real    =',avetime(TimerPmeReal),   &
                                 ' (',mintime(TimerPmeReal),',',                &
@@ -299,6 +370,10 @@ contains
                                 '    qmmm          =',avetime(TimerQMMM),      &
                                 ' (',mintime(TimerQMMM),',',                   &
                                  maxtime(TimerQMMM),')'
+      write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
+                                '    morph         =',avetime(TimerMorph), &
+                                ' (',mintime(TimerMorph),',',              &
+                                 maxtime(TimerMorph),')'
       write(MsgOut,'(a)')       '  integrator       '
       write(MsgOut,'(a,f12.3,a,f12.3,a,f12.3,a)')                              &
                                 '    constraint    =',                         &
@@ -342,78 +417,9 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Function      process_start
-  !> @brief        start measurement of processing time
-  !! @authors      YS, NM, TM
-  !! @return       process id
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  function process_start()
-
-    ! return value
-    integer        :: process_start
-
-    ! local variables
-    integer                  :: id
-
-
-    do id = 1, MaxProc
-      if (.not. flags(id)) then
-
-        flags(id)      = .true.
-        proc_time1(id) = get_unix_time()
-        process_start  = id
-        return 
-
-      end if
-    end do
-
-    process_start = InvalidID
-    return 
-
-  end function process_start
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Function      process_end
-  !> @brief        call system_time and end the measurement of processing time
-  !! @authors      YS, NM, TM
-  !! @param[in]    id : process id
-  !! @return       processing time
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  function process_end(id)
-
-    ! return value
-    real(dp)         :: process_end
-
-    ! formal arguments
-    integer,                 intent(in) :: id
-    
-    ! local variables
-    integer*8                :: proc_time2
-    
-
-    if (id == -1 .or. .not. flags(id)) then
-      process_end = 0
-      return 
-    end if
-
-    flags(id)   = .false.
-    proc_time2  = get_unix_time()
-    process_end = (proc_time2 - proc_time1(id))/dble(1000)
-
-    return 
-
-  end function process_end
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
   !  Function      get_unix_time
   !> @brief        get the local unix time (not GMT)
-  !! @authors      NT
+  !! @authors      JJ, ST(FJ), NT
   !! @return       milliseconds
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -421,48 +427,33 @@ contains
   function get_unix_time()
 
     ! return value
-    integer(8)               :: get_unix_time
+    real(dp)               :: get_unix_time
 
     ! parameters
-    integer(8),    parameter :: SecondPerDay = 86400
-    integer(8),    parameter :: DaysPerMonth(13) = &
-                              (/0,31,59,90,120,151,181,212,243,273,304,334,365/)
-    integer(8),    parameter :: S = 60
+    real(dp)               :: usec
 
-    ! local variables
-    integer                  :: tval(8)
-    integer(8)               :: yy, mm, dd, hh, nn, ss, ms, work
+#ifdef KCOMP
+    call gettod(usec)
+#elif __INTEL_COMPILER
+    call clockx(usec)
+#else
+    integer,   save :: init_flg = 0
+    integer*8 :: CountPerSec, CountMax
+    real(dp), save :: ratio_usec
+    integer*8 time_c
 
+    if( init_flg == 0 ) then
+      init_flg = 1
+      call system_clock(time_c, CountPerSec, CountMax)
+      ratio_usec = 1.0d+6 / dble(CountPerSec)
+    else
+      call system_clock(time_c)
+    endif
 
-    call date_and_time(values=tval)
+    usec = dble(time_c)*ratio_usec
+#endif
 
-    yy  = int(tval(1),kind=8)
-    mm  = int(tval(2),kind=8)
-    dd  = int(tval(3),kind=8)
-    hh  = int(tval(5),kind=8)
-    nn  = int(tval(6),kind=8)
-    ss  = int(tval(7),kind=8)
-    ms  = int(tval(8),kind=8)
-
-    work = days(yy-1) - days(int(1969,kind=8))
-    work = work * SecondPerDay
-    work = work + DaysPerMonth(mm) * SecondPerDay
-    if (mod(yy,400) == 0 .or. &
-        mod(yy,4) == 0 .and. mod(yy,100) /= 0) then
-      if (mm >= 3) &
-        work = work + SecondPerDay
-    end if
-
-    work = work + (dd - 1)*SecondPerDay
-    work = work +  hh*S*S
-    work = work +  nn*S
-    work = work +  ss
-    !!work = work -  int(tval(4),kind=8)*S  ! case of GMT
-
-    work = work * 1000
-    work = work +  ms
-
-    get_unix_time = work
+     get_unix_time = usec
 
     return
 

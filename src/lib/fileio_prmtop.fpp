@@ -77,6 +77,9 @@ module fileio_prmtop_mod
     integer          :: nspsol             ! NSPSOL
     real(wp)         :: oldbeta            ! OLDBETA
     real(wp)         :: box(3)             ! BOX
+    integer          :: num_cmap           ! CMAP_COUNT
+    integer          :: num_cmaptype       ! CMAP_COUNT
+    integer          :: num_cmap_resolution! CMAP_RESOLUTION
 
     ! amber prmtop other information (working variables)
     integer,         allocatable :: excl_atom(:)
@@ -114,7 +117,11 @@ module fileio_prmtop_mod
 
     real(wp),        allocatable :: radi_born(:)
     real(wp),        allocatable :: fs_born(:)
-    integer,        allocatable :: nsp(:)
+    integer,         allocatable :: nsp(:)
+
+    integer,         allocatable :: cmap_resolution(:)
+    integer,         allocatable :: cmap_list(:,:)
+    real(wp),        allocatable :: cmap_parameter(:,:)
 
     character(80)    :: radius_set
 
@@ -165,6 +172,7 @@ module fileio_prmtop_mod
     logical          :: lcap_info                   = .false.
     logical          :: lcap_info2                  = .false.
     logical          :: lpolarizability             = .false.
+    logical          :: lcmap_count                 = .false.
 
   end type s_prmtop
 
@@ -186,6 +194,12 @@ module fileio_prmtop_mod
   integer, public, parameter :: PrmtopHbond  = 15
   integer, public, parameter :: PrmtopExclud = 16
   integer, public, parameter :: PrmtopNSPM   = 17
+  integer, public, parameter :: PrmtopCMAPRes= 18
+  integer, public, parameter :: PrmtopCMAPIdx= 19
+  integer, public, parameter :: PrmtopCMAP   = 20
+
+  ! local variables
+  logical,                private :: vervose = .true. 
 
   ! subroutines
   public  :: init_prmtop
@@ -227,6 +241,8 @@ contains
     prmtop%num_anglh          = 0
     prmtop%num_mangla         = 0
     prmtop%num_diheh          = 0
+    prmtop%num_cmap           = 0
+    prmtop%num_cmaptype       = 0
     prmtop%num_mdihea         = 0
     prmtop%num_hparm          = 0
     prmtop%num_parm           = 0
@@ -278,6 +294,7 @@ contains
     integer,                 intent(in)    :: var_size
 
     ! local variables
+    integer                  :: i, max_size
     integer                  :: alloc_stat
     integer                  :: dealloc_stat
 
@@ -520,6 +537,43 @@ contains
       allocate(prmtop%nsp(var_size),                 &
                stat = alloc_stat)
 
+    case (PrmtopCMAPRes)
+
+      if (allocated(prmtop%cmap_resolution)) then
+        if (size(prmtop%cmap_resolution) == var_size) return
+        deallocate(prmtop%cmap_resolution,           &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(prmtop%cmap_resolution(var_size),     &
+               stat = alloc_stat)
+
+    case (PrmtopCMAPIdx)
+
+      if (allocated(prmtop%cmap_list)) then
+        if (size(prmtop%cmap_list(1,:)) == var_size) return
+        deallocate(prmtop%cmap_list,                 &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(prmtop%cmap_list(6,var_size),         &
+               stat = alloc_stat)
+
+    case (PrmtopCMAP)
+
+      if (allocated(prmtop%cmap_parameter)) then
+        deallocate(prmtop%cmap_parameter,            &
+                   stat = dealloc_stat)
+      end if
+
+      max_size = 0
+      do i = 1, var_size
+        max_size = max(max_size, prmtop%cmap_resolution(i))
+      end do
+      prmtop%num_cmap_resolution = max_size*max_size
+      allocate(prmtop%cmap_parameter(max_size*max_size,var_size), &
+               stat = alloc_stat)
+
     case default
 
       call error_msg('Alloc_Prmtop> bad variable')
@@ -698,6 +752,27 @@ contains
                    stat = dealloc_stat)
       end if
 
+    case (PrmtopCMAPRes)
+
+      if (allocated(prmtop%cmap_resolution)) then
+        deallocate(prmtop%cmap_resolution,           &
+                   stat = dealloc_stat)
+      end if
+
+    case (PrmtopCMAPIdx)
+
+      if (allocated(prmtop%cmap_list)) then
+        deallocate(prmtop%cmap_list,             &
+                   stat = dealloc_stat)
+      end if
+
+    case (PrmtopCMAP)
+
+      if (allocated(prmtop%cmap_parameter)) then
+        deallocate(prmtop%cmap_parameter,        &
+                   stat = dealloc_stat)
+      end if
+
     case default
 
       call error_msg('Dealloc_Prmtop> bad variable')
@@ -742,6 +817,9 @@ contains
     call dealloc_prmtop(prmtop, PrmtopExclud)
     call dealloc_prmtop(prmtop, PrmtopHbond )
     call dealloc_prmtop(prmtop, PrmtopNSPM  )
+    call dealloc_prmtop(prmtop, PrmtopCMAPRes)
+    call dealloc_prmtop(prmtop, PrmtopCMAPIdx)
+    call dealloc_prmtop(prmtop, PrmtopCMAP   )
 
     return
 
@@ -848,10 +926,9 @@ contains
     !
     call read_prmtop_main(file, prmtop)
 
-
     ! write summary of PRMTOP information
     !
-    if (main_rank) then
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Read_Prmtop> Summary of PRMTOP file'
 
       write(MsgOut,'(A20,I10,A20,I10)')                       &
@@ -883,7 +960,11 @@ contains
            '  NATYP           = ', prmtop%num_types_prm
       write(MsgOut,'(A20,I10)')                               &
            '  NPHB            = ', prmtop%num_bondtypes
+      write(MsgOut,'(A20,I10,A20,I10)')                       &
+           '  NCMAP           = ', prmtop%num_cmap,           &
+           '  NCMAPTYPE       = ', prmtop%num_cmaptype
       write(MsgOut,'(A)') ' '
+      vervose = .false.
     end if
 
     return
@@ -907,12 +988,13 @@ contains
     type(s_prmtop),          intent(inout) :: prmtop
 
     ! local variables
-    integer                  :: i
+    integer                  :: i, icmap_type
     integer                  :: size
     character(80)            :: line
     character(80)            :: key, temp
     character(80)            :: fmt01, fmt02, fmt03
  
+    icmap_type = 0
 
     do while(.true.)
 
@@ -943,15 +1025,57 @@ contains
           do i = 1, len_trim(fmt03)
             if (fmt03(i:i) == 'A' .or. fmt03(i:i) == 'a' .or. &
                 fmt03(i:i) == 'I' .or. fmt03(i:i) == 'i' .or. &
-                fmt03(i:i) == 'E' .or. fmt03(i:i) == 'e') then
+                fmt03(i:i) == 'E' .or. fmt03(i:i) == 'e' .or. &
+                fmt03(i:i) == 'F' .or. fmt03(i:i) == 'f') then
 
-              read(fmt03(1:i-1),'(A)') fmt01
+              if (fmt03(i-1:i-1) == '(') then
+                read(fmt03(1:i-2),'(A)') fmt01
+              else
+                read(fmt03(1:i-1),'(A)') fmt01
+              end if
               read(fmt03(i+1:),'(A)')  fmt02
 
               exit
             end if
           end do
           fmt02 = trim(fmt02)
+
+        else if (line(1:8) == '%COMMENT') then
+
+          read(file,'(A80)') line
+          if (line(1:7) == '%FORMAT') then
+
+            read(line(9:),'(A)') fmt03
+            do i = 1, len_trim(fmt03)
+              if (fmt03(i:i) == ')') then
+                fmt03(i:i) = ' '
+              end if
+            end do
+
+            fmt03 = trim(fmt03)
+
+            do i = 1, len_trim(fmt03)
+              if (fmt03(i:i) == 'A' .or. fmt03(i:i) == 'a' .or. &
+                  fmt03(i:i) == 'I' .or. fmt03(i:i) == 'i' .or. &
+                  fmt03(i:i) == 'E' .or. fmt03(i:i) == 'e' .or. &
+                  fmt03(i:i) == 'F' .or. fmt03(i:i) == 'f') then
+
+                if (fmt03(i-1:i-1) == '(') then
+                  read(fmt03(1:i-2),'(A)') fmt01
+                else
+                  read(fmt03(1:i-1),'(A)') fmt01
+                end if
+                read(fmt03(i+1:),'(A)')  fmt02
+
+                exit
+              end if
+            end do
+            fmt02 = trim(fmt02)
+
+          else
+            call error_msg( &
+               'Read_Prmtop_Main> error! Please set %FORMAT line for all term.')
+          end if
 
         else
           call error_msg( &
@@ -1251,7 +1375,34 @@ contains
         else if (key(1:14) == 'POLARIZABILITY') then
           prmtop%lpolarizability = .true.
 
+        else if (key(1:10) == 'CMAP_COUNT') then
+          prmtop%lcmap_count = .true.
+          call read_prmtop_int_format(file, fmt01, fmt02,           &
+                                      'CMAP_COUNT',                 &
+                                      2, prmtop)
+          call alloc_prmtop(prmtop, PrmtopCMAPRes, prmtop%num_cmaptype)
+          call alloc_prmtop(prmtop, PrmtopCMAPIdx, prmtop%num_cmap)
+
+        else if (key(1:15) == 'CMAP_RESOLUTION') then
+          call read_prmtop_int_format(file, fmt01, fmt02,           &
+                                      'CMAP_RESOLUTION',            &
+                                      prmtop%num_cmaptype, prmtop)
+          call alloc_prmtop(prmtop, PrmtopCMAP,  prmtop%num_cmaptype)
+
+        else if (key(1:14) == 'CMAP_PARAMETER') then
+          icmap_type = icmap_type + 1
+          call read_prmtop_realf_format(file, fmt01, fmt02,         &
+                                        'CMAP_PARAMETER',           &
+                                        prmtop%num_cmap_resolution, &
+                                        prmtop, icmap_type)
+
+        else if (key(1:10) == 'CMAP_INDEX') then
+          call read_prmtop_int_format(file, fmt01, fmt02,           &
+                                      'CMAP_INDEX',                 &
+                                      prmtop%num_cmap, prmtop)
+
         end if
+
       end if
     end do
 
@@ -1509,6 +1660,8 @@ contains
     else if (keyword == 'DIHEDRALS_INC_HYDROGEN'   .or.       &
              keyword == 'DIHEDRALS_WITHOUT_HYDROGEN') then
       iwork_num = num * 5
+    else if (keyword == 'CMAP_INDEX') then
+      iwork_num = num * 6
     end if
 
     ! Read atom
@@ -1643,6 +1796,32 @@ contains
           end if
 
           count = count + 1
+
+        else if (keyword == 'CMAP_COUNT') then
+          read(line(start:end),fmt10) iwork
+
+          if (count == 1) then
+            prmtop%num_cmap = iwork
+          else if (count == 2) then
+            prmtop%num_cmaptype = iwork
+          end if
+
+          count = count + 1
+
+        else if (keyword == 'CMAP_RESOLUTION') then
+          read(line(start:end),fmt10) prmtop%cmap_resolution(count)
+
+          count = count + 1
+
+        else if (keyword == 'CMAP_INDEX') then
+          read(line(start:end),fmt10) iwork
+          sub_count = sub_count + 1
+          prmtop%cmap_list(sub_count,count) = iwork
+
+          if (sub_count == 6) then
+            count = count + 1
+            sub_count = 0
+          end if
 
         end if
 
@@ -1827,6 +2006,115 @@ contains
     return
 
   end subroutine read_prmtop_real_format
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    read_prmtop_realf_format
+  !> @brief        read real style information from PRMTOP file
+  !! @authors      JJ
+  !! @param[in]    file    : unit number of PRMTOP file
+  !! @param[in]    fmt01   : number variables per line, 10 for10I8
+  !! @param[in]    fmt02   : column length per one variable, 8 for 10I8
+  !! @param[in]    keyword : input keyword information
+  !! @param[in]    num     : number of variables
+  !! @param[inout] prmtop  : prmtop data
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine read_prmtop_realf_format(file, fmt01, fmt02, keyword, num, prmtop,&
+                                      icmap_type)
+
+    ! formal arguments
+    integer,                 intent(in)    :: file
+    character(*),            intent(in)    :: fmt01
+    character(*),            intent(in)    :: fmt02
+    character(*),            intent(in)    :: keyword
+    integer,                 intent(in)    :: num
+    type(s_prmtop),          intent(inout) :: prmtop
+    integer,       optional, intent(in)    :: icmap_type
+
+    ! local variables
+    real(wp)                 :: dwork
+    integer                  :: i, j
+    integer                  :: len
+    integer                  :: count
+    integer                  :: start, end
+    integer                  :: ifmt01
+    integer                  :: ifmt02_int_part
+    integer                  :: ifmt02_deci_part
+    integer                  :: num_reads
+    character(100)           :: line
+    character(10)            :: fmt10
+    character(10)            :: fmt02_int_part
+    character(10)            :: fmt02_deci_part
+
+
+    read(fmt01,*) ifmt01
+    len = len_trim(fmt02)
+
+    do i = 1, len
+      if (fmt02(i:i) == '.') then
+        read(fmt02(1:i-1),*)   ifmt02_int_part
+        read(fmt02(i+1:len),*) ifmt02_deci_part
+        read(fmt02(1:i-1),'(A)')   fmt02_int_part
+        read(fmt02(i+1:len),'(A)') fmt02_deci_part
+        exit
+      end if
+    end do
+
+    if (ifmt02_int_part < 10) then
+      if (ifmt02_deci_part < 10) then
+        fmt10 = '(fx.y)'
+        write(fmt10(3:3),'(A1)') fmt02_int_part
+        write(fmt10(5:5),'(A1)') fmt02_deci_part
+      end if
+    else if (ifmt02_int_part < 100) then
+      if (ifmt02_deci_part < 10) then
+        fmt10 = '(Fxx.y)'
+        write(fmt10(3:4),'(A2)') fmt02_int_part
+        write(fmt10(6:6),'(A1)') fmt02_deci_part
+      else if (ifmt02_deci_part < 100) then
+        fmt10 = '(Fxx.yy)'
+        write(fmt10(3:4),'(A2)') fmt02_int_part
+        write(fmt10(6:7),'(A2)') fmt02_deci_part
+      end if
+    end if
+
+    ! Read atom
+    !
+    len = ifmt01 * ifmt02_int_part
+
+    num_reads = num / ifmt01
+    if (mod(num,ifmt01) /= 0) then
+      num_reads = num_reads + 1
+    end if
+
+    count = 1
+    do j = 1, num_reads
+      read(file,'(A)',err=100,end=100) line
+
+      do i = 1, ifmt01
+        if (count > num) then
+          exit
+        end if
+        start = (i - 1) * ifmt02_int_part + 1
+        end = start + ifmt02_int_part - 1
+
+        if (keyword == 'CMAP_PARAMETER') then
+          read(line(start:end),fmt10) prmtop%cmap_parameter(count,icmap_type)
+
+        end if
+        count = count + 1
+
+      end do
+200   continue
+
+    end do
+100 continue
+
+    return
+
+  end subroutine read_prmtop_realf_format
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

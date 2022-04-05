@@ -45,9 +45,28 @@ module at_rpath_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
+
+  use at_input_mod
+  use molecules_mod
+  use at_qmmm_mod
+  use fileio_grocrd_mod
+  use fileio_grotop_mod
+  use fileio_ambcrd_mod
+  use fileio_prmtop_mod
+  use fileio_rst_mod
+  use fileio_psf_mod
+  use fileio_gpr_mod
+  use fileio_par_mod
+  use fileio_top_mod
+  use fileio_crd_mod
+  use fileio_pdb_mod
+  use fileio_mode_mod
+  use fileio_rstmep_mod
+  use fileio_eef1_mod
+  use fileio_spot_mod  
 
   implicit none
 
@@ -63,6 +82,7 @@ module at_rpath_mod
     integer                           :: dimension    = 0
 
     ! MFEP
+    logical                           :: avoid_shrinkage = .false.
     integer                           :: rpath_period = 0
     real(wp)                          :: smooth       = 0.0_wp
     logical                           :: use_restart  = .true.
@@ -71,32 +91,35 @@ module at_rpath_mod
     ! MEP
     character(256)                    :: mepatm_select_index = ''
     logical                           :: mep_partial_opt = .true.
-    integer                           :: qmsave_period = 2
-    integer                           :: crdout_period = 0
-    integer                           :: rstout_period = 0
-    integer                           :: method = MEPmethod_NEB
-
-    ! MEP-String
-    logical                           :: massWeightCoord = .true.
+    integer                           :: eneout_period = 10
+    integer                           :: crdout_period = 10
+    integer                           :: rstout_period = 10
     real(wp)                          :: tol_energy = 0.01_wp
     real(wp)                          :: tol_path   = 0.01_wp
+    logical                           :: massWeightCoord = .false.
+
+    integer                           :: method = MEPmethod_String
+
+    ! MEP-String 
+    !   method = string
+    !   delta  = 0.001
 
     ! MEP-NEB
-    real(wp)                          :: tol_rmsg = 0.36_wp
-    real(wp)                          :: tol_maxg = 0.54_wp
-    real(wp)                          :: k_spring = 0.1_wp
-    logical                           :: climbing_image     = .true.
-    real(wp)                          :: tol_rmsg_cineb     = -1.0_wp
+    real(wp)                          :: k_spring = 10.0_wp
     integer                           :: ncorrection        = 10
     logical                           :: lbfgs_bnd          = .true.
-    logical                           :: lbfgs_bnd_qmonly   = .true.
+    logical                           :: lbfgs_bnd_qmonly   = .false.
     real(wp)                          :: lbfgs_bnd_maxmove  = 0.1_wp
+    logical                           :: climbing_image     = .false.
     logical                           :: verbose            = .false.
 
     ! to be deprecated
-    character(256)                    :: optimizer = 'GLBFGS'
     real(wp)                          :: force_scale_init = 0.01_wp
     real(wp)                          :: force_scale_max  = 0.1_wp
+    real(wp)                          :: tol_rmsg = 0.36_wp
+    real(wp)                          :: tol_maxg = 0.54_wp
+    real(wp)                          :: tol_rmsg_cineb     = -1.0_wp
+    character(256)                    :: optimizer = 'GLBFGS'
     ! to be deprecated
 
     ! FEP
@@ -146,14 +169,32 @@ contains
       case ('rpath')
 
         write(MsgOut,'(A)') '[RPATH]'
+        write(MsgOut,'(A)') 'rpathmode           = MFEP # MFEP or MEP'
         write(MsgOut,'(A)') 'nreplica            = 4    # number of images'
+        write(MsgOut,'(A)') 'fix_terminal        = NO'
+
+        write(MsgOut,'(A)') '# For MFEP'
         write(MsgOut,'(A)') 'rpath_period        = 1000'
         write(MsgOut,'(A)') 'delta               = 0.05'
         write(MsgOut,'(A)') 'smooth              = 0.1'
         write(MsgOut,'(A)') 'rest_function       = 1 2'
         write(MsgOut,'(A)') 'use_restart         = YES'
-        write(MsgOut,'(A)') 'fix_terminal        = NO'
-        write(MsgOut,'(A)') ''
+        write(MsgOut,'(A)') 'avoid_shrinkage      = NO'
+
+        write(MsgOut,'(A)') '# For MEP'
+        write(MsgOut,'(A)') '#method              = NEB # STRING or NEB'
+        write(MsgOut,'(A)') '#ncycle              = 1000'
+        write(MsgOut,'(A)') '#mepatm_select_index = 1 2'
+        write(MsgOut,'(A)') '#eneout_period       = 10'
+        write(MsgOut,'(A)') '#crdout_period       = 10'
+        write(MsgOut,'(A)') '#rstout_period       = 10'
+        write(MsgOut,'(A)') '#tol_energy          = 0.01'
+        write(MsgOut,'(A)') '#tol_path            = 0.01'
+        write(MsgOut,'(A)') '#massWeightCoord     = YES'
+        write(MsgOut,'(A)') '# For MEP/String'
+        write(MsgOut,'(A)') '#delta               = 0.001'
+        write(MsgOut,'(A)') '# For MEP/NEB'
+        write(MsgOut,'(A)') '#k_spring            = 100.0'
 
       end select
 
@@ -168,9 +209,10 @@ contains
         write(MsgOut,'(A)') 'rpath_period      = 1000'
         write(MsgOut,'(A)') 'delta             = 0.05'
         write(MsgOut,'(A)') 'smooth            = 0.1'
+        write(MsgOut,'(A)') 'fix_terminal      = NO'
+        write(MsgOut,'(A)') 'avoid_shrinkage   = NO'
         write(MsgOut,'(A)') 'rest_function     = 1 2'
         write(MsgOut,'(A)') 'use_restart       = YES'
-        write(MsgOut,'(A)') 'fix_terminal      = NO'
         write(MsgOut,'(A)') ''
 
       end select
@@ -221,6 +263,8 @@ contains
                             rpath_info%fix_terminal)
 
     ! MFEP
+    call read_ctrlfile_logical(handle, Section, 'avoid_shrinkage',  &
+                            rpath_info%avoid_shrinkage)
     call read_ctrlfile_integer(handle, Section, 'rpath_period', &
                                rpath_info%rpath_period)
     call read_ctrlfile_real(handle, Section, 'smooth', &
@@ -230,6 +274,20 @@ contains
     call read_ctrlfile_string (handle, Section, 'rest_function', &
                                rest_function_char)
 
+    ! MEP
+    call read_ctrlfile_string (handle, Section, 'mepatm_select_index',  &
+                               rpath_info%mepatm_select_index)
+    call read_ctrlfile_logical(handle, Section, 'mep_partial_opt',  &
+                               rpath_info%mep_partial_opt)
+    call read_ctrlfile_integer(handle, Section, 'eneout_period',  &
+                               rpath_info%eneout_period)
+    call read_ctrlfile_integer(handle, Section, 'crdout_period',  &
+                               rpath_info%crdout_period)
+    call read_ctrlfile_integer(handle, Section, 'rstout_period',  &
+                               rpath_info%rstout_period)
+    call read_ctrlfile_type   (handle, Section, 'method', &
+                               rpath_info%method, MEPmethodTypes)
+
     ! String
     call read_ctrlfile_real(handle, Section, 'tol_energy',  &
                                rpath_info%tol_energy)
@@ -238,10 +296,52 @@ contains
     call read_ctrlfile_logical(handle, Section, 'massWeightCoord',  &
                                rpath_info%massWeightCoord)
 
+    ! NEB
+    call read_ctrlfile_real(handle, Section, 'tol_rmsg',  &
+                               rpath_info%tol_rmsg)
+    call read_ctrlfile_real(handle, Section, 'tol_maxg',  &
+                               rpath_info%tol_maxg)
+    call read_ctrlfile_real(handle, Section, 'k_spring',  &
+                               rpath_info%k_spring)
+    call read_ctrlfile_logical(handle, Section, 'climbing_image',  &
+                               rpath_info%climbing_image)
+    call read_ctrlfile_real(handle, Section, 'tol_rmsg_cineb',  &
+                               rpath_info%tol_rmsg_cineb)
+    call read_ctrlfile_integer(handle, Section, 'ncorrection',  &
+                               rpath_info%ncorrection)
+    call read_ctrlfile_logical(handle, Section, 'lbfgs_bnd',  &
+                               rpath_info%lbfgs_bnd)
+    call read_ctrlfile_logical(handle, Section, 'lbfgs_bnd_qmonly',  &
+                               rpath_info%lbfgs_bnd_qmonly)
+    call read_ctrlfile_real(handle, Section, 'lbfgs_bnd_maxmove',  &
+                               rpath_info%lbfgs_bnd_maxmove)
+    call read_ctrlfile_logical(handle, Section, 'verbose',  &
+                               rpath_info%verbose)
+
+    ! to be deprecated
+    call read_ctrlfile_string (handle, Section, 'optimizer', &
+                               rpath_info%optimizer)
+    call read_ctrlfile_real(handle, Section, 'force_scale_init',  &
+                               rpath_info%force_scale_init)
+    call read_ctrlfile_real(handle, Section, 'force_scale_max',  &
+                               rpath_info%force_scale_max)
+    ! to be deprecated
+
+    ! FEP
+    call read_ctrlfile_integer(handle, Section, 'fep_period',  &
+                               rpath_info%fep_period)
+    call read_ctrlfile_logical(handle, Section, 'esp_energy',  &
+                               rpath_info%esp_energy)
+    call read_ctrlfile_logical(handle, Section, 'esp_md',  &
+                               rpath_info%esp_md)
+
     call end_ctrlfile_section(handle)
 
     ! error check
     !
+    if ((rpath_info%rpathmode /= RpathmodeMFEP) .and. &
+        (rpath_info%rpathmode /= RpathmodeMEP ))      &
+      call error_msg('Read_Ctrl_Path> rpathmode should be MFEP or MEP in [RPATH]')
     if (rpath_info%nreplica == 0) &
       call error_msg('Read_Ctrl_Rpath> nreplica should be > 0 in [RPATH]')
 
@@ -267,7 +367,32 @@ contains
       call split(rpath_info%dimension, rpath_info%dimension, &
                  rest_function_char, rpath_info%rest_function)
 
+    else
+      if (rpath_info%avoid_shrinkage) &
+        call error_msg('Read_Ctrl_Rpath> avoid_shrinkage is allowed only in MFEP [RPATH].')
+
+
+      if (len(trim(rpath_info%mepatm_select_index)) == 0) then
+        call error_msg('Read_Ctrl_Rpath> mepatm_select_index is not found in [RPATH].')
+      end if
+
+      ! default value for delta
+      if (rpath_info%delta < EPS) rpath_info%delta = 0.001_wp
+      if (rpath_info%tol_rmsg_cineb < 0.0_wp) rpath_info%tol_rmsg_cineb = rpath_info%tol_rmsg * 3.0_wp
+
+      rpath_info%dimension = 0
+      rpath_info%use_restart = .false.
+
     end if
+
+    if (rpath_info%rpathmode == RpathmodeFEP) then
+      if (.not. rpath_info%esp_md .and. rpath_info%esp_energy) then
+        if(main_rank) write(MsgOut,'(A)') &
+            'Read_Ctrl_Rpath> warning! esp_energy is turned off.'
+        rpath_info%esp_energy = .false.
+      end if
+    end if
+
 
     ! write parameters to MsgOut
     !
@@ -282,13 +407,11 @@ contains
       else
         write(MsgOut,'(A)') '  fix_terminal      =         no'
       end if
-      write(MsgOut,'(A,I10,A,I10)') &
-        '  crdout_period     = ', rpath_info%crdout_period, &
-        '  rstout_period     = ', rpath_info%rstout_period
-      write(MsgOut,'(A,I10)') &
-        '  qmsave_period     = ', rpath_info%qmsave_period
 
       if (rpath_info%rpathmode == RpathmodeMFEP) then
+        if (rpath_info%fix_terminal) then
+          write(MsgOut,'(A)') '  avoid_shrinkage =        yes'
+        end if
         write(MsgOut,'(A,I10,A,I10)') &
           '  dimension         = ', rpath_info%dimension, &
           '  rpath_period      = ', rpath_info%rpath_period
@@ -302,6 +425,88 @@ contains
         write(MsgOut,'(A,F10.3,A,A10)') &
           '  smooth            = ', rpath_info%smooth,      &
           '  rest_function     = ', trim(rest_function_char)
+      end if
+
+      if (rpath_info%rpathmode == RpathmodeMEP) then
+        write(MsgOut,'(A,A10,A,I10)') &
+          '  method            = ', trim(MEPmethodTypes(rpath_info%method)), &
+          '  ncycle            = ', rpath_info%ncycle
+        write(MsgOut,'(A,F10.2,A,F10.2)') &
+          '  tol_energy        = ', rpath_info%tol_energy,  &
+          '  tol_path          = ', rpath_info%tol_path
+        write(MsgOut,'(A,I10,A,I10)') &
+          '  eneout_period     = ', rpath_info%eneout_period, &
+          '  crdout_period     = ', rpath_info%crdout_period
+        write(MsgOut,'(A,I10)') &
+          '  rstout_period     = ', rpath_info%rstout_period
+        if (rpath_info%massWeightCoord) then
+          write(MsgOut,'(A)') &
+          '  massweightcoord   =        yes'
+        else
+          write(MsgOut,'(A)') &
+          '  massweightcoord   =         no'
+        end if
+
+        if (rpath_info%method == MEPmethod_NEB) then
+          write(MsgOut,'(A,F10.2)')         &
+            '  k_spring          = ', rpath_info%k_spring
+          write(MsgOut,'(A,I10)') &
+            '  ncorrection       = ', rpath_info%ncorrection
+
+          if (rpath_info%lbfgs_bnd) then
+            if (rpath_info%lbfgs_bnd_qmonly) then
+              write(MsgOut,'(A,A)')         &
+              '  lbfgs_bnd         =        yes', &
+              '  lbfgs_bnd_qmonly  =        yes'
+            else
+              write(MsgOut,'(A,A)')         &
+              '  lbfgs_bnd         =        yes', &
+              '  lbfgs_bnd_qmonly  =         no'
+            end if
+            if (rpath_info%lbfgs_bnd_maxmove < EPS) then 
+              write(MsgOut,'(A,F10.2,A)')  &
+              ' Warning: lbfgs_bnd_maxmove =', rpath_info%lbfgs_bnd_maxmove, &
+              ' is too small. Restoring default value'  
+              rpath_info%lbfgs_bnd_maxmove = 0.1D+00
+            end if
+            write(MsgOut,'(A,F10.2)')       &
+              '  lbfgs_bnd_maxmove = ', rpath_info%lbfgs_bnd_maxmove
+
+          else
+            write(MsgOut,'(A)')             &
+              '  lbfgs_bnd         =         no'
+            rpath_info%lbfgs_bnd_qmonly = .false.
+
+          end if
+
+        else if (rpath_info%method == MEPmethod_String) then
+          write(MsgOut,'(A,F10.2)') &
+            '  delta             = ', rpath_info%delta
+
+        end if
+
+        write(MsgOut,'(A,A)') &
+          '  mepatm_select_index   = ', trim(rpath_info%mepatm_select_index)
+
+      end if
+
+      if (rpath_info%rpathmode == RpathmodeFEP) then
+        write(MsgOut,'(A,I10,A,I10)') &
+                              '  fep_period        = ', rpath_info%fep_period
+        if (rpath_info%esp_md) then
+          write(MsgOut,'(A)') '  esp_md            =        yes'
+        else
+          write(MsgOut,'(A)') '  esp_md            =         no'
+        end if
+        if (rpath_info%esp_energy) then
+          write(MsgOut,'(A)') '  esp_energy        =        yes'
+        else
+          write(MsgOut,'(A)') '  esp_energy        =         no'
+        end if
+
+        write(MsgOut,'(A,A)') &
+          '  mepatm_select_index = ', trim(rpath_info%mepatm_select_index)
+
       end if
 
       write(MsgOut,*)
@@ -376,15 +581,138 @@ contains
       call setup_rpath_mfep(rpath_info, rst, dynamics, molecule, &
                       restraints, enefunc, rpath)
 
-    end if
+    else if (rpath_info%rpathmode == RpathmodeMEP) then
 
+      ! Set rpath variables
+      !
+      rpath%ncycle          = rpath_info%ncycle
+      rpath%nreplica        = rpath_info%nreplica
+      rpath%delta           = rpath_info%delta
+      rpath%fix_terminal    = rpath_info%fix_terminal
+      rpath%rstout_period   = rpath_info%rstout_period
+      rpath%eneout_period   = rpath_info%eneout_period
+      rpath%crdout_period   = rpath_info%crdout_period
+      rpath%mep_partial_opt = rpath_info%mep_partial_opt
+      rpath%method          = rpath_info%method
+
+      rpath%massWeightCoord = rpath_info%massWeightCoord
+      rpath%tol_energy      = rpath_info%tol_energy
+      rpath%tol_path        = rpath_info%tol_path
+
+      rpath%tol_rmsg          = rpath_info%tol_rmsg
+      rpath%tol_maxg          = rpath_info%tol_maxg
+      rpath%k_spring          = rpath_info%k_spring
+      rpath%climbing_image    = rpath_info%climbing_image
+      rpath%tol_rmsg_cineb    = rpath_info%tol_rmsg_cineb
+      rpath%ncorrection       = rpath_info%ncorrection
+      rpath%lbfgs_bnd         = rpath_info%lbfgs_bnd
+      rpath%lbfgs_bnd_qmonly  = rpath_info%lbfgs_bnd_qmonly
+      rpath%lbfgs_bnd_maxmove = rpath_info%lbfgs_bnd_maxmove
+      rpath%verbose           = rpath_info%verbose
+      rpath%do_cineb          = .false.
+
+      rpath%optimizer         = rpath_info%optimizer
+      rpath%force_scale_init  = rpath_info%force_scale_init
+      rpath%force_scale_max   = rpath_info%force_scale_max
+
+      if (nrep_per_proc > 1) then
+        rpath%rstout_period = 1
+        rpath%crdout_period = 1
+      end if
+
+      call setup_rpath_mep(rpath_info%mepatm_select_index, sel_info, &
+                           rst, molecule, enefunc%qmmm, minimize, dynvars, rpath)
+
+    else if (rpath_info%rpathmode == RpathmodeFEP) then
+
+      ! Set rpath variables
+      rpath%nreplica      = rpath_info%nreplica
+      rpath%esp_energy    = rpath_info%esp_energy
+      rpath%esp_md        = rpath_info%esp_md
+
+      call setup_rpath_fep(rpath_info%fep_period, &
+                           rpath_info%mepatm_select_index, &
+                           sel_info, rst, rstmep, molecule, &
+                           enefunc%qmmm, dynamics, dynvars, rpath)
+
+    end if
   end subroutine setup_rpath
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_rpath_resetup
+  !> @brief        setup MEP atoms for the case "nreplica > nproc"
+  !! @authors      SI
+  !! @param[in]    molecule   : molecule information
+  !! @param[in]    qmmm       : QMMM information
+  !! @param[out]   rpath      : rpath parameters
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_rpath_resetup(inp_info, out_info, qmmm_info, rpath_info, &
+                                 sel_info, dynamics, molecule, &
+                                 enefunc, minimize, dynvars, output, &
+                                 boundary, top, par, gpr, psf, &
+                                 prmtop, grotop, rst, fit, rstmep, &
+                                 eef1, spot, rpath)
+
+    ! formal arguments
+    type(s_inp_info),        intent(inout) :: inp_info
+    type(s_out_info),        intent(inout) :: out_info
+    type(s_qmmm_info),       intent(in)    :: qmmm_info
+    type(s_rpath_info),      intent(in)    :: rpath_info
+    type(s_sel_info),        intent(in)    :: sel_info
+    type(s_dynamics),        intent(inout) :: dynamics
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_minimize),        intent(inout) :: minimize
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_output),          intent(inout) :: output
+    type(s_boundary),        intent(inout) :: boundary
+
+    type(s_top),             intent(inout) :: top
+    type(s_par),             intent(inout) :: par
+    type(s_gpr),             intent(inout) :: gpr
+    type(s_psf),             intent(inout) :: psf
+    type(s_prmtop),          intent(inout) :: prmtop
+    type(s_grotop),          intent(inout) :: grotop
+    type(s_pdb)                            :: pdb
+    type(s_crd)                            :: crd
+    type(s_ambcrd)                         :: ambcrd
+    type(s_grocrd)                         :: grocrd
+    type(s_rst),             intent(inout) :: rst
+    type(s_pdb)                            :: ref
+    type(s_pdb),             intent(inout) :: fit
+    type(s_ambcrd)                         :: ambref
+    type(s_grocrd)                         :: groref
+    type(s_mode)                           :: mode
+    type(s_rstmep),          intent(inout) :: rstmep
+    type(s_eef1),            intent(inout) :: eef1
+    type(s_spot),            intent(inout) :: spot
+    type(s_rpath),           intent(inout) :: rpath
+
+    call input_rpath_resetup(inp_info, top, par, gpr, psf, prmtop, &
+                             grotop, pdb, crd, ambcrd, grocrd, rst, ref, fit, &
+                             ambref, groref, mode, rstmep, eef1, spot, rpath, &
+                             out_info%rstfile)
+    call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
+                          mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
+    call setup_dynvars(molecule, rst, dynvars, dynamics)
+    if(enefunc%qmmm%do_qmmm) then      
+      call setup_qmmm_directory(qmmm_info, enefunc%qmmm)
+    end if
+    call setup_rpath_mep(rpath_info%mepatm_select_index, &
+                         sel_info, rst, molecule, &
+                         enefunc%qmmm, minimize, dynvars, rpath, rstmep)
+    call setup_output_rpath(out_info, dynamics, rpath, output)
+
+  end subroutine setup_rpath_resetup
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine    run_rpath
   !> @brief        run string method
-  !! @authors      TM, YK, KY
+  !! @authors      TM, YK, KY, SI
   !! @param[inout] output      : output information
   !! @param[inout] molecule    : molecule information
   !! @param[inout] enefunc     : potential energy functions information
@@ -399,8 +727,9 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine run_rpath(output, molecule, enefunc, dynvars, minimize, dynamics, &
-                    pairlist, boundary, constraints, ensemble, rpath)
+  subroutine run_rpath(inp_info, out_info, qmmm_info, rpath_info, sel_info, &
+                       output, molecule, enefunc, dynvars, minimize, &
+                       dynamics, pairlist, boundary, constraints, ensemble, rpath)   
 
     ! formal arguments
     type(s_output),           intent(inout) :: output
@@ -415,19 +744,74 @@ contains
     type(s_ensemble),         intent(inout) :: ensemble
     type(s_rpath),            intent(inout) :: rpath
 
-      if (rpath%rpathmode == RpathmodeMFEP) then
-        call run_rpath_mfep(output, molecule, enefunc, dynvars, dynamics, &
-                      pairlist, boundary, constraints, ensemble, rpath)
+    type(s_inp_info),         intent(inout) :: inp_info  
+    type(s_out_info),         intent(inout) :: out_info  
+    type(s_qmmm_info),        intent(in)    :: qmmm_info 
+    type(s_rpath_info),       intent(in)    :: rpath_info
+    type(s_sel_info),         intent(in)    :: sel_info  
+    type(s_rst)                             :: rst       
+    type(s_rstmep)                          :: rstmep     
 
-      else if (rpath%rpathmode == RpathmodeMEP) then
+    ! local variables   
+    integer                                 :: i, j
+    logical                                 :: conv = .false.      
+    type(s_top)                             :: top
+    type(s_par)                             :: par
+    type(s_gpr)                             :: gpr
+    type(s_psf)                             :: psf
+    type(s_prmtop)                          :: prmtop
+    type(s_grotop)                          :: grotop
+    type(s_pdb)                             :: fit
+    type(s_eef1)                            :: eef1
+    type(s_spot)                            :: spot
+
+    if (rpath%rpathmode == RpathmodeMFEP) then
+      call run_rpath_mfep(output, molecule, enefunc, dynvars, dynamics, &
+                    pairlist, boundary, constraints, ensemble, rpath)
+
+    else if (rpath%rpathmode == RpathmodeMEP) then
+      if (nrep_per_proc == 1) then
         call run_rpath_mep(output, molecule, enefunc, dynvars, minimize, &
-                dynamics, pairlist, boundary, rpath)
+             dynamics, pairlist, boundary, rpath, conv)
+      else
+        ! If nreplica is larger than total MPI proccess        
+        !
+        i = 0          
+        do !! Cycle
+          do j = 1, nrep_per_proc
+            my_replica_no = nrep_per_proc*(my_country_no) + j
 
-      else if (rpath%rpathmode == RpathmodeFEP) then
-        call run_rpath_fep(output, molecule, enefunc, dynvars, dynamics,     &
-                           pairlist, boundary, constraints, ensemble, rpath)
+            ! Initialize MEP status again for new replica
+            call setup_rpath_resetup(inp_info, out_info, qmmm_info, &
+                                     rpath_info, sel_info, dynamics, &
+                                     molecule, enefunc, minimize, dynvars, &
+                                     output, boundary, top, par, &
+                                     gpr, psf, prmtop, grotop, rst, fit, &
+                                     rstmep, eef1, spot, rpath)
 
+            ! Enter run_rpath_mep
+            call run_rpath_mep(output, molecule, enefunc, dynvars, minimize, &
+                               dynamics, pairlist, boundary, rpath, conv, i, j)
+
+            rpath%first_replica = .false.
+          end do
+
+          rpath%first_replica  = .true.
+          rpath%first_iter     = .false.
+
+          ! If MEP reach limit
+          !
+          if (rpath%mep_exit) exit
+          if (rpath%method == MEPmethod_NEB) then
+            if (rpath%neb_cycle == rpath%ncycle + 2) exit
+          else
+            if (i == rpath%ncycle + 1) exit
+          end if  
+          i = i + 1
+        end do
       end if
+
+    end if
 
   end subroutine run_rpath
 
@@ -485,6 +869,13 @@ contains
         rpath%rpath_period = rpath_info%rpath_period
         rpath%ncycle = dynamics%nsteps/rpath%rpath_period
       end if
+      if (dynamics%rstout_period > 0) then
+        if (mod(dynamics%rstout_period,rpath_info%rpath_period) /= 0) then
+          call error_msg('Setup_Rpath> mod(rstout_period, rpath_period)'//&
+                         ' must be zero)')
+        endif
+      endif
+
     else if (rpath_info%rpath_period == 0) then
       rpath%equilibration_only = .true.
       rpath%rpath_period = dynamics%nsteps
@@ -500,6 +891,7 @@ contains
     rpath%delta        = rpath_info%delta
     rpath%smooth       = rpath_info%smooth
     rpath%fix_terminal = rpath_info%fix_terminal
+    rpath%avoid_shrinkage = rpath_info%avoid_shrinkage
     rpath%use_restart  = rpath_info%use_restart
 
     ifunc = rpath_info%rest_function(1)
@@ -582,6 +974,10 @@ contains
               enefunc%restraint_const_replica(j, ifunc)
             rpath%rest_reference(1:2, i, replicaid) = &
               enefunc%restraint_refcoord(iatm_xyz, iatm)
+            rpath%rest_reference_prev(i, replicaid) =  &
+               rpath%rest_reference(1, i, replicaid)
+            rpath%rest_reference_init(i, replicaid) =  &
+               rpath%rest_reference(1, i, replicaid)
           end do
         end do
 
@@ -613,6 +1009,10 @@ contains
             rpath%rest_constants(1:4, i, j) =  &
                enefunc%restraint_const_replica(j, ifunc)
             rpath%rest_reference(1:2, i, j) =  &
+                enefunc%restraint_ref_replica(j, ifunc)
+            rpath%rest_reference_prev(i, j) =  &
+                enefunc%restraint_ref_replica(j, ifunc)
+            rpath%rest_reference_init(i, j) =  &
                 enefunc%restraint_ref_replica(j, ifunc)
           end do
         end do
@@ -777,6 +1177,7 @@ contains
 
     replicaid = my_country_no + 1
 
+#ifdef HAVE_MPI_GENESIS
     if(replica_main_rank) then
       call mpi_allgather(rst%rest_reference(1, :, replicaid), &
                          rpath%dimension,                           &
@@ -790,6 +1191,7 @@ contains
     call mpi_bcast(rpath%rest_reference(1, :, :),  &
                    rpath%dimension*rpath%nreplica, &
                    mpi_wp_real, 0, mpi_comm_country, ierror)
+#endif
 
     !write(MsgOut,*) my_country_no + 1
 
@@ -809,6 +1211,8 @@ contains
         !write(MsgOut,*) rpath%rest_reference(1, i, j)
 
         enefunc%restraint_ref_replica(j, ifunc) = rpath%rest_reference(1, i, j)
+        rpath%rest_reference_prev(i, j) =  rpath%rest_reference(1, i, j)
+        rpath%rest_reference_init(i, j) =  rpath%rest_reference(1, i, j)
 
       end do
 
@@ -921,11 +1325,22 @@ contains
 
     ! update boundary and pairlist
     !
-    call update_boundary(enefunc%table%table, &
-      enefunc%pairlistdist, boundary)
+    if (enefunc%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(enefunc%cg_pairlistdist_ele, &
+          enefunc%cg_pairlistdist_126,                     &
+          enefunc%cg_pairlistdist_PWMcos,                  &
+          enefunc%cg_pairlistdist_DNAbp,                   &
+          enefunc%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(enefunc%table%table,               &
+          enefunc%pairlistdist,                               &
+          boundary)
+    end if
     if (real_calc) then
       pairlist%allocation = .true.
-      call update_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+      call update_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                           dynvars%coord_pbc, pairlist)
 
     end if
 
@@ -958,7 +1373,8 @@ contains
 
       ! output dynamical variables
       !
-      call output_rpath(output, molecule, dynamics, dynvars, boundary, rpath)
+      call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                        boundary, rpath)
     end do
      
     ! close output files
@@ -987,7 +1403,10 @@ contains
 
     ! local variables
     integer                  :: dimno, dimno_i, dimno_j
-    integer                  :: repid
+    integer                  :: repid, repid_i, repid_j
+    real(dp)                 :: dnorm
+    real(dp),    allocatable :: tangent_vector(:)
+    integer                  :: ifunc
 
     integer,         pointer :: count
     real(wp),        pointer :: force(:), metric(:,:)
@@ -1015,6 +1434,36 @@ contains
     if(rpath%fix_terminal) then
       if((repid == 1) .or. (repid == rpath%nreplica)) then
         force(:) = 0.0_wp
+      end if
+    else if(rpath%avoid_shrinkage) then
+      repid_i = 0
+      repid_j = 0
+      if(repid == 1) then
+        repid_i = 1
+        repid_j = 2
+      else if(repid == rpath%nreplica) then
+        repid_i = rpath%nreplica
+        repid_j = rpath%nreplica - 1
+      end if
+      if (((repid == 1) .or. (repid == rpath%nreplica))  &
+          .and. (repid_i > 0) .and. (repid_j > 0)) then
+        allocate(tangent_vector(rpath%dimension))
+        do dimno = 1, rpath%dimension
+          tangent_vector(dimno) = rpath%rest_reference(1,dimno, repid_j) &
+                                 -rpath%rest_reference(1,dimno, repid_i)
+        end do
+        dnorm = 0.0_dp
+        do dimno = 1, rpath%dimension
+          dnorm = dnorm + tangent_vector(dimno)**2
+        end do
+        dnorm = sqrt(dnorm)
+        do dimno = 1, rpath%dimension
+          tangent_vector(dimno) = tangent_vector(dimno)/dnorm
+        end do
+        do dimno = 1, rpath%dimension
+          force(dimno) = force(dimno) - force(dimno)*tangent_vector(dimno)
+        end do
+        deallocate(tangent_vector)
       end if
     end if
     
@@ -1049,6 +1498,7 @@ contains
     integer                  :: i, j, k
     integer                  :: dimno, dimno_i, dimno_j
     integer                  :: repid, repid_i, repid_j
+    real(dp)                 :: distance_prev, distance_init, dtmp
 
     real(dp),    allocatable :: path(:,:), path_smooth(:,:), path_reparm(:,:)
     real(dp),    allocatable :: path_leng(:), path_equi(:)
@@ -1072,7 +1522,7 @@ contains
       before_gather(dimno) = rpath%rest_reference(1, dimno, repid)
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_gather(before_gather, rpath%dimension, mpi_real8,&
                     after_gather,  rpath%dimension, mpi_real8,&
                     0, mpi_comm_airplane, ierror)
@@ -1126,6 +1576,27 @@ contains
         end do
       end do
     end if
+
+    distance_prev = 0.0_dp
+    distance_init = 0.0_dp
+    do repid_i = 1, rpath%nreplica
+      do dimno = 1, rpath%dimension
+        dtmp = path_reparm(repid_i,dimno)
+        distance_prev = distance_prev +   &
+          (rpath%rest_reference_prev(dimno, repid_i) - dtmp)**2
+        distance_init = distance_init +   &
+          (rpath%rest_reference_init(dimno, repid_i) - dtmp)**2
+
+        rpath%rest_reference_prev(dimno, repid_i) = dtmp
+      end do
+    end do
+    distance_prev = sqrt(distance_prev)
+    distance_init = sqrt(distance_init)
+    rpath%sum_distance = real(path_leng(rpath%nreplica),wp)
+    rpath%distance_prev    = real(distance_prev,wp)/ &
+                             real((rpath%nreplica), wp)
+    rpath%distance_init    = real(distance_init,wp)/ &
+                             real((rpath%nreplica), wp)
 
     ! broadcast restraint reference
     call mpi_bcast(path_reparm, rpath%dimension*rpath%nreplica,&

@@ -18,6 +18,9 @@ module at_enefunc_str_mod
   use constants_mod
   use messages_mod
   use string_mod
+#ifdef QSIMULATE
+  use iso_c_binding
+#endif
 
   implicit none
   private
@@ -160,26 +163,26 @@ module at_enefunc_str_mod
   end type s_table_enefunc
 
   type, public :: s_qmmm
-    logical                   :: do_qmmm
-    character(MaxLine)        :: qmexe
-    character(MaxLine)        :: qminp
-    character(MaxLine)        :: qmout
-    character(MaxLine)        :: qminfo
-    character(MaxLine)        :: workdir
-    character(MaxLine)        :: savedir
-    character(MaxLine)        :: qmbase0
-    character(MaxLine)        :: qmbasename
-    character(MaxLine)        :: qmindex = ''
-    character(MaxLine)        :: qm_exemode
-    integer                   :: qmsave_period
-    logical                   :: savefile
-    logical                   :: dryrun
-    logical                   :: save_qminfo
-    integer                   :: qmmaxtrial
-    integer                   :: qmtrial
-    integer                   :: qm_natoms
+    logical                   :: do_qmmm       = .false.
+    character(MaxLine)        :: qmexe         = ''
+    character(MaxLine)        :: qminp         = ''
+    character(MaxLine)        :: qmout         = ''
+    character(MaxLine)        :: qminfo        = ''
+    character(MaxLine)        :: workdir       = ''
+    character(MaxLine)        :: savedir       = ''
+    character(MaxLine)        :: qmbase0       = ''
+    character(MaxLine)        :: qmbasename    = ''
+    character(MaxLine)        :: qmindex       = ''
+    character(MaxLine)        :: qm_exemode    = ''
+    integer                   :: qmsave_period = 0
+    logical                   :: savefile      = .false.
+    logical                   :: dryrun        = .false.
+    logical                   :: save_qminfo   = .false.
+    integer                   :: qmmaxtrial    = 0
+    integer                   :: qmtrial       = 0
+    integer                   :: qm_natoms     = 0
+    integer                   :: ec_natoms     = 0
     integer, allocatable      :: qmatom_id(:)
-    integer                   :: ec_natoms
     integer, allocatable      :: ecatom_id(:)
     real(wp)                  :: mm_cutoffdist = -1.0_wp
     logical                   :: mm_cutoff_byresidue = .true.
@@ -191,39 +194,50 @@ module at_enefunc_str_mod
     integer                   :: qm_nimpropers = 0
     integer                   :: qm_ncmaps     = 0
     integer                   :: qm_count      = 0
-    real(wp)                  :: qm_dipole(3)
-    logical                   :: ene_only
-    logical                   :: qm_classical = .FALSE.  ! Calculate ESP/MM forces
-    logical                   :: qm_get_esp   = .FALSE.  ! Read and store ESP charges
+    real(wp)                  :: qm_dipole(3)  = 0.0_wp
+    logical                   :: ene_only      = .false.
+    logical                   :: qm_classical  = .false.  ! Calculate ESP/MM forces
+    logical                   :: qm_get_esp    = .false.  ! Read and store ESP charges
     real(wp), allocatable     :: qm_charge(:)
-    logical                   :: qm_debug
+    real(wp), allocatable     :: qm_charge_save(:)
+    logical                   :: qm_debug      = .false.
+    real(wp)                  :: qm_total_charge = 0.0_wp
 
-    integer                   :: qm_nprocs
-    integer                   :: inter_comm
+    integer                   :: qm_nprocs     = 0
+    integer                   :: inter_comm    = 0
 
     ! QMMM internal parameters -> at_qmmm.fpp
-    integer                   :: qmtyp
-    character(MaxLine)        :: qmcnt
-    integer                   :: exclude_charge
-    integer, allocatable      :: qm_atomic_no(:)
+    integer                   :: qmtyp          = 1
+    character(MaxLine)        :: qmcnt          = ''
+    integer                   :: exclude_charge = 0
+    integer,  allocatable     :: qm_atomic_no(:)
     real(wp), allocatable     :: qm_force(:,:)
     real(wp), allocatable     :: mm_force(:,:)
-    integer                   :: mm_natoms
-    integer, allocatable      :: mmatom_id(:)
-    integer                   :: mm_all_natoms
-    integer                   :: mm_nres
-    integer, allocatable      :: mm_natoms_res(:)
-    integer, allocatable      :: mmatom_id_res(:,:)
-    real(wp)                  :: linkbond = 1.0_wp     ! link bond length
+    integer                   :: mm_natoms      = 0
+    integer,  allocatable     :: mmatom_id(:)
+    integer                   :: mm_all_natoms  = 0
+    integer                   :: mm_nres        = 0
+    integer,  allocatable     :: mm_natoms_res(:)
+    integer,  allocatable     :: mmatom_id_res(:,:)
+    real(wp)                  :: linkbond
     real(wp), allocatable     :: linkatom_coord(:,:)
     real(wp), allocatable     :: linkatom_force(:,:)
     real(wp), allocatable     :: linkatom_charge(:)
-    logical                   :: is_qm_charge
+    integer, allocatable      :: linkatom_global_address(:)
+    logical                   :: is_qm_charge    = .false.
     logical                   :: ignore_qm_error = .false.
-    logical                   :: qmmm_error
-    logical                   :: charges_bin = .true.
-    character(MaxLine)        :: tcscr, tcscr0
-    logical                   :: defined_gen
+    logical                   :: qmmm_error      = .false.
+    logical                   :: charges_bin     = .true.
+    character(MaxLine)        :: tcscr   = ''
+    character(MaxLine)        :: tcscr0  = ''
+    logical                   :: defined_gen = .false.
+    ! For AMBER force field
+    real(wp)                  :: mm_charge_shift = 0.0_wp
+    real(wp)                  :: mm_total_charge = 0.0_wp
+#ifdef QSIMULATE
+    character(kind=c_char,len=:), allocatable :: qm_input
+    character(kind=c_char,len=:), allocatable :: bagel_output
+#endif
 
   end type s_qmmm
 
@@ -273,42 +287,123 @@ module at_enefunc_str_mod
     integer                       :: num_bonds
     integer                       :: num_angles
     integer                       :: num_ureys
+    !shinobu-edited
+    integer                       :: num_angflex
+    !shinobu-edited
     integer                       :: num_dihedrals
+    integer                       :: num_dihedflex
     integer                       :: num_rb_dihedrals
     integer                       :: num_impropers
     integer                       :: num_cmaps
     integer                       :: num_atom_cls
     integer                       :: num_contacts
+    integer                       :: num_multi_contacts
+    integer                       :: num_vsite2
+    integer                       :: num_vsite3
+    integer                       :: num_vsite3fd
+    integer                       :: num_vsite3fad
+    integer                       :: num_vsite3out
+    integer                       :: num_vsite4fdn
+    integer                       :: num_vsiten
     integer                       :: num_atoms_ref 
     integer                       :: num_restraintgroups
     integer                       :: num_restraintfuncs
     integer                       :: max_restraint_numatoms
     integer                       :: max_restraint_numgrps
+    integer                       :: num_basins
+    ! ~CG~ 3SPN.2C DNA: number of quartic bonds
+    integer                       :: num_bonds_quartic
+    ! ~CG~ 3SPN.2C DNA: number of base stacking
+    integer                       :: num_base_stack
+    logical                       :: cg_safe_dihedral_calc
+    logical                       :: cg_DNA_base_pair_calc
+    logical                       :: cg_DNA_exv_calc
+    logical                       :: cg_ele_calc
+    logical                       :: cg_pwmcos_calc
+    logical                       :: cg_pwmcosns_calc
+    logical                       :: cg_KH_calc
+    logical                       :: cg_IDR_HPS_calc
+    logical                       :: cg_IDR_KH_calc
+    integer                       :: num_cg_particle_DNA_base
+    integer                       :: num_cg_particle_DNA_phos
+    integer                       :: num_cg_particle_DNA_all
+    integer                       :: num_cg_particle_IDR_HPS
+    integer                       :: num_cg_particle_IDR_KH
+    integer                       :: num_cg_particle_KH
+    integer                       :: num_cg_particle_charged
+    integer                       :: num_cg_particle_pro_charged
+    integer                       :: num_pwmcos_terms
+    integer                       :: num_pwmcos_resid
+    integer                       :: num_pwmcosns_terms
+    integer                       :: num_pwmcosns_resid
 
-    integer                       :: istart_bond,      iend_bond
-    integer                       :: istart_angle,     iend_angle
-    integer                       :: istart_urey,      iend_urey
-    integer                       :: istart_dihedral,  iend_dihedral
-    integer                       :: istart_rb_dihed,  iend_rb_dihed
-    integer                       :: istart_improper,  iend_improper
-    integer                       :: istart_cmap,      iend_cmap
-    integer                       :: istart_contact,   iend_contact
-    integer                       :: istart_restraint, iend_restraint
+    integer                       :: istart_bond,          iend_bond
+    integer                       :: istart_angle,         iend_angle
+    integer                       :: istart_urey,          iend_urey
+    !shinobu-edited
+    integer                       :: istart_angflex,       iend_angflex
+    integer                       :: istart_dihedral,      iend_dihedral
+    !shinobu-edited
+    integer                       :: istart_dihedflex,     iend_dihedflex
+    integer                       :: istart_rb_dihed,      iend_rb_dihed
+    integer                       :: istart_improper,      iend_improper
+    integer                       :: istart_cmap,          iend_cmap
+    integer                       :: istart_contact,       iend_contact
+    integer                       :: istart_vsite2,        iend_vsite2
+    integer                       :: istart_vsite3,        iend_vsite3
+    integer                       :: istart_vsite3fd,      iend_vsite3fd
+    integer                       :: istart_vsite3fad,     iend_vsite3fad
+    integer                       :: istart_vsite3out,     iend_vsite3out
+    integer                       :: istart_vsite4fdn,     iend_vsite4fdn
+    integer                       :: istart_vsiten,        iend_vsiten
+    integer                       :: istart_restraint,     iend_restraint
+    integer                       :: istart_multi_contact, iend_multi_contact
+    integer                       :: istart_morph_bb,      iend_morph_bb
+    integer                       :: istart_morph_sc,      iend_morph_sc
+    ! ~CG~ 3SPN.2C DNA: quartic bonds
+    integer                       :: istart_bond_quartic,  iend_bond_quartic
+    ! ~CG~ 3SPN.2C DNA: base stacking
+    integer                       :: istart_base_stack,    iend_base_stack
 
     ! bond (size = num_bonds)
     integer,          allocatable :: bond_list(:,:)
     real(wp),         allocatable :: bond_force_const(:)
     real(wp),         allocatable :: bond_dist_min(:)
 
+    ! ~CG~ 3SPN.2C DNA : uncommon bond list for k(r-r0)^2 + 100 k(r-r0)^4
+    integer,          allocatable :: bond_quartic_list(:,:)
+    real(wp),         allocatable :: bond_quartic_force_const(:)
+    real(wp),         allocatable :: bond_quartic_dist_min(:)
+
     ! angle (size = num_angles)
     integer,          allocatable :: angl_list(:,:)
     real(wp),         allocatable :: angl_force_const(:)
     real(wp),         allocatable :: angl_theta_min(:)
+    ! ~CG~ AICG2+ angle
+    integer,          allocatable :: angl_func(:)
+    !CK
+    logical                       :: multi_angle
+    real(wp),         allocatable :: angl_force_const1(:)
+    real(wp),         allocatable :: angl_theta_min1(:)
+    real(wp),         allocatable :: angl_gamma(:)
+    real(wp),         allocatable :: angl_epsa(:)
+    !shinobu-edited (aicg2p local angl)
+    real(wp),         allocatable :: angl_w(:)
 
     ! urey-bradley (size = num_ureys)
     integer,          allocatable :: urey_list(:,:)
     real(wp),         allocatable :: urey_force_const(:)
     real(wp),         allocatable :: urey_rmin(:)
+
+    !shinobu-edited
+    integer,          allocatable :: anglflex_list(:,:)
+    integer,          allocatable :: anglflex_type(:)
+    real(wp),         allocatable :: anglflex_theta(:,:)
+    real(wp),         allocatable :: anglflex_efunc(:,:)
+    real(wp),         allocatable :: anglflex_d2func(:,:)
+    real(wp),         allocatable :: anglflex_min_th(:,:)
+    real(wp),         allocatable :: anglflex_max_th(:,:)
+    real(wp),         allocatable :: anglflex_ener_corr(:)
 
     ! dihedral (size = num_dihedrals)
     integer,          allocatable :: dihe_list(:,:)
@@ -317,6 +412,19 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: dihe_phase(:)
     real(wp),         allocatable :: dihe_scee(:)
     real(wp),         allocatable :: dihe_scnb(:)
+    !shinobu-edited
+    real(wp),         allocatable :: dihe_theta_min(:)
+    real(wp),         allocatable :: dihe_w(:)
+    ! ~CG~ 3SPN.2C DNA: dihedral function types
+    integer,          allocatable :: dihe_func(:)
+
+    !shinobu-edited
+    integer,          allocatable :: diheflex_list(:,:)
+    integer,          allocatable :: diheflex_type(:)
+    integer,          allocatable :: diheflex_func(:)
+    real(wp),         allocatable :: diheflex_coef(:,:)
+    real(wp),         allocatable :: diheflex_ener_corr(:)
+    real(wp)                      :: cg_safe_dih_ene_shift
 
     ! dihedral (size = num_rb_dihedrals)
     integer,          allocatable :: rb_dihe_list(:,:)
@@ -346,6 +454,135 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: cmap_coef(:,:,:,:,:)
     real(wp),         allocatable :: cmap_force(:,:,:)
 
+    ! base stacking (size = num_base_stack)
+    ! ~CG~ 3SPN.2C DNA: Base Stacking Data structures
+    integer,          allocatable :: base_stack_list(:,:)
+    integer,          allocatable :: base_stack_func(:)
+    real(wp),         allocatable :: base_stack_epsilon(:)
+    real(wp),         allocatable :: base_stack_sigma(:)
+    real(wp),         allocatable :: base_stack_theta_bs(:)
+    real(wp)                      :: base_stack_alpha
+    real(wp)                      :: base_stack_K
+    
+    ! base pairing (size = num_base_type)
+    ! ~CG~ 3SPN.2C DNA: Base Pairing Data structures
+    real(wp),         allocatable :: base_pair_theta_1(:)
+    real(wp),         allocatable :: base_pair_theta_2(:)
+    real(wp),         allocatable :: base_pair_theta_3(:)
+    real(wp),         allocatable :: base_pair_phi_1(:)
+    real(wp),         allocatable :: base_pair_sigma(:)
+    real(wp),         allocatable :: base_pair_epsilon(:)
+    real(wp)                      :: base_pair_alpha
+    real(wp)                      :: base_pair_K
+    ! real(wp)                      :: base_pair_sigma_AT
+    ! real(wp)                      :: base_pair_sigma_GC
+    ! real(wp)                      :: base_pair_epsilon_AT
+    ! real(wp)                      :: base_pair_epsilon_GC
+    ! ~CG~ 3SPN.2C DNA: Base Crossing Data structures
+    real(wp),         allocatable :: base_cross_1_epsilon(:,:)
+    real(wp),         allocatable :: base_cross_1_sigma(:,:)
+    real(wp),         allocatable :: base_cross_1_theta_cs(:,:)
+    real(wp),         allocatable :: base_cross_2_epsilon(:,:)
+    real(wp),         allocatable :: base_cross_2_sigma(:,:)
+    real(wp),         allocatable :: base_cross_2_theta_cs(:,:)
+    logical,          allocatable :: base_pair_is_WC(:,:)
+    real(wp)                      :: base_cross_alpha
+    real(wp)                      :: base_cross_K
+    integer,          allocatable :: NA_base_type(:)
+    integer,          allocatable :: mol_chain_id(:)
+    ! integer,          allocatable :: mol_atom_id(:)
+    integer,          allocatable :: atom_cls(:)
+
+    ! ~CG~ 3spn.2c DNA exv (size = num_DNA_particle_types)
+    real(wp),         allocatable :: cgDNA_exv_sigma(:,:)
+    real(wp)                      :: cgDNA_exv_epsilon
+    logical                       :: cg_infinite_DNA
+
+    ! ~CG~ : debye-huckel ele
+    real(wp),         allocatable :: cg_charge(:)
+    real(wp)                      :: cg_pro_DNA_ele_scale_Q
+    integer,          allocatable :: cg_ele_mol_pair(:,:)
+
+    ! ~CG~ : KH model
+    integer,          allocatable :: cg_KH_mol_pair(:,:)
+    logical,          allocatable :: cg_pro_use_KH(:)
+    real(wp),         allocatable :: cg_KH_sigma_half(:)
+    real(wp),         allocatable :: cg_KH_epsilon(:, :)
+
+    ! ~CG~ : IDR HPS model
+    logical,          allocatable :: cg_IDR_HPS_is_IDR(:)
+    real(wp),         allocatable :: cg_IDR_HPS_lambda_half(:)
+    real(wp),         allocatable :: cg_IDR_HPS_sigma_half(:)
+    real(wp)                      :: cg_IDR_HPS_epsilon
+
+    ! ~CG~ : IDR KH model
+    logical,          allocatable :: cg_IDR_KH_is_IDR(:)
+    real(wp),         allocatable :: cg_IDR_KH_sigma_half(:)
+    real(wp),         allocatable :: cg_IDR_KH_epsilon_D(:, :)
+
+    ! ~CG~ : KH-MJ model
+    real(wp)                      :: cg_KH_mod_A_lambda = 0.159
+    real(wp)                      :: cg_KH_mod_B_lambda = 0.186
+    real(wp)                      :: cg_KH_mod_C_lambda = 0.192
+    real(wp)                      :: cg_KH_mod_D_lambda = 0.228
+    real(wp)                      :: cg_KH_mod_E_lambda = 0.194
+    real(wp)                      :: cg_KH_mod_F_lambda = 0.223
+    real(wp)                      :: cg_KH_mod_A_eps_0  = -2.27
+    real(wp)                      :: cg_KH_mod_B_eps_0  = -1.95
+    real(wp)                      :: cg_KH_mod_C_eps_0  = -1.85
+    real(wp)                      :: cg_KH_mod_D_eps_0  = -1.67
+    real(wp)                      :: cg_KH_mod_E_eps_0  = -2.00
+    real(wp)                      :: cg_KH_mod_F_eps_0  = -1.96
+    
+    ! ~CG~ PWMcos: CG protein-DNA seq-specific
+    real(wp)                      :: pwmcos_sigma
+    real(wp)                      :: pwmcos_phi
+    integer,          allocatable :: pwmcos_protein_id(:)
+    integer,          allocatable :: pwmcos_protein_id_N(:)
+    integer,          allocatable :: pwmcos_protein_id_C(:)
+    real(wp),         allocatable :: pwmcos_r0(:)
+    real(wp),         allocatable :: pwmcos_theta1(:)
+    real(wp),         allocatable :: pwmcos_theta2(:)
+    real(wp),         allocatable :: pwmcos_theta3(:)
+    real(wp),         allocatable :: pwmcos_ene_A(:)
+    real(wp),         allocatable :: pwmcos_ene_C(:)
+    real(wp),         allocatable :: pwmcos_ene_G(:)
+    real(wp),         allocatable :: pwmcos_ene_T(:)
+    real(wp),         allocatable :: pwmcos_gamma(:)
+    real(wp),         allocatable :: pwmcos_eps(:)
+    integer,          allocatable :: pwmcos_specificity(:)
+    integer,          allocatable :: pwmcos_mol_pair(:,:)
+    integer,          allocatable :: pwmcos_to_pairlist_id(:)
+    integer,          allocatable :: pwmcos_involved_resid(:)
+    integer,          allocatable :: pwmcos_involved_spec(:)
+
+    ! ~CG~ PWMcosns: CG protein-DNA seq-nonspecific
+    real(wp)                      :: pwmcosns_sigma
+    real(wp)                      :: pwmcosns_phi
+    integer,          allocatable :: pwmcosns_protein_id(:)
+    integer,          allocatable :: pwmcosns_protein_id_N(:)
+    integer,          allocatable :: pwmcosns_protein_id_C(:)
+    real(wp),         allocatable :: pwmcosns_r0(:)
+    real(wp),         allocatable :: pwmcosns_theta1(:)
+    real(wp),         allocatable :: pwmcosns_theta2(:)
+    real(wp),         allocatable :: pwmcosns_ene(:)
+    integer,          allocatable :: pwmcosns_specificity(:)
+    integer,          allocatable :: pwmcosns_mol_pair(:,:)
+    integer,          allocatable :: pwmcosns_to_pairlist_id(:)
+    integer,          allocatable :: pwmcosns_involved_resid(:)
+    integer,          allocatable :: pwmcosns_involved_spec(:)
+
+    ! ~CG~ : list of CG particles with special properties
+    integer,          allocatable :: cg_particle_DNA_base(:)
+    integer,          allocatable :: cg_particle_DNA_phos(:)
+    integer,          allocatable :: cg_particle_DNA_all(:)
+    integer,          allocatable :: cg_particle_IDR_HPS(:)
+    integer,          allocatable :: cg_particle_IDR_KH(:)
+    integer,          allocatable :: cg_particle_KH(:)
+    integer,          allocatable :: cg_particle_charged(:)
+    integer,          allocatable :: cg_particle_pro_charged(:)
+    integer,          allocatable :: cg_istart_nonb_excl(:)
+
     ! nonbonded 1-4 interactions (size = num_nb14)
 
     ! non-bonded (size = num_atom_cls)
@@ -356,6 +593,15 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: nonb_lj6(:,:)
     real(wp),         allocatable :: nonb_lj10(:,:)
     real(wp),         allocatable :: nonb_lj12(:,:)
+    real(wp),         allocatable :: nonb_aicg_eps(:,:)
+    real(wp),         allocatable :: nonb_aicg_sig(:,:)
+    real(wp),         allocatable :: cg_exv_eps_sqrt(:)
+    real(wp),         allocatable :: cg_exv_sig_half(:)
+    real(wp),         allocatable :: param_epsilon(:)
+    real(wp),         allocatable :: param_sigma(:)
+    ! for GO (size = num_atom)
+    real(wp),         allocatable :: nonb_eps(:)
+    real(wp),         allocatable :: nonb_rmin(:)
 
     ! non-bonded (size = num_atoms)
     integer,          allocatable :: num_nonb_excl(:)
@@ -370,17 +616,70 @@ module at_enefunc_str_mod
 
     ! native contact (size = num_contacts)
     integer,          allocatable :: contact_list(:,:)
+    integer,          allocatable :: contact_func(:)
     real(wp),         allocatable :: contact_lj6(:)
     real(wp),         allocatable :: contact_lj10(:)
     real(wp),         allocatable :: contact_lj12(:)
+    !CK
+    integer,          allocatable :: multi_contact_list(:,:)
+    integer,          allocatable :: multi_contact_model(:)
+    real(wp),         allocatable :: multi_contact_lj6(:)
+    real(wp),         allocatable :: multi_contact_lj10(:)
+    real(wp),         allocatable :: multi_contact_lj12(:)
+
+    ! virtual site 2
+    integer,          allocatable :: vsite2_list(:,:)
+    real(wp),         allocatable :: vsite2_a(:)
+    ! virtual site 3
+    integer,          allocatable :: vsite3_list(:,:)
+
+    real(wp),         allocatable :: vsite3_a(:)
+    real(wp),         allocatable :: vsite3_b(:)
+    ! virtual site 3fd
+    integer,          allocatable :: vsite3fd_list(:,:)
+    real(wp),         allocatable :: vsite3fd_a(:)
+    real(wp),         allocatable :: vsite3fd_d(:)
+    ! virtual site 3fad
+    integer,          allocatable :: vsite3fad_list(:,:)
+    real(wp),         allocatable :: vsite3fad_theta(:)
+    real(wp),         allocatable :: vsite3fad_d(:)
+    ! virtual site 3out
+    integer,          allocatable :: vsite3out_list(:,:)
+    real(wp),         allocatable :: vsite3out_a(:)
+    real(wp),         allocatable :: vsite3out_b(:)
+    real(wp),         allocatable :: vsite3out_c(:)
+    ! virtual site 4fdn
+    integer,          allocatable :: vsite4fdn_list(:,:)
+    real(wp),         allocatable :: vsite4fdn_a(:)
+    real(wp),         allocatable :: vsite4fdn_b(:)
+    real(wp),         allocatable :: vsite4fdn_c(:)
+    ! virtual site n
+    integer,          allocatable :: vsiten_list(:,:)
+    integer,          allocatable :: vsiten_n(:)
 
     ! non contact pairs
     real(wp)                      :: noncontact_lj12
+    real(wp)                      :: mix_temperature
+    real(wp)                      :: mix_beta
 
     real(wp)                      :: switchdist
     real(wp)                      :: cutoffdist
     real(wp)                      :: pairlistdist
     real(wp)                      :: dielec_const
+    real(wp)                      :: debye
+    real(wp)                      :: cg_cutoffdist_ele
+    real(wp)                      :: cg_cutoffdist_126
+    real(wp)                      :: cg_cutoffdist_DNAbp
+    real(wp)                      :: cg_pairlistdist_ele
+    real(wp)                      :: cg_pairlistdist_126
+    real(wp)                      :: cg_pairlistdist_PWMcos
+    real(wp)                      :: cg_pairlistdist_DNAbp
+    real(wp)                      :: cg_pairlistdist_exv
+    real(wp)                      :: cg_ele_coef
+    real(wp)                      :: cg_ele_sol_T
+    real(wp)                      :: cg_ele_sol_IC
+    real(wp)                      :: cg_dielec_const
+    real(wp)                      :: cg_debye_length
 
     ! flag for position restraint 
     logical                       :: restraint_posi
@@ -396,6 +695,7 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: restraint_totmass_group(:)
     real(wp),         allocatable :: restraint_masscoef(:,:)
     real(wp),         allocatable :: restraint_masstmp(:)
+    integer,          allocatable :: restraint_istartend(:,:)
 
     ! restraint func (size = num_restraintfuncs)
     integer,          allocatable :: restraint_kind(:)
@@ -433,6 +733,19 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: restraint_const_replica(:,:)
     real(wp),         allocatable :: restraint_ref_replica(:,:)
 
+    ! multibasin work
+    real(wp),         allocatable :: force_mb_work(:,:,:)
+    real(wp),         allocatable :: energy_mb_work(:,:)
+    real(wp),         allocatable :: virial_mb_work(:,:,:)
+    real(wp),         allocatable :: basinenergy(:)
+
+    ! membrane potential
+    logical                       :: ez_membrane_flag
+    real(wp),         allocatable :: ez_membrane_const(:)
+    real(wp),         allocatable :: ez_membrane_zmin(:)
+    real(wp),         allocatable :: ez_membrane_polym(:)
+    real(wp),         allocatable :: ez_membrane_sigma(:)
+    integer,          allocatable :: ez_membrane_func(:)
     ! principal component mode
     integer                       :: num_pc_modes
     real(wp),         allocatable :: pc_mode(:)
@@ -447,6 +760,7 @@ module at_enefunc_str_mod
     logical                       :: force_switch
     logical                       :: vdw_shift
 
+    integer                       :: nonb_func
     real(wp)                      :: fudge_lj
     real(wp)                      :: fudge_qq
     integer                       :: excl_level
@@ -503,6 +817,25 @@ module at_enefunc_str_mod
     real(wp),         allocatable :: fit_refcoord(:,:)
     real(wp),         allocatable :: fit_work(:,:)
 
+    ! go
+    integer                       :: go_electrostatic 
+
+    ! morphing
+    logical                       :: morph_flag = .false.
+    logical                       :: morph_restraint_flag = .false.
+    integer                       :: morph_ene_flag 
+    integer                       :: num_morph_bb
+    integer                       :: num_morph_sc
+    integer,allocatable           :: morph_list_bb(:,:)
+    integer,allocatable           :: morph_list_sc(:,:)
+    real(wp),allocatable          :: morph_dist_bb(:)
+    real(wp),allocatable          :: morph_dist_sc(:)
+    real(wp),allocatable          :: morph_dist_bb_other(:)
+    real(wp),allocatable          :: morph_dist_sc_other(:)
+    real(wp)                      :: morph_spring = 5.0d0
+    real(wp)                      :: morph_spring_max
+    real(wp)                      :: morph_linear = 1.0d0
+
     logical                       :: contact_check
     logical                       :: nonb_limiter
     real(wp)                      :: minimum_contact
@@ -541,8 +874,40 @@ module at_enefunc_str_mod
   integer,      public, parameter :: EneFuncModeRef       = 23
   integer,      public, parameter :: EneFuncEef1          = 24
   integer,      public, parameter :: EneFuncGbsa          = 25
-  integer,      public, parameter :: EneFuncGamdDih       = 26
-  integer,      public, parameter :: EneFuncGamdRest      = 27
+  integer,      public, parameter :: EneFuncVsite2        = 26
+  integer,      public, parameter :: EneFuncVsite3        = 27
+  integer,      public, parameter :: EneFuncVsite3fd      = 28
+  integer,      public, parameter :: EneFuncVsite3fad     = 29
+  integer,      public, parameter :: EneFuncVsite3out     = 30
+  integer,      public, parameter :: EneFuncVsite4fdn     = 31
+  integer,      public, parameter :: EneFuncVsiten        = 32
+  integer,      public, parameter :: EneFuncEzMembrane    = 33
+  integer,      public, parameter :: EneFuncNonbGO        = 34
+  integer,      public, parameter :: EneFuncMultiCntc     = 35
+  integer,      public, parameter :: EneFuncMultiWork     = 36
+  integer,      public, parameter :: EneFuncMorph         = 37
+  !shinobu-edited
+  integer,      public, parameter :: EneFuncAngFlex       = 38
+  integer,      public, parameter :: EneFuncDiheFlex      = 39
+  integer,      public, parameter :: EneFuncAngFlexTbl    = 40
+  integer,      public, parameter :: EneFuncDiheFlexTbl   = 41
+  ! ~CG~ 
+  integer,      public, parameter :: EneFuncCGGeneral     = 42
+  integer,      public, parameter :: EneFuncBondQuartic   = 43
+  integer,      public, parameter :: EneFuncBaseStack     = 44
+  integer,      public, parameter :: EneFuncBasePair      = 45
+  integer,      public, parameter :: EneFuncCGDNAExv      = 46
+  integer,      public, parameter :: EneFuncCGele         = 47
+  integer,      public, parameter :: EneFuncPWMcos        = 48
+
+  integer,      public, parameter :: EneFuncGamdDih       = 49
+  integer,      public, parameter :: EneFuncGamdRest      = 50
+
+  integer,      public, parameter :: EneFuncPWMcosns      = 51
+  integer,      public, parameter :: EneFuncCGIDRHPS      = 52
+  integer,      public, parameter :: EneFuncCGIDRKH       = 53
+  integer,      public, parameter :: EneFuncCGKH          = 54
+  integer,      public, parameter :: EneFuncCGKHmol       = 55
 
   ! parameters
   integer,      public, parameter :: ForcefieldCHARMM     = 1
@@ -553,20 +918,61 @@ module at_enefunc_str_mod
   integer,      public, parameter :: ForcefieldAMBER      = 6
   integer,      public, parameter :: ForcefieldGROAMBER   = 7
   integer,      public, parameter :: ForcefieldGROMARTINI = 8
+  integer,      public, parameter :: ForcefieldSOFT       = 9
+  !shinobu-edited
+  integer,      public, parameter :: ForcefieldRESIDCG     = 10
 
   integer,      public, parameter :: OutputStyleGENESIS   = 1
   integer,      public, parameter :: OutputStyleCHARMM    = 2
   integer,      public, parameter :: OutputStyleNAMD      = 3
   integer,      public, parameter :: OutputStyleGROMACS   = 4
+  integer,      public, parameter :: MBeneNonb            = 1
+  integer,      public, parameter :: MBeneCntc            = 2
+  integer,      public, parameter :: MBeneTotal           = 3
+  integer,      public, parameter :: MBeneExp             = 4 ! should be last
+
+  integer,      public, parameter :: MorphEneFlagTot      = 1
+  integer,      public, parameter :: MorphEneFlagBB       = 2
+  integer,      public, parameter :: MorphEneFlagSC       = 3
+
+  integer,      public, parameter :: EzMembraneNo         = 0
+  integer,      public, parameter :: EzMembraneSigmoid    = 1
+  integer,      public, parameter :: EzMembraneGaussian   = 2
+
+  ! BaseType for bases are dynamicvally determined from .top files.
+  ! 
+  integer,      public, parameter :: NABaseTypeDBA        = 1
+  integer,      public, parameter :: NABaseTypeDBC        = 2
+  integer,      public, parameter :: NABaseTypeDBG        = 3
+  integer,      public, parameter :: NABaseTypeDBT        = 4
+  integer,      public, parameter :: NABaseTypeDBMAX      = 4
+  integer,      public, parameter :: NABaseTypeRBA        = 5
+  integer,      public, parameter :: NABaseTypeRBC        = 6
+  integer,      public, parameter :: NABaseTypeRBG        = 7
+  integer,      public, parameter :: NABaseTypeRBU        = 8
+  integer,      public, parameter :: NABaseTypeRBMAX      = 8
+  ! 
+  ! max value for DNA/RNA Base type
+  ! 
+  integer,      public, parameter :: NABaseTypeBMAX       = 10 
+  integer,      public, parameter :: NABaseTypeDP         = 11
+  integer,      public, parameter :: NABaseTypeDS         = 12
+  integer,      public, parameter :: NABaseTypeRP         = 13
+  integer,      public, parameter :: NABaseTypeRS         = 14
+  integer,      public, parameter :: NABaseTypeNAMAX      = 15
+  integer,      public, parameter :: NABaseTypeProtein    = 21
   
-  character(*), public, parameter :: ForceFieldTypes(8)  = (/'CHARMM    ', &
+  character(*), public, parameter :: ForceFieldTypes(10)  = (/'CHARMM    ', &
                                                              'CHARMM19  ', &
                                                              'AAGO      ', &
                                                              'CAGO      ', &
                                                              'KBGO      ', &
                                                              'AMBER     ', &
                                                              'GROAMBER  ', &
-                                                             'GROMARTINI'/)
+                                                             'GROMARTINI', &
+                                                             'SOFT      ', &
+                                                             'RESIDCG   '/)
+!shinobu-edited
 
   character(*), public, parameter :: OutputStyleTypes(4) = (/'GENESIS', &
                                                              'CHARMM ', &
@@ -581,25 +987,43 @@ module at_enefunc_str_mod
                                                               'ENERGY', &
                                                               'EPRESS'/)
 
+  ! parameters (GO model)
+  integer,      public, parameter :: GoElectrostaticNONE  = 1
+  integer,      public, parameter :: GoElectrostaticALL   = 2 
+  integer,      public, parameter :: GoElectrostaticINTER = 3 
+  character(*), public, parameter :: GoElectrostaticTypes(3) = (/'NONE  ', &
+                                                                 'ALL   ', &
+                                                                 'INTER '/)
+
   ! parameters (qmtyp for QMMM)
-  integer,      public, parameter :: QMtypQCHEM    = 1
-  integer,      public, parameter :: QMtypG09      = 2
-  integer,      public, parameter :: QMtypTERACHEM = 3
-  integer,      public, parameter :: QMtypDFTBPLUS = 4
-  integer,      public, parameter :: QMtypMOLPRO   = 5
-  integer,      public, parameter :: QMtypG09_FRWF = 6
-  character(*), public, parameter :: QMtypTypes(6)  = (/'qchem        ',  &
+  integer,      public, parameter :: QMtypQCHEM     = 1
+  integer,      public, parameter :: QMtypG09       = 2
+  integer,      public, parameter :: QMtypTERACHEM  = 3
+  integer,      public, parameter :: QMtypDFTBPLUS  = 4
+  integer,      public, parameter :: QMtypMOLPRO    = 5
+  integer,      public, parameter :: QMtypG09_FRWF  = 6
+  integer,      public, parameter :: QMtypQSimulate = 7
+  integer,      public, parameter :: QMtypORCA      = 8
+  character(*), public, parameter :: QMtypTypes(8)  = (/'qchem        ',  &
                                                         'gaussian     ',  &
                                                         'terachem     ',  &
                                                         'dftb+        ',  &
                                                         'molpro       ',  &
-                                                        'gaussian_frwf'/)
+                                                        'gaussian_frwf',  &
+                                                        'qsimulate    ',  &
+                                                        'orca         '/)
 
   ! parameters (Exclude charge for QMMM)
   integer,      public, parameter :: ExcludeChargeAtom    = 1
   integer,      public, parameter :: ExcludeChargeGroup   = 2
-  character(*), public, parameter :: ExcludeChargeTypes(2)  = (/'ATOM ', &
-                                                                'GROUP'/)
+  integer,      public, parameter :: ExcludeChargeAtomAndDistribute   = 3
+  character(*), public, parameter :: ExcludeChargeTypes(3)  = (/'ATOM ', &
+                                                                'GROUP', &
+                                                                'AMBER'/)
+
+  ! parameters (linlbond for QMMM)
+  real(wp),     public, parameter :: LinkBondCHARMM = 1.0_wp
+  real(wp),     public, parameter :: LinkBondAMBER = 1.09_wp
 
   ! The length of command for system call
   integer,      public, parameter :: len_exec = 1500
@@ -636,14 +1060,30 @@ contains
     enefunc%num_cmaps               = 0
     enefunc%num_atom_cls            = 0
     enefunc%num_contacts            = 0
+    enefunc%num_multi_contacts      = 0
+    enefunc%num_vsite2              = 0
+    enefunc%num_vsite3              = 0
+    enefunc%num_vsite3fd            = 0
+    enefunc%num_vsite3fad           = 0
+    enefunc%num_vsite3out           = 0
+    enefunc%num_vsite4fdn           = 0
+    enefunc%num_vsiten              = 0
     enefunc%num_atoms_ref           = 0
     enefunc%num_restraintgroups     = 0 
     enefunc%num_restraintfuncs      = 0 
     enefunc%max_restraint_numatoms  = 0 
     enefunc%max_restraint_numgrps   = 0 
-
+    enefunc%num_bonds_quartic       = 0
+    enefunc%num_base_stack          = 0
+    enefunc%num_pwmcos_terms        = 0
+    enefunc%num_pwmcos_resid        = 0
+    enefunc%num_pwmcosns_terms      = 0
+    enefunc%num_pwmcosns_resid      = 0
+    
     enefunc%istart_bond             = 0
     enefunc%iend_bond               = 0
+    enefunc%istart_bond_quartic     = 0
+    enefunc%iend_bond_quartic       = 0
     enefunc%istart_angle            = 0
     enefunc%iend_angle              = 0
     enefunc%istart_urey             = 0
@@ -656,8 +1096,24 @@ contains
     enefunc%iend_improper           = 0
     enefunc%istart_cmap             = 0
     enefunc%iend_cmap               = 0
+    enefunc%istart_base_stack       = 0
+    enefunc%iend_base_stack         = 0
     enefunc%istart_contact          = 0
     enefunc%iend_contact            = 0
+    enefunc%istart_vsite2           = 0
+    enefunc%iend_vsite2             = 0
+    enefunc%istart_vsite3           = 0
+    enefunc%iend_vsite3             = 0
+    enefunc%istart_vsite3fd         = 0
+    enefunc%iend_vsite3fd           = 0
+    enefunc%istart_vsite3fad        = 0
+    enefunc%iend_vsite3fad          = 0
+    enefunc%istart_vsite3out        = 0
+    enefunc%iend_vsite3out          = 0
+    enefunc%istart_vsite4fdn        = 0
+    enefunc%iend_vsite4fdn          = 0
+    enefunc%istart_vsiten           = 0
+    enefunc%iend_vsiten             = 0
     enefunc%istart_restraint        = 0
     enefunc%iend_restraint          = 0
 
@@ -670,6 +1126,7 @@ contains
     enefunc%cutoffdist              = 0.0_wp
     enefunc%pairlistdist            = 0.0_wp
     enefunc%dielec_const            = 0.0_wp
+    enefunc%debye                   = 0.0_wp
 
     enefunc%pme_use                 = .false.
 
@@ -695,15 +1152,21 @@ contains
     enefunc%force_switch            = .false.
     enefunc%vdw_shift               = .false.
 
+    enefunc%nonb_func               = 0
     enefunc%fudge_lj                = 1.0_wp
     enefunc%fudge_qq                = 1.0_wp
     enefunc%excl_level              = 3
+
+    enefunc%multi_angle             = .false.
+    enefunc%pme_use                 = .false.
+    enefunc%num_basins              = 1
 
     enefunc%rpath_flag              = .false.
     enefunc%rpath_sum_mf_flag       = .false.
     enefunc%stats_count             = 0
     enefunc%stats_natom             = 0
     enefunc%stats_dimension         = 0
+    enefunc%morph_ene_flag          = MorphEneFlagTot
 
     enefunc%num_fitting             = 0
     enefunc%fitting_method          = 0
@@ -713,6 +1176,25 @@ contains
 
     enefunc%pressure_rmsd           = .false.
     enefunc%pressure_position       = .false.
+    enefunc%ez_membrane_flag        = .false.
+
+    enefunc%eef1_use                = .false.
+    enefunc%imm1_use                = .false.
+    enefunc%imic_use                = .false.
+    enefunc%gbsa_use                = .false.
+
+    enefunc%num_morph_bb            = 0
+    enefunc%num_morph_sc            = 0
+
+    enefunc%cg_pwmcos_calc          = .false.
+    enefunc%cg_pwmcosns_calc        = .false.
+    enefunc%cg_safe_dihedral_calc   = .false.
+    enefunc%cg_ele_calc             = .false.
+    enefunc%cg_DNA_base_pair_calc   = .false.
+    enefunc%cg_DNA_exv_calc         = .false.
+    enefunc%cg_IDR_HPS_calc         = .false.
+    enefunc%cg_IDR_KH_calc          = .false.
+    enefunc%cg_KH_calc              = .false.
 
     enefunc%gamd_use                = .false.
 
@@ -720,6 +1202,24 @@ contains
     enefunc%imm1_use                = .false.
     enefunc%imic_use                = .false.
     enefunc%gbsa_use                = .false.
+
+    enefunc%gamd_use                = .false.
+
+    enefunc%eef1_use                = .false.
+    enefunc%imm1_use                = .false.
+    enefunc%imic_use                = .false.
+    enefunc%gbsa_use                = .false.
+    
+    enefunc%cg_safe_dih_ene_shift   = 0.0_wp
+
+    enefunc%num_cg_particle_DNA_all     = 0
+    enefunc%num_cg_particle_DNA_phos    = 0
+    enefunc%num_cg_particle_DNA_base    = 0
+    enefunc%num_cg_particle_IDR_HPS     = 0
+    enefunc%num_cg_particle_IDR_KH      = 0
+    enefunc%num_cg_particle_KH          = 0
+    enefunc%num_cg_particle_charged     = 0
+    enefunc%num_cg_particle_pro_charged = 0
 
     return
 
@@ -777,24 +1277,69 @@ contains
       enefunc%bond_force_const(1:var_size) = 0.0_wp
       enefunc%bond_dist_min   (1:var_size) = 0.0_wp
 
+    ! ~CG~ 3SPN.2C DNA: quartic-form bond potential
+    case(EneFuncBondQuartic)
+
+      if (allocated(enefunc%bond_quartic_list)) then
+         if (size(enefunc%bond_quartic_list(1,:)) == var_size) return
+         deallocate(enefunc%bond_quartic_list,        &
+              enefunc%bond_quartic_force_const, &
+              enefunc%bond_quartic_dist_min,    &
+              stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%bond_quartic_list(2,var_size),      &
+           enefunc%bond_quartic_force_const(var_size), &
+           enefunc%bond_quartic_dist_min(var_size),    &
+           stat = alloc_stat)
+
+      enefunc%bond_quartic_list   (1:2,1:var_size) = 0
+      enefunc%bond_quartic_force_const(1:var_size) = 0.0_wp
+      enefunc%bond_quartic_dist_min   (1:var_size) = 0.0_wp
+
     case(EneFuncAngl)
 
       if (allocated(enefunc%angl_list)) then
         if (size(enefunc%angl_list(1,:)) == var_size) return
-        deallocate(enefunc%angl_list,        &
-                   enefunc%angl_force_const, &
-                   enefunc%angl_theta_min,   &
+        deallocate(enefunc%angl_list,         &
+                   enefunc%angl_force_const,  &
+                   enefunc%angl_theta_min,    &
+                   enefunc%angl_force_const1, &
+                   enefunc%angl_theta_min1,   &
+                   enefunc%angl_gamma,        &
+                   enefunc%angl_epsa,         &
+                   ! ~CG~ AICG2+ angle
+                   enefunc%angl_func,         &
+                   !shinobu-edited
+                   enefunc%angl_w,            &
                    stat = dealloc_stat)
       end if
 
-      allocate(enefunc%angl_list(3, var_size),     &
-               enefunc%angl_force_const(var_size), &
-               enefunc%angl_theta_min(var_size),   &
+      allocate(enefunc%angl_list(3, var_size),      &
+               enefunc%angl_force_const(var_size),  &
+               enefunc%angl_theta_min(var_size),    &
+               ! ~CG~ AICG2+ angle
+               enefunc%angl_func(var_size),         &
+               enefunc%angl_force_const1(var_size), &
+               enefunc%angl_theta_min1(var_size),   &
+               enefunc%angl_gamma(var_size),        &
+               enefunc%angl_epsa(var_size),         &
+               !shinobu-edited
+               enefunc%angl_w(var_size),            &
                stat = alloc_stat)
 
-      enefunc%angl_list  (1:3, 1:var_size) = 0
-      enefunc%angl_force_const(1:var_size) = 0.0_wp
-      enefunc%angl_theta_min  (1:var_size) = 0.0_wp
+      enefunc%angl_list  (1:3, 1:var_size)  = 0
+      enefunc%angl_force_const(1:var_size)  = 0.0_wp
+      enefunc%angl_theta_min  (1:var_size)  = 0.0_wp
+      enefunc%angl_force_const1(1:var_size) = 0.0_wp
+      enefunc%angl_theta_min1  (1:var_size) = 0.0_wp
+      enefunc%angl_gamma(1:var_size)        = 0.0_wp
+      enefunc%angl_epsa(1:var_size)         = 0.0_wp
+      !shinobu-edited
+      enefunc%angl_w(1:var_size)            = 0.0_wp
+      ! ~CG~ AICG2+ angle
+      ! Default: 1???
+      enefunc%angl_func(1:var_size)         = 1
 
     case(EneFuncUrey)
 
@@ -815,6 +1360,49 @@ contains
       enefunc%urey_force_const(1:var_size) = 0.0_wp
       enefunc%urey_rmin       (1:var_size) = 0.0_wp
 
+    !shinobu-edited
+    case(EneFuncAngFlex)
+      if (allocated(enefunc%anglflex_list)) then
+        if (size(enefunc%anglflex_list(1,:)) == var_size) return
+        deallocate(enefunc%anglflex_list,        &
+                   enefunc%anglflex_type,        &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%anglflex_list(3, var_size),     &
+               enefunc%anglflex_type(var_size),        &
+               stat = alloc_stat)
+
+      enefunc%anglflex_list  (1:3, 1:var_size) = 0
+      enefunc%anglflex_type  (1:var_size) = 0
+
+    case(EneFuncAngFlexTbl)
+      if (allocated(enefunc%anglflex_theta)) then
+        if (size(enefunc%anglflex_theta(1,:)) == var_size) return
+        deallocate(enefunc%anglflex_theta,            &
+                   enefunc%anglflex_efunc,            &
+                   enefunc%anglflex_d2func,           &
+                   enefunc%anglflex_min_th,           &
+                   enefunc%anglflex_max_th,           &
+                   enefunc%anglflex_ener_corr,        &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%anglflex_theta(var_size2, var_size),      &
+               enefunc%anglflex_efunc(var_size2, var_size),      &
+               enefunc%anglflex_d2func(var_size2, var_size),     &
+               enefunc%anglflex_min_th(1:2, var_size),           &
+               enefunc%anglflex_max_th(1:2, var_size),           &
+               enefunc%anglflex_ener_corr(var_size),             &
+               stat = alloc_stat)
+
+      enefunc%anglflex_theta (1:var_size2,1:var_size) = 0.0_wp
+      enefunc%anglflex_efunc (1:var_size2,1:var_size) = 0.0_wp
+      enefunc%anglflex_d2func(1:var_size2,1:var_size) = 0.0_wp
+      enefunc%anglflex_min_th(1:2,1:var_size)         = 0.0_wp
+      enefunc%anglflex_max_th(1:2,1:var_size)         = 0.0_wp
+      enefunc%anglflex_ener_corr(1:var_size)          = 0.0_wp
+
     case(EneFuncDihe)
 
       if (allocated(enefunc%dihe_list)) then
@@ -825,6 +1413,11 @@ contains
                    enefunc%dihe_phase,       &
                    enefunc%dihe_scee,        &
                    enefunc%dihe_scnb,        &
+                   !shinobu-edited
+                   enefunc%dihe_theta_min,   &
+                   enefunc%dihe_w,           &
+                   ! ~CG~ 3SPN.2C DNA: dihedral functype
+                   enefunc%dihe_func,        &
                    stat = dealloc_stat)
       end if
 
@@ -834,6 +1427,11 @@ contains
                enefunc%dihe_phase(var_size),       &
                enefunc%dihe_scee(var_size),        &
                enefunc%dihe_scnb(var_size),        &
+               !shinobu-edited
+               enefunc%dihe_theta_min(var_size),   &
+               enefunc%dihe_w(var_size),           &
+               ! ~CG~ 3SPN.2C DNA: dihedral functype
+               enefunc%dihe_func(var_size),        &
                stat = alloc_stat)
 
       enefunc%dihe_list   (1:4,1:var_size) = 0
@@ -842,6 +1440,45 @@ contains
       enefunc%dihe_phase      (1:var_size) = 0.0_wp
       enefunc%dihe_scee       (1:var_size) = 0.0_wp
       enefunc%dihe_scnb       (1:var_size) = 0.0_wp
+      !shinobu-edited
+      enefunc%dihe_theta_min  (1:var_size) = 0.0_wp
+      enefunc%dihe_w          (1:var_size) = 0.0_wp
+      ! ~CG~ 3SPN.2C DNA: dihedral func type...
+      enefunc%dihe_func       (1:var_size) = 1
+
+    !shinobu-edited
+    case(EneFuncDiheFlex)
+      if (allocated(enefunc%diheflex_list)) then
+        if (size(enefunc%diheflex_list(1,:)) == var_size) return
+        deallocate(enefunc%diheflex_list,      & 
+                   enefunc%diheflex_type,      &
+                   enefunc%diheflex_func,      &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%diheflex_list(4,var_size),    &
+               enefunc%diheflex_type(var_size),      &
+               enefunc%diheflex_func(var_size),      &
+               stat = alloc_stat)
+
+      enefunc%diheflex_list   (1:4,1:var_size) = 0
+      enefunc%diheflex_type   (    1:var_size) = 0
+      enefunc%diheflex_func   (    1:var_size) = 0
+
+    case(EneFuncDiheFlexTbl)
+      if (allocated(enefunc%diheflex_coef)) then
+        if (size(enefunc%diheflex_coef(1,:)) == var_size) return
+        deallocate(enefunc%diheflex_coef,            &
+                   enefunc%diheflex_ener_corr,       &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%diheflex_coef(var_size2, var_size),      &
+               enefunc%diheflex_ener_corr(var_size),            &
+               stat = alloc_stat)
+
+      enefunc%diheflex_coef  (1:var_size2,1:var_size) = 0.0_wp
+      enefunc%diheflex_ener_corr(1:var_size)          = 0.0_wp
 
     case(EneFuncRBDihe)
 
@@ -899,6 +1536,312 @@ contains
       enefunc%cmap_list(1:8,1:var_size)   = 0
       enefunc%cmap_type(1:var_size) = 0
       enefunc%cmap_force(1:3,1:8,1:var_size) = 0.0_wp
+      
+    case(EneFuncCGGeneral)
+      if (allocated(enefunc%NA_base_type)) then
+        if (size(enefunc%NA_base_type)  == var_size .and. &
+            size(enefunc%mol_chain_id)  == var_size .and. &
+            size(enefunc%atom_cls)      == var_size .and. &
+            size(enefunc%param_epsilon) == var_size .and. &
+            size(enefunc%param_sigma)   == var_size) then
+          return
+        end if
+
+        deallocate(enefunc%NA_base_type,       &
+            enefunc%mol_chain_id,              &
+            enefunc%atom_cls,                  &
+            enefunc%param_epsilon,             &
+            enefunc%param_sigma,               &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%NA_base_type(var_size), &
+          enefunc%mol_chain_id(var_size),      &
+          enefunc%atom_cls(var_size),          &
+          enefunc%param_epsilon(var_size),     &
+          enefunc%param_sigma(var_size),       &
+          stat = alloc_stat)
+
+      enefunc%NA_base_type (1:var_size) = 0
+      enefunc%mol_chain_id (1:var_size) = 0
+      enefunc%atom_cls     (1:var_size) = 0
+      enefunc%param_epsilon(1:var_size) = 0
+      enefunc%param_sigma  (1:var_size) = 0
+
+    case(EneFuncBaseStack)
+      ! ~CG~ 3SPN.2C DNA: base stacking
+      if (allocated(enefunc%base_stack_list)) then
+        if (size(enefunc%base_stack_list(1,:)) == var_size) return
+        deallocate(enefunc%base_stack_list,           &
+                   enefunc%base_stack_func,           &
+                   enefunc%base_stack_epsilon,        &
+                   enefunc%base_stack_sigma,          &
+                   enefunc%base_stack_theta_bs,       &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%base_stack_list(3,var_size),   &
+               enefunc%base_stack_func(var_size),     &
+               enefunc%base_stack_epsilon(var_size),  &
+               enefunc%base_stack_sigma(var_size),    &
+               enefunc%base_stack_theta_bs(var_size), &
+               stat = alloc_stat)
+
+      enefunc%base_stack_list     (1:3, 1:var_size) = 0
+      enefunc%base_stack_func     (1:var_size     ) = 0
+      enefunc%base_stack_epsilon  (1:var_size     ) = 0.0_wp
+      enefunc%base_stack_sigma    (1:var_size     ) = 0.0_wp
+      enefunc%base_stack_theta_bs (1:var_size     ) = 0.0_wp
+
+    case(EneFuncBasePair)
+      ! ~CG~ 3SPN.2C DNA: base pairing
+      ! var_size = 4 for DNA or RNA
+      ! var_size = 8 for DNA + RNA
+      if (allocated(enefunc%base_pair_theta_1)) then
+        if (size(enefunc%base_pair_theta_1) == var_size) return
+        deallocate(enefunc%base_pair_theta_1,     &
+                   enefunc%base_pair_theta_2,     &
+                   enefunc%base_pair_theta_3,     &
+                   enefunc%base_pair_phi_1,       &
+                   enefunc%base_pair_sigma,       &
+                   enefunc%base_pair_epsilon,     &
+                   enefunc%base_cross_1_epsilon,  &
+                   enefunc%base_cross_1_sigma,    &
+                   enefunc%base_cross_1_theta_cs, &
+                   enefunc%base_cross_2_epsilon,  &
+                   enefunc%base_cross_2_sigma,    &
+                   enefunc%base_cross_2_theta_cs, &
+                   enefunc%base_pair_is_WC,       &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%base_pair_theta_1     (var_size),          &
+               enefunc%base_pair_theta_2     (var_size),          &
+               enefunc%base_pair_theta_3     (var_size),          &
+               enefunc%base_pair_phi_1       (var_size),          &
+               enefunc%base_pair_sigma       (var_size),          &
+               enefunc%base_pair_epsilon     (var_size),          &
+               enefunc%base_cross_1_epsilon  (var_size,var_size), &
+               enefunc%base_cross_1_sigma    (var_size,var_size), &
+               enefunc%base_cross_1_theta_cs (var_size,var_size), &
+               enefunc%base_cross_2_epsilon  (var_size,var_size), &
+               enefunc%base_cross_2_sigma    (var_size,var_size), &
+               enefunc%base_cross_2_theta_cs (var_size,var_size), &
+               enefunc%base_pair_is_WC       (var_size,var_size), &
+               stat = alloc_stat)
+
+      enefunc%base_pair_theta_1     (1:var_size) = 0.0_wp
+      enefunc%base_pair_theta_2     (1:var_size) = 0.0_wp
+      enefunc%base_pair_theta_3     (1:var_size) = 0.0_wp
+      enefunc%base_pair_phi_1       (1:var_size) = 0.0_wp
+      enefunc%base_pair_sigma       (1:var_size) = 0.0_wp
+      enefunc%base_pair_epsilon     (1:var_size) = 0.0_wp
+      enefunc%base_cross_1_epsilon  (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_cross_1_sigma    (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_cross_1_theta_cs (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_cross_2_epsilon  (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_cross_2_sigma    (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_cross_2_theta_cs (1:var_size,1:var_size) = 0.0_wp
+      enefunc%base_pair_is_WC       (1:var_size,1:var_size) = .true.
+
+    case(EneFuncCGDNAExv)
+
+      if (allocated(enefunc%cgDNA_exv_sigma)) then
+        if (size(enefunc%cgDNA_exv_sigma(1,:)) == var_size) return
+        deallocate(enefunc%cgDNA_exv_sigma, &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cgDNA_exv_sigma(var_size,var_size), &
+               stat = alloc_stat)
+
+      enefunc%cgDNA_exv_sigma(1:var_size,1:var_size) = 0.0_wp
+      
+    case(EneFuncCGele)
+
+      if (allocated(enefunc%cg_charge) .and. &
+          allocated(enefunc%cg_ele_mol_pair)) then
+        if (size(enefunc%cg_charge(:)) == var_size .and.           &
+            size(enefunc%cg_ele_mol_pair(1, :)) == var_size2 .and. &
+            size(enefunc%cg_ele_mol_pair(:, 1)) == var_size2) return
+        deallocate(enefunc%cg_charge, &
+            enefunc%cg_ele_mol_pair,  &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cg_charge(var_size),              &
+          enefunc%cg_ele_mol_pair(var_size2, var_size2), &
+          stat = alloc_stat)
+
+      enefunc%cg_charge(1:var_size) = 0.0_wp
+      enefunc%cg_ele_mol_pair(:, :) = 0
+
+    case(EneFuncCGKH)
+      ! ~CG~ protein KH model
+      if (allocated(enefunc%cg_KH_sigma_half)) then
+        if ((size(enefunc%cg_KH_sigma_half) == var_size) .and. &
+            size(enefunc%cg_KH_epsilon(1, :)) == var_size2 .and. &
+            size(enefunc%cg_KH_epsilon(:, 1)) == var_size2) return
+        deallocate(enefunc%cg_KH_sigma_half, &
+            enefunc%cg_pro_use_KH,           &
+            enefunc%cg_KH_epsilon,           &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cg_KH_sigma_half(var_size),     &
+          enefunc%cg_pro_use_KH(var_size),             &
+          enefunc%cg_KH_epsilon(var_size2, var_size2), &
+          stat = alloc_stat)
+
+      enefunc%cg_pro_use_KH(1:var_size)                  = .false.
+      enefunc%cg_KH_sigma_half(1:var_size)               = 0.0
+      enefunc%cg_KH_epsilon   (1:var_size2, 1:var_size2) = 0.0
+
+    case(EneFuncCGKHmol)
+
+      if (allocated(enefunc%cg_KH_mol_pair)) then
+        if (size(enefunc%cg_KH_mol_pair(1, :)) == var_size .and. &
+            size(enefunc%cg_KH_mol_pair(:, 1)) == var_size) return
+        deallocate(enefunc%cg_KH_mol_pair,  &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cg_KH_mol_pair(var_size, var_size), &
+          stat = alloc_stat)
+
+      enefunc%cg_KH_mol_pair(:, :) = 0
+
+    case(EneFuncPWMcos)
+      ! ~CG~ protein-DNA interaction
+      if (allocated(enefunc%pwmcos_protein_id)) then
+        if (size(enefunc%pwmcos_protein_id) == var_size) return
+        deallocate(enefunc%pwmcos_protein_id, &
+            enefunc%pwmcos_protein_id_N,      &
+            enefunc%pwmcos_protein_id_C,      &
+            enefunc%pwmcos_r0,                &
+            enefunc%pwmcos_theta1,            &
+            enefunc%pwmcos_theta2,            &
+            enefunc%pwmcos_theta3,            &
+            enefunc%pwmcos_ene_A,             &
+            enefunc%pwmcos_ene_C,             &
+            enefunc%pwmcos_ene_G,             &
+            enefunc%pwmcos_ene_T,             &
+            enefunc%pwmcos_gamma,             &
+            enefunc%pwmcos_eps,               &
+            enefunc%pwmcos_specificity,       &
+            enefunc%pwmcos_to_pairlist_id,    &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%pwmcos_protein_id (var_size), &
+          enefunc%pwmcos_protein_id_N   (var_size),  &
+          enefunc%pwmcos_protein_id_C   (var_size),  &
+          enefunc%pwmcos_r0             (var_size),  &
+          enefunc%pwmcos_theta1         (var_size),  &
+          enefunc%pwmcos_theta2         (var_size),  &
+          enefunc%pwmcos_theta3         (var_size),  &
+          enefunc%pwmcos_ene_A          (var_size),  &
+          enefunc%pwmcos_ene_C          (var_size),  &
+          enefunc%pwmcos_ene_G          (var_size),  &
+          enefunc%pwmcos_ene_T          (var_size),  &
+          enefunc%pwmcos_gamma          (var_size),  &
+          enefunc%pwmcos_eps            (var_size),  &
+          enefunc%pwmcos_specificity    (var_size),  &
+          enefunc%pwmcos_to_pairlist_id (var_size),  &
+          stat = alloc_stat)
+
+      enefunc%pwmcos_protein_id     (1:var_size) = 0
+      enefunc%pwmcos_protein_id_N   (1:var_size) = 0
+      enefunc%pwmcos_protein_id_C   (1:var_size) = 0
+      enefunc%pwmcos_r0             (1:var_size) = 0.0_wp
+      enefunc%pwmcos_theta1         (1:var_size) = 0.0_wp
+      enefunc%pwmcos_theta2         (1:var_size) = 0.0_wp
+      enefunc%pwmcos_theta3         (1:var_size) = 0.0_wp
+      enefunc%pwmcos_ene_A          (1:var_size) = 0.0_wp
+      enefunc%pwmcos_ene_C          (1:var_size) = 0.0_wp
+      enefunc%pwmcos_ene_G          (1:var_size) = 0.0_wp
+      enefunc%pwmcos_ene_T          (1:var_size) = 0.0_wp
+      enefunc%pwmcos_gamma          (1:var_size) = 0.0_wp
+      enefunc%pwmcos_eps            (1:var_size) = 0.0_wp
+      enefunc%pwmcos_specificity    (1:var_size) = 1
+      enefunc%pwmcos_to_pairlist_id (1:var_size) = 1
+
+    case(EneFuncPWMcosns)
+      ! ~CG~ protein-DNA interaction
+      if (allocated(enefunc%pwmcosns_protein_id)) then
+        if (size(enefunc%pwmcosns_protein_id) == var_size) return
+        deallocate(enefunc%pwmcosns_protein_id, &
+            enefunc%pwmcosns_protein_id_N,      &
+            enefunc%pwmcosns_protein_id_C,      &
+            enefunc%pwmcosns_r0,                &
+            enefunc%pwmcosns_theta1,            &
+            enefunc%pwmcosns_theta2,            &
+            enefunc%pwmcosns_ene,               &
+            enefunc%pwmcosns_specificity,       &
+            enefunc%pwmcosns_to_pairlist_id,    &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%pwmcosns_protein_id (var_size), &
+          enefunc%pwmcosns_protein_id_N   (var_size),  &
+          enefunc%pwmcosns_protein_id_C   (var_size),  &
+          enefunc%pwmcosns_r0             (var_size),  &
+          enefunc%pwmcosns_theta1         (var_size),  &
+          enefunc%pwmcosns_theta2         (var_size),  &
+          enefunc%pwmcosns_ene            (var_size),  &
+          enefunc%pwmcosns_specificity    (var_size),  &
+          enefunc%pwmcosns_to_pairlist_id (var_size),  &
+          stat = alloc_stat)
+
+      enefunc%pwmcosns_protein_id     (1:var_size) = 0
+      enefunc%pwmcosns_protein_id_N   (1:var_size) = 0
+      enefunc%pwmcosns_protein_id_C   (1:var_size) = 0
+      enefunc%pwmcosns_r0             (1:var_size) = 0.0_wp
+      enefunc%pwmcosns_theta1         (1:var_size) = 0.0_wp
+      enefunc%pwmcosns_theta2         (1:var_size) = 0.0_wp
+      enefunc%pwmcosns_ene            (1:var_size) = 0.0_wp
+      enefunc%pwmcosns_specificity    (1:var_size) = 1
+      enefunc%pwmcosns_to_pairlist_id (1:var_size) = 1
+
+    case(EneFuncCGIDRHPS)
+      ! ~CG~ protein IDR HPS model
+      if (allocated(enefunc%cg_IDR_HPS_is_IDR)) then
+        if (size(enefunc%cg_IDR_HPS_is_IDR) == var_size) return
+        deallocate(enefunc%cg_IDR_HPS_is_IDR, &
+            enefunc%cg_IDR_HPS_lambda_half,   &
+            enefunc%cg_IDR_HPS_sigma_half,    &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cg_IDR_HPS_is_IDR(var_size), &
+          enefunc%cg_IDR_HPS_lambda_half(var_size), &
+          enefunc%cg_IDR_HPS_sigma_half(var_size),  &
+          stat = alloc_stat)
+
+      enefunc%cg_IDR_HPS_is_IDR     (1:var_size) = .false.
+      enefunc%cg_IDR_HPS_lambda_half(1:var_size) = 0.0
+      enefunc%cg_IDR_HPS_sigma_half(1:var_size)  = 0.0
+
+    case(EneFuncCGIDRKH)
+      ! ~CG~ protein IDR KH model
+      if (allocated(enefunc%cg_IDR_KH_is_IDR)) then
+        if ((size(enefunc%cg_IDR_KH_is_IDR) == var_size) .and. &
+            size(enefunc%cg_IDR_KH_epsilon_D(1, :)) == var_size2 .and. &
+            size(enefunc%cg_IDR_KH_epsilon_D(:, 1)) == var_size2) return
+        deallocate(enefunc%cg_IDR_KH_is_IDR, &
+            enefunc%cg_IDR_KH_sigma_half,    &
+            enefunc%cg_IDR_KH_epsilon_D,     &
+            stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%cg_IDR_KH_is_IDR(var_size), &
+          enefunc%cg_IDR_KH_sigma_half(var_size),  &
+          enefunc%cg_IDR_KH_epsilon_D(var_size2, var_size2),  &
+          stat = alloc_stat)
+
+      enefunc%cg_IDR_KH_is_IDR    (1:var_size)               = .false.
+      enefunc%cg_IDR_KH_sigma_half(1:var_size)               = 0.0
+      enefunc%cg_IDR_KH_epsilon_D (1:var_size2, 1:var_size2) = 0.0
 
     case(EneFuncNbon)
 
@@ -911,16 +1854,24 @@ contains
                    enefunc%nonb_lj6,      &
                    enefunc%nonb_lj10,     &
                    enefunc%nonb_lj12,     &
+                   enefunc%nonb_aicg_sig, &
+                   enefunc%nonb_aicg_eps, &
+                   enefunc%cg_exv_sig_half, &
+                   enefunc%cg_exv_eps_sqrt, &
                    stat = dealloc_stat)
       end if
 
-      allocate(enefunc%nonb_atom_cls(var_size),      &
-               enefunc%nb14_lj6(var_size,var_size),  &
-               enefunc%nb14_lj10(var_size,var_size), &
-               enefunc%nb14_lj12(var_size,var_size), &
-               enefunc%nonb_lj6(var_size,var_size),  &
-               enefunc%nonb_lj10(var_size,var_size), &
-               enefunc%nonb_lj12(var_size,var_size), &
+      allocate(enefunc%nonb_atom_cls(var_size),          &
+               enefunc%nb14_lj6(var_size,var_size),      &
+               enefunc%nb14_lj10(var_size,var_size),     &
+               enefunc%nb14_lj12(var_size,var_size),     &
+               enefunc%nonb_lj6(var_size,var_size),      &
+               enefunc%nonb_lj10(var_size,var_size),     &
+               enefunc%nonb_lj12(var_size,var_size),     &
+               enefunc%nonb_aicg_sig(var_size,var_size), &
+               enefunc%nonb_aicg_eps(var_size,var_size), &
+               enefunc%cg_exv_sig_half(var_size),        &
+               enefunc%cg_exv_eps_sqrt(var_size),        &
                stat = alloc_stat)
 
       enefunc%nonb_atom_cls(1:var_size) = 0
@@ -930,12 +1881,17 @@ contains
       enefunc%nonb_lj6     (1:var_size,1:var_size) = 0.0_wp
       enefunc%nonb_lj10    (1:var_size,1:var_size) = 0.0_wp
       enefunc%nonb_lj12    (1:var_size,1:var_size) = 0.0_wp
+      enefunc%nonb_aicg_sig(1:var_size,1:var_size) = 0.0_wp
+      enefunc%nonb_aicg_eps(1:var_size,1:var_size) = 0.0_wp
+      enefunc%cg_exv_eps_sqrt(1:var_size) = 0.0_wp
+      enefunc%cg_exv_sig_half(1:var_size) = 2.0_wp
 
     case(EneFuncCntc)
 
       if (allocated(enefunc%contact_list)) then
         if (size(enefunc%contact_list(1,:)) == var_size) return
         deallocate(enefunc%contact_list,  &
+                   enefunc%contact_func,  &
                    enefunc%contact_lj6,   &
                    enefunc%contact_lj10,  &
                    enefunc%contact_lj12,  &
@@ -943,15 +1899,151 @@ contains
       end if
 
       allocate(enefunc%contact_list(2,var_size),   &
+               enefunc%contact_func(var_size),     &
                enefunc%contact_lj6(var_size),      &
                enefunc%contact_lj10(var_size),     &
                enefunc%contact_lj12(var_size),     &
                stat = alloc_stat)
 
       enefunc%contact_list(1:2,1:var_size) = 0
+      enefunc%contact_func(1:var_size)  = 0
       enefunc%contact_lj6 (1:var_size)  = 0.0_wp
       enefunc%contact_lj10(1:var_size)  = 0.0_wp
       enefunc%contact_lj12(1:var_size)  = 0.0_wp
+
+    case(EneFuncVsite2)
+
+      if (allocated(enefunc%vsite2_list)) then
+        if (size(enefunc%vsite2_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite2_list, &
+                   enefunc%vsite2_a,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite2_list(3,var_size), &
+               enefunc%vsite2_a   (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite2_list(1:3,1:var_size) = 0
+      enefunc%vsite2_a   (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsite3)
+
+      if (allocated(enefunc%vsite3_list)) then
+        if (size(enefunc%vsite3_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite3_list, &
+                   enefunc%vsite3_a,    &
+                   enefunc%vsite3_b,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite3_list(4,var_size), &
+               enefunc%vsite3_a   (  var_size), &
+               enefunc%vsite3_b   (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite3_list(1:4,1:var_size) = 0
+      enefunc%vsite3_a   (    1:var_size) = 0.0_wp
+      enefunc%vsite3_b   (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsite3fd)
+
+      if (allocated(enefunc%vsite3fd_list)) then
+        if (size(enefunc%vsite3fd_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite3fd_list, &
+                   enefunc%vsite3fd_a,    &
+                   enefunc%vsite3fd_d,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite3fd_list(4,var_size), &
+               enefunc%vsite3fd_a   (  var_size), &
+               enefunc%vsite3fd_d   (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite3fd_list(1:4,1:var_size) = 0
+      enefunc%vsite3fd_a   (    1:var_size) = 0.0_wp
+      enefunc%vsite3fd_d   (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsite3fad)
+
+      if (allocated(enefunc%vsite3fad_list)) then
+        if (size(enefunc%vsite3fad_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite3fad_list,  &
+                   enefunc%vsite3fad_theta, &
+                   enefunc%vsite3fad_d,     &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite3fad_list (4,var_size), &
+               enefunc%vsite3fad_theta(  var_size), &
+               enefunc%vsite3fad_d    (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite3fad_list (1:4,1:var_size) = 0
+      enefunc%vsite3fad_theta(    1:var_size) = 0.0_wp
+      enefunc%vsite3fad_d    (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsite3out)
+
+      if (allocated(enefunc%vsite3out_list)) then
+        if (size(enefunc%vsite3out_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite3out_list, &
+                   enefunc%vsite3out_a,    &
+                   enefunc%vsite3out_b,    &
+                   enefunc%vsite3out_c,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite3out_list(4,var_size), &
+               enefunc%vsite3out_a   (  var_size), &
+               enefunc%vsite3out_b   (  var_size), &
+               enefunc%vsite3out_c   (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite3out_list(1:4,1:var_size) = 0
+      enefunc%vsite3out_a   (    1:var_size) = 0.0_wp
+      enefunc%vsite3out_b   (    1:var_size) = 0.0_wp
+      enefunc%vsite3out_c   (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsite4fdn)
+
+      if (allocated(enefunc%vsite4fdn_list)) then
+        if (size(enefunc%vsite4fdn_list(1,:)) == var_size) return
+        deallocate(enefunc%vsite4fdn_list, &
+                   enefunc%vsite4fdn_a,    &
+                   enefunc%vsite4fdn_b,    &
+                   enefunc%vsite4fdn_c,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsite4fdn_list(5,var_size), &
+               enefunc%vsite4fdn_a   (  var_size), &
+               enefunc%vsite4fdn_b   (  var_size), &
+               enefunc%vsite4fdn_c   (  var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsite4fdn_list(1:5,1:var_size) = 0
+      enefunc%vsite4fdn_a   (    1:var_size) = 0.0_wp
+      enefunc%vsite4fdn_b   (    1:var_size) = 0.0_wp
+      enefunc%vsite4fdn_c   (    1:var_size) = 0.0_wp
+
+    case(EneFuncVsiten)
+
+      if (allocated(enefunc%vsiten_list)) then
+        if (size(enefunc%vsiten_list(1,:)) == var_size .and. &
+            size(enefunc%vsiten_list(:,1)) == var_size2) return
+        deallocate(enefunc%vsiten_list, &
+                   enefunc%vsiten_n,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%vsiten_list(var_size2,var_size), &
+               enefunc%vsiten_n   (          var_size), &
+               stat = alloc_stat)
+
+      enefunc%vsiten_list(1:var_size2,1:var_size) = 0
+      enefunc%vsiten_n   (            1:var_size) = 0
 
     case(EneFuncRefg)
 
@@ -965,6 +2057,7 @@ contains
                    enefunc%restraint_wcom4,         &
                    enefunc%restraint_wcom5,         &
                    enefunc%restraint_wtmp,          &
+                   enefunc%restraint_istartend, &
                    stat = dealloc_stat)
       end if
       allocate(enefunc%restraint_numatoms(1:var_size),             &
@@ -975,6 +2068,7 @@ contains
                enefunc%restraint_wcom4(1:3,1:var_size2),           &
                enefunc%restraint_wcom5(1:3,1:var_size2),           &
                enefunc%restraint_wtmp(1:var_size2,1:var_size),     &
+               enefunc%restraint_istartend(1:2,1:var_size),        &
                stat = alloc_stat)
 
       enefunc%restraint_numatoms(1:var_size) = 0
@@ -985,6 +2079,7 @@ contains
       enefunc%restraint_wcom4(1:3,1:var_size2)       = 0.0_wp
       enefunc%restraint_wcom5(1:3,1:var_size2)       = 0.0_wp
       enefunc%restraint_wtmp(1:var_size2,1:var_size) = 0.0_wp
+      enefunc%restraint_istartend(1:2,1:var_size)    = 0
 
     case(EneFuncReff)
 
@@ -1320,6 +2415,132 @@ contains
       enefunc%gbsa%sasa_vdw_radius(1:var_size)  = 0.0_wp
       enefunc%gbsa%sasa_atom_list (1:var_size2) = 0
 
+    case(EneFuncEzMembrane)
+
+      if (allocated(enefunc%ez_membrane_const)) then
+        if (size(enefunc%ez_membrane_const) == var_size) return
+        deallocate(enefunc%ez_membrane_const, &
+                   enefunc%ez_membrane_zmin, &
+                   enefunc%ez_membrane_sigma, &
+                   enefunc%ez_membrane_polym, &
+                   enefunc%ez_membrane_func, &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%ez_membrane_const(1:var_size), &
+               enefunc%ez_membrane_zmin(1:var_size),  &
+               enefunc%ez_membrane_sigma(1:var_size), &
+               enefunc%ez_membrane_polym(1:var_size), &
+               enefunc%ez_membrane_func(1:var_size), &
+               stat = alloc_stat)
+      enefunc%ez_membrane_const(1:var_size) = 0.0_wp
+      enefunc%ez_membrane_zmin(1:var_size)  = 0.0_wp
+      enefunc%ez_membrane_sigma(1:var_size) = 0.0_wp
+      enefunc%ez_membrane_polym(1:var_size) = 0.0_wp
+      enefunc%ez_membrane_func(1:var_size)  = EzMembraneNo
+
+
+    case(EneFuncNonbGO)
+
+      if (allocated(enefunc%nonb_eps)) then
+        if (size(enefunc%nonb_eps(:)) == var_size) return
+        deallocate(enefunc%nonb_eps,      &
+                   enefunc%nonb_rmin,     &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%nonb_eps(var_size),      &
+               enefunc%nonb_rmin(var_size),     &
+               stat = alloc_stat)
+
+      enefunc%nonb_eps     (1:var_size) = 0.0_wp
+      enefunc%nonb_rmin    (1:var_size) = 0.0_wp
+
+    case(EneFuncMultiCntc)
+
+      if (allocated(enefunc%multi_contact_list)) then
+        if (size(enefunc%multi_contact_list(1,:)) == var_size) return
+        deallocate(enefunc%multi_contact_list,  &
+                   enefunc%multi_contact_model, &
+                   enefunc%multi_contact_lj6,   &
+                   enefunc%multi_contact_lj10,  &
+                   enefunc%multi_contact_lj12,  &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%multi_contact_list(2,var_size),   &
+               enefunc%multi_contact_model(var_size),    &
+               enefunc%multi_contact_lj6(var_size),      &
+               enefunc%multi_contact_lj10(var_size),     &
+               enefunc%multi_contact_lj12(var_size),     &
+               stat = alloc_stat)
+
+      enefunc%multi_contact_list(1:2,1:var_size) = 0
+      enefunc%multi_contact_model(1:var_size)    = 1
+      enefunc%multi_contact_lj6 (1:var_size)     = 0.0_wp
+      enefunc%multi_contact_lj10(1:var_size)     = 0.0_wp
+      enefunc%multi_contact_lj12(1:var_size)     = 0.0_wp
+
+    case(EneFuncMultiWork)
+
+      if (allocated(enefunc%force_mb_work)) then
+        if (size(enefunc%energy_mb_work(1,:)) == var_size) return
+        deallocate(enefunc%force_mb_work,  &
+                   enefunc%energy_mb_work, &
+                   enefunc%virial_mb_work, &
+                   enefunc%basinenergy,    &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(enefunc%force_mb_work(3, var_size2, var_size),   &
+               enefunc%energy_mb_work(10, var_size),    &
+               enefunc%virial_mb_work(3, 3, var_size),  &
+               enefunc%basinenergy(var_size),           &
+               stat = alloc_stat)
+
+      enefunc%force_mb_work(1:3,1:var_size2,1:var_size) = 0.0_wp
+      enefunc%energy_mb_work(1:10,1:var_size) = 0.0_wp
+      enefunc%virial_mb_work(1:3,1:3,1:var_size) = 0.0_wp
+      enefunc%basinenergy(1:var_size) = 0.0_wp
+
+    case(EneFuncMorph)
+
+      if (allocated(enefunc%morph_dist_bb)) then
+        if (size(enefunc%morph_dist_bb) == var_size) return
+        deallocate(enefunc%morph_dist_bb, &
+                   enefunc%morph_list_bb, &
+                   enefunc%morph_dist_bb_other, &
+                   stat = dealloc_stat)
+      end if
+      if (var_size2 > 0) then
+        if (allocated(enefunc%morph_dist_sc)) then
+          if (size(enefunc%morph_dist_sc) /= var_size2) then
+            deallocate(enefunc%morph_dist_sc, &
+                       enefunc%morph_list_sc, &
+                       enefunc%morph_dist_sc_other, &
+                       stat = dealloc_stat)
+          endif
+        endif
+      endif
+
+      allocate(enefunc%morph_dist_bb(1:var_size), &
+               enefunc%morph_list_bb(1:2, 1:var_size), &
+               enefunc%morph_dist_bb_other(1:var_size), &
+               stat = alloc_stat)
+
+      if (var_size2 > 0) then
+        allocate(enefunc%morph_dist_sc(1:var_size2), &
+                 enefunc%morph_list_sc(1:2, 1:var_size2), &
+                 enefunc%morph_dist_sc_other(1:var_size2), &
+                 stat = alloc_stat)
+         enefunc%morph_dist_sc(1:var_size2) = 0.0_wp
+         enefunc%morph_dist_sc_other(1:var_size2) = 0.0_wp
+         enefunc%morph_list_sc(1:2,1:var_size2) = 0
+      endif
+      enefunc%morph_dist_bb(1:var_size) = 0.0_wp
+      enefunc%morph_dist_bb_other(1:var_size) = 0.0_wp
+      enefunc%morph_list_bb(1:2,1:var_size) = 0
+
     case(EneFuncGamdDih)
 
       if (allocated(enefunc%gamd%f_dihe)) then
@@ -1388,12 +2609,30 @@ contains
                    stat = dealloc_stat)
       end if
 
+
+    ! ~CG~ 3SPN.2C DNA: quartic-form bond potential
+    case(EneFuncBondQuartic)
+
+      if (allocated(enefunc%bond_quartic_list)) then
+         deallocate(enefunc%bond_quartic_list,        &
+              enefunc%bond_quartic_force_const, &
+              enefunc%bond_quartic_dist_min,    &
+              stat = dealloc_stat)
+      end if
+
     case(EneFuncAngl)
 
       if (allocated(enefunc%angl_list)) then
         deallocate(enefunc%angl_list,           &
                    enefunc%angl_force_const,    &
                    enefunc%angl_theta_min,      &
+                   enefunc%angl_func,           &
+                   enefunc%angl_force_const1,   &
+                   enefunc%angl_theta_min1,     &
+                   enefunc%angl_gamma,          &
+                   enefunc%angl_epsa,           &
+                   !shinobu-edited
+                   enefunc%angl_w,              &
                    stat = dealloc_stat)
       end if
 
@@ -1406,6 +2645,25 @@ contains
                    stat = dealloc_stat)
       end if
 
+    !shinobu-edited
+    case(EneFuncAngFlex)
+      if (allocated(enefunc%anglflex_list)) then
+        deallocate(enefunc%anglflex_list,     &
+                   enefunc%anglflex_type,     &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncAngFlexTbl)
+      if (allocated(enefunc%anglflex_theta)) then
+        deallocate(enefunc%anglflex_theta,            &
+                   enefunc%anglflex_efunc,            &
+                   enefunc%anglflex_d2func,           &
+                   enefunc%anglflex_min_th,           &
+                   enefunc%anglflex_max_th,           &
+                   enefunc%anglflex_ener_corr,        &
+                   stat = dealloc_stat)
+      end if
+
     case(EneFuncDihe)
 
       if (allocated(enefunc%dihe_list)) then
@@ -1415,6 +2673,26 @@ contains
                    enefunc%dihe_phase,       &
                    enefunc%dihe_scee,        &
                    enefunc%dihe_scnb,        &
+                   !shinobu-edited
+                   enefunc%dihe_theta_min,   &
+                   enefunc%dihe_w,           &
+                   ! ~CG~ 3SPN.2C DNA: dihedral functype
+                   enefunc%dihe_func,        &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncDiheFlex)
+      if (allocated(enefunc%diheflex_list)) then
+        deallocate(enefunc%diheflex_list,      & 
+                   enefunc%diheflex_type,      &
+                   enefunc%diheflex_func,      &
+                   stat = dealloc_stat)
+      endif
+
+    case(EneFuncDiheFlexTbl)
+      if (allocated(enefunc%diheflex_coef)) then
+        deallocate(enefunc%diheflex_coef,            &
+                   enefunc%diheflex_ener_corr,       &
                    stat = dealloc_stat)
       end if
 
@@ -1445,6 +2723,209 @@ contains
                    enefunc%cmap_force,       &
                    stat = dealloc_stat )
       end if
+      
+    case(EneFuncCGGeneral)
+      if (allocated(enefunc%NA_base_type)) then
+        deallocate(enefunc%NA_base_type,  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%mol_chain_id)) then
+        deallocate(enefunc%mol_chain_id,  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%atom_cls)) then
+        deallocate(enefunc%atom_cls,  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%param_epsilon)) then
+        deallocate(enefunc%param_epsilon,  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%param_sigma)) then
+        deallocate(enefunc%param_sigma,  &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncBaseStack)
+      ! ~CG~ 3SPN.2C DNA: bond stacking
+      if (allocated(enefunc%base_stack_list)) then
+        deallocate(enefunc%base_stack_list,     &
+                   enefunc%base_stack_func,     &
+                   enefunc%base_stack_epsilon,  &
+                   enefunc%base_stack_sigma,    &
+                   enefunc%base_stack_theta_bs, &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncBasePair)
+      ! ~CG~ 3SPN.2C DNA: bond pairing
+      if (allocated(enefunc%base_pair_theta_1)) then
+        deallocate(enefunc%base_pair_theta_1,     &
+                   enefunc%base_pair_theta_2,     &
+                   enefunc%base_pair_theta_3,     &
+                   enefunc%base_pair_phi_1,       &
+                   enefunc%base_pair_sigma,       &
+                   enefunc%base_pair_epsilon,     &
+                   enefunc%base_cross_1_epsilon,  &
+                   enefunc%base_cross_1_sigma,    &
+                   enefunc%base_cross_1_theta_cs, &
+                   enefunc%base_cross_2_epsilon,  &
+                   enefunc%base_cross_2_sigma,    &
+                   enefunc%base_cross_2_theta_cs, &
+                   enefunc%base_pair_is_WC,       &
+                   stat = dealloc_stat)
+      end if
+      
+      if (allocated(enefunc%cg_particle_DNA_all)) then
+        deallocate(enefunc%cg_particle_DNA_all,  &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_DNA_base)) then
+        deallocate(enefunc%cg_particle_DNA_base, &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_DNA_phos)) then
+        deallocate(enefunc%cg_particle_DNA_phos, &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncCGDNAExv)
+
+      if (allocated(enefunc%cgDNA_exv_sigma)) then
+        deallocate(enefunc%cgDNA_exv_sigma,     &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncCGele)
+
+      if (allocated(enefunc%cg_charge)) then
+        deallocate(enefunc%cg_charge,           &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_ele_mol_pair)) then
+        deallocate(enefunc%cg_ele_mol_pair,     &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_charged)) then
+        deallocate(enefunc%cg_particle_charged, &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_pro_charged)) then
+        deallocate(enefunc%cg_particle_pro_charged, &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncCGKH)
+
+      if (allocated(enefunc%cg_KH_sigma_half)) then
+        deallocate(enefunc%cg_KH_sigma_half, &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(enefunc%cg_pro_use_KH)) then
+        deallocate(enefunc%cg_pro_use_KH, &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(enefunc%cg_particle_KH)) then
+        deallocate(enefunc%cg_particle_KH, &
+            stat = dealloc_stat)
+      end if
+
+      if (allocated(enefunc%cg_KH_epsilon)) then
+        deallocate(enefunc%cg_KH_epsilon,    &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncCGKHmol)
+
+      if (allocated(enefunc%cg_KH_mol_pair)) then
+        deallocate(enefunc%cg_KH_mol_pair,   &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncPWMcos)
+      ! ~CG~ protein-DNA interactions with PWMcos model
+      if (allocated(enefunc%pwmcos_protein_id)) then
+        deallocate(enefunc%pwmcos_protein_id, &
+            enefunc%pwmcos_protein_id_N,      &
+            enefunc%pwmcos_protein_id_C,      &
+            enefunc%pwmcos_r0,                &
+            enefunc%pwmcos_theta1,            &
+            enefunc%pwmcos_theta2,            &
+            enefunc%pwmcos_theta3,            &
+            enefunc%pwmcos_ene_A,             &
+            enefunc%pwmcos_ene_C,             &
+            enefunc%pwmcos_ene_G,             &
+            enefunc%pwmcos_ene_T,             &
+            enefunc%pwmcos_gamma,             &
+            enefunc%pwmcos_eps,               &
+            enefunc%pwmcos_specificity,       &
+            enefunc%pwmcos_to_pairlist_id,    &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%pwmcos_mol_pair)) then
+        deallocate(enefunc%pwmcos_mol_pair,     &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%pwmcos_involved_resid)) then
+        deallocate(enefunc%pwmcos_involved_resid,     &
+            enefunc%pwmcos_involved_spec,             &
+            stat = dealloc_stat)
+      end if
+      
+    case(EneFuncPWMcosns)
+      ! ~CG~ protein-DNA interactions with PWMcosns model
+      if (allocated(enefunc%pwmcosns_protein_id)) then
+        deallocate(enefunc%pwmcosns_protein_id, &
+            enefunc%pwmcosns_protein_id_N,      &
+            enefunc%pwmcosns_protein_id_C,      &
+            enefunc%pwmcosns_r0,                &
+            enefunc%pwmcosns_theta1,            &
+            enefunc%pwmcosns_theta2,            &
+            enefunc%pwmcosns_ene,               &
+            enefunc%pwmcosns_specificity,       &
+            enefunc%pwmcosns_to_pairlist_id,    &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%pwmcosns_mol_pair)) then
+        deallocate(enefunc%pwmcosns_mol_pair,     &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%pwmcosns_involved_resid)) then
+        deallocate(enefunc%pwmcosns_involved_resid,     &
+            enefunc%pwmcosns_involved_spec,             &
+            stat = dealloc_stat)
+      end if
+ 
+    case(EneFuncCGIDRHPS)
+
+      if (allocated(enefunc%cg_IDR_HPS_is_IDR)) then
+        deallocate(enefunc%cg_IDR_HPS_is_IDR, &
+            enefunc%cg_IDR_HPS_lambda_half,   &
+            enefunc%cg_IDR_HPS_sigma_half,    &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_IDR_HPS)) then
+        deallocate(enefunc%cg_particle_IDR_HPS, &
+            stat = dealloc_stat)
+      end if
+
+    case(EneFuncCGIDRKH)
+
+      if (allocated(enefunc%cg_IDR_KH_is_IDR)) then
+        deallocate(enefunc%cg_IDR_KH_is_IDR, &
+            enefunc%cg_IDR_KH_sigma_half,    &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_IDR_KH_epsilon_D)) then
+        deallocate(enefunc%cg_IDR_KH_epsilon_D, &
+            stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%cg_particle_IDR_KH)) then
+        deallocate(enefunc%cg_particle_IDR_KH, &
+            stat = dealloc_stat)
+      end if
 
     case(EneFuncNbon)
 
@@ -1456,6 +2937,10 @@ contains
                    enefunc%nonb_lj6,      &
                    enefunc%nonb_lj10,     &
                    enefunc%nonb_lj12,     &
+                   enefunc%nonb_aicg_sig, &
+                   enefunc%nonb_aicg_eps, &
+                   enefunc%cg_exv_eps_sqrt, &
+                   enefunc%cg_exv_sig_half, &
                    stat = dealloc_stat)
       end if
 
@@ -1463,9 +2948,73 @@ contains
 
       if (allocated(enefunc%contact_list)) then
         deallocate(enefunc%contact_list,       &
+                   enefunc%contact_func,       &
                    enefunc%contact_lj6,        &
                    enefunc%contact_lj10,       &
                    enefunc%contact_lj12,       &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite2)
+
+      if (allocated(enefunc%vsite2_list)) then
+        deallocate(enefunc%vsite2_list, &
+                   enefunc%vsite2_a,    &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite3)
+
+      if (allocated(enefunc%vsite3_list)) then
+        deallocate(enefunc%vsite3_list, &
+                   enefunc%vsite3_a,    &
+                   enefunc%vsite3_b,    &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite3fd)
+
+      if (allocated(enefunc%vsite3fd_list)) then
+        deallocate(enefunc%vsite3fd_list, &
+                   enefunc%vsite3fd_a,    &
+                   enefunc%vsite3fd_d,    &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite3fad)
+
+      if (allocated(enefunc%vsite3fad_list)) then
+        deallocate(enefunc%vsite3fad_list,  &
+                   enefunc%vsite3fad_theta, &
+                   enefunc%vsite3fad_d,     &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite3out)
+
+      if (allocated(enefunc%vsite3out_list)) then
+        deallocate(enefunc%vsite3out_list, &
+                   enefunc%vsite3out_a,    &
+                   enefunc%vsite3out_b,    &
+                   enefunc%vsite3out_c,    &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsite4fdn)
+
+      if (allocated(enefunc%vsite4fdn_list)) then
+        deallocate(enefunc%vsite4fdn_list, &
+                   enefunc%vsite4fdn_a,    &
+                   enefunc%vsite4fdn_b,    &
+                   enefunc%vsite4fdn_c,    &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncVsiten)
+
+      if (allocated(enefunc%vsiten_list)) then
+        deallocate(enefunc%vsiten_list, &
+                   enefunc%vsiten_n,    &
                    stat = dealloc_stat)
       end if
 
@@ -1480,6 +3029,7 @@ contains
                    enefunc%restraint_wcom4,         &
                    enefunc%restraint_wcom5,         &
                    enefunc%restraint_wtmp,          &
+                   enefunc%restraint_istartend, &
                    stat = dealloc_stat)
       end if
 
@@ -1616,6 +3166,7 @@ contains
                     stat = dealloc_stat)
       end if
 
+
     case(EneFuncFitc) 
 
       if (allocated(enefunc%fit_refcoord)) then
@@ -1642,6 +3193,7 @@ contains
           deallocate(enefunc%qmmm%linkatom_coord,     &
                      enefunc%qmmm%linkatom_force,     &
                      enefunc%qmmm%linkatom_charge,    &
+                     enefunc%qmmm%linkatom_global_address, &
                      enefunc%qmmm%qmmmbond_list,      &
                      enefunc%qmmm%ecatom_id,          &
 !ky                     enefunc%table%ecqm_nb14_list,    &
@@ -1691,6 +3243,60 @@ contains
                    stat = dealloc_stat)
       end if
 
+    case(EneFuncNonbGO)
+
+      if (allocated(enefunc%nonb_eps)) then
+        deallocate(enefunc%nonb_eps,      &
+                   enefunc%nonb_rmin,     &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncMultiCntc)
+
+      if (allocated(enefunc%multi_contact_list)) then
+        deallocate(enefunc%multi_contact_list,  &
+                   enefunc%multi_contact_model, &
+                   enefunc%multi_contact_lj6,   &
+                   enefunc%multi_contact_lj10,  &
+                   enefunc%multi_contact_lj12,  &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncMultiWork)
+
+      if (allocated(enefunc%force_mb_work)) then
+        deallocate(enefunc%force_mb_work,  &
+                   enefunc%energy_mb_work, &
+                   enefunc%virial_mb_work,   &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncMorph)
+
+      if (allocated(enefunc%morph_dist_bb)) then
+        deallocate(enefunc%morph_dist_bb, &
+                   enefunc%morph_list_bb, &
+                   enefunc%morph_dist_bb_other, &
+                   stat = dealloc_stat)
+      end if
+      if (allocated(enefunc%morph_dist_sc)) then
+        deallocate(enefunc%morph_dist_sc, &
+                   enefunc%morph_list_sc, &
+                   enefunc%morph_dist_sc_other, &
+                   stat = dealloc_stat)
+      end if
+
+    case(EneFuncEzMembrane)
+
+      if (allocated(enefunc%ez_membrane_const)) then
+        deallocate(enefunc%ez_membrane_const, &
+                   enefunc%ez_membrane_zmin, &
+                   enefunc%ez_membrane_sigma, &
+                   enefunc%ez_membrane_polym, &
+                   enefunc%ez_membrane_func,  &
+                   stat = dealloc_stat)
+      end if
+
     case(EneFuncGamdDih)
 
       if (allocated(enefunc%gamd%f_dihe)) then
@@ -1733,12 +3339,23 @@ contains
     call dealloc_enefunc(enefunc, EneFuncBond)
     call dealloc_enefunc(enefunc, EneFuncAngl)
     call dealloc_enefunc(enefunc, EneFuncUrey)
+    !shinobu-edited
+    call dealloc_enefunc(enefunc, EneFuncAngFlex)
+    call dealloc_enefunc(enefunc, EneFuncAngFlexTbl)
     call dealloc_enefunc(enefunc, EneFuncDihe)
+    call dealloc_enefunc(enefunc, EneFuncDiheFlex)
     call dealloc_enefunc(enefunc, EneFuncRBDihe)
     call dealloc_enefunc(enefunc, EneFuncImpr)
     call dealloc_enefunc(enefunc, EneFuncCmap)
     call dealloc_enefunc(enefunc, EneFuncNbon)
     call dealloc_enefunc(enefunc, EneFuncCntc)
+    call dealloc_enefunc(enefunc, EneFuncVsite2)
+    call dealloc_enefunc(enefunc, EneFuncVsite3)
+    call dealloc_enefunc(enefunc, EneFuncVsite3fd)
+    call dealloc_enefunc(enefunc, EneFuncVsite3fad)
+    call dealloc_enefunc(enefunc, EneFuncVsite3out)
+    call dealloc_enefunc(enefunc, EneFuncVsite4fdn)
+    call dealloc_enefunc(enefunc, EneFuncVsiten)
     call dealloc_enefunc(enefunc, EneFuncRefg)
     call dealloc_enefunc(enefunc, EneFuncReff)
     call dealloc_enefunc(enefunc, EneFuncRefw)
@@ -1755,8 +3372,24 @@ contains
     call dealloc_enefunc(enefunc, EneFuncModeRef)
     call dealloc_enefunc(enefunc, EneFuncEef1)
     call dealloc_enefunc(enefunc, EneFuncGbsa)
+    call dealloc_enefunc(enefunc, EneFuncEzMembrane)
+    call dealloc_enefunc(enefunc, EneFuncNonbGO)
+    call dealloc_enefunc(enefunc, EneFuncMultiCntc)
+    call dealloc_enefunc(enefunc, EneFuncMultiWork)
+    call dealloc_enefunc(enefunc, EneFuncMorph)
+    ! ~CG~ 3SPN.2C DNA: quartic bond potential
+    call dealloc_enefunc(enefunc, EneFuncBondQuartic)
+    call dealloc_enefunc(enefunc, EneFuncBaseStack)
+    call dealloc_enefunc(enefunc, EneFuncBasePair)
+    call dealloc_enefunc(enefunc, EneFuncCGDNAExv)
+    call dealloc_enefunc(enefunc, EneFuncCGele)
+    call dealloc_enefunc(enefunc, EneFuncCGKH)
+    call dealloc_enefunc(enefunc, EneFuncPWMcos)
+    call dealloc_enefunc(enefunc, EneFuncPWMcosns)
     call dealloc_enefunc(enefunc, EneFuncGamdDih)
     call dealloc_enefunc(enefunc, EneFuncGamdRest)
+    call dealloc_enefunc(enefunc, EneFuncCGIDRHPS)
+    call dealloc_enefunc(enefunc, EneFuncCGIDRKH)
 
     return
 

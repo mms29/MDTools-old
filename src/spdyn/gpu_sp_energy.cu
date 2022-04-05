@@ -50,6 +50,10 @@ typedef unsigned char  uchar;
 #define univ_ij_sort_list(Z)      _univ_ij_sort_list   [(Z)-1]
 #define virial_check(Y,Z)         _virial_check        [CALIDX2((Y)-1,ncel_max, (Z)-1,ncel_max)]
 
+/* for FEP */
+#define fepgrp(Y,Z)               _fepgrp              [CALIDX2((Y)-1,MaxAtom, (Z)-1,ncel_max)]
+#define table_nonb_lambda(X,Y,Z)  _table_nonb_lambda   [CALIDX3((X)-1,5, (Y)-1,5, (Z)-1,5)]
+
 #define ene_virial(Z)      _ene_virial[(Z)-1]
 #define ene_viri_mid(Y,Z)  _ene_viri_mid[CALIDX2((Y)-1,5, (Z)-1,univ_maxcell)]
 #define force_local(Z)     _force_local[(Z)-1]
@@ -94,6 +98,10 @@ static double  *dev_ene_viri_mid = NULL;
 static char    *dev_univ_mask2 = NULL;
 static char    *dev_pack_univ_mask2 = NULL;
 
+/* for FEP */
+static int     *dev_fepgrp = NULL;
+static REAL    *dev_table_nonb_lambda = NULL;
+
 static size_t  size_coord_pbc = 0;
 static size_t  size_force = 0;
 static size_t  size_ene_virial = 0;
@@ -117,6 +125,10 @@ static size_t  size_virial_check = 0;
 static size_t  size_ene_viri_mid = 0;
 static size_t  size_univ_mask2 = 0;
 static size_t  max_size_univ_mask2 = 0;
+
+/* for FEP */
+static size_t  size_fepgrp = 0;
+static size_t  size_table_nonb_lambda = 0;
 
 /* for debug */
 static REAL    *tmp_force = NULL;
@@ -324,6 +336,107 @@ void gpu_init_buffer(
 #endif
 }
 
+// FEP
+void gpu_init_buffer_fep(
+    const REAL   *_coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL   *_force,               // ( 1:3, 1:MaxAtom, 1:ncel_max, 1:nthread )
+    const double *_ene_virial,          // ( 2 )
+    const double *_coord,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL   *_trans1,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL   *_cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL   *_charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int    *_atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int    *_fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int    *_natom,               // ( 1:ncel_max )
+    const REAL   *_nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL   *_nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL   *_table_ene,           // ( 1:6*cutoff_int )
+    const REAL   *_table_grad,          // ( 1:6*cutoff_int )
+	const REAL   *_table_nonb_lambda,   // ( 1:5, 1:5, 1:5)
+    const int    *_univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char   *_univ_mask2,
+    const int    *_univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar  *_univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int    *_univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar  *_univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int    *_virial_check,        // ( 1:ncel_max, 1:ncel_max )
+    int  MaxAtom,
+    int  MaxAtomCls,
+    int  num_atom_cls,
+    int  ncel_local,
+    int  ncel_bound,
+    int  ncel_max,
+    int  cutoff_int,
+    int  univ_maxcell,
+    int  univ_maxcell1,
+    int  univ_ncell_near,
+    int  univ_mask2_size 
+    )
+{
+    size_coord_pbc           = sizeof(REAL)   * 3 * MaxAtom * ncel_max;
+    size_force               = sizeof(REAL)   * 3 * MaxAtom * ncel_max;
+    size_ene_virial          = sizeof(double) * 5;
+    size_coord               = sizeof(double) * 3 * MaxAtom * ncel_max;
+    size_trans1              = sizeof(REAL)   * 3 * MaxAtom * ncel_max;
+    size_cell_move           = sizeof(REAL)   * 3 * ncel_max * ncel_max;
+    size_charge              = sizeof(REAL)   * MaxAtom * ncel_max;
+    size_atmcls              = sizeof(int )   * MaxAtom * ncel_max;
+    size_fepgrp              = sizeof(int )   * MaxAtom * ncel_max;
+    size_natom               = sizeof(int )   * ncel_max;
+    size_nonb_lj12           = sizeof(REAL)   * num_atom_cls * num_atom_cls;
+    size_nonb_lj6            = sizeof(REAL)   * num_atom_cls * num_atom_cls;
+    size_table_ene           = sizeof(REAL)   * 6*cutoff_int;
+    size_table_grad          = sizeof(REAL)   * 6*cutoff_int;
+    size_table_nonb_lambda   = sizeof(REAL)   * 5 * 5 * 5;
+    size_univ_cell_pairlist1 = sizeof(int )   * 2 * univ_maxcell;
+    size_univ_ix_list        = sizeof(uchar)  * MaxAtom * univ_maxcell1;
+    size_univ_iy_list        = sizeof(uchar)  * MaxAtom * univ_maxcell1;
+    size_univ_ix_natom       = sizeof(int)    * univ_maxcell1;
+    size_univ_iy_natom       = sizeof(int)    * univ_maxcell1;
+    size_univ_ij_sort_list   = sizeof(int )   * univ_maxcell1;
+    size_ene_viri_mid        = sizeof(double) * 5 * univ_maxcell;
+    size_virial_check        = sizeof(int )   * ncel_max * ncel_max;
+    // size_univ_mask2          = sizeof(char)   * univ_mask2_size * univ_ncell_near;
+    // max_size_univ_mask2      = size_univ_mask2;
+
+    show_size();
+
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_coord_pbc          , size_coord_pbc           ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_force              , size_force               ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_force_recip        , size_force               ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_ene_virial         , size_ene_virial          ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_coord              , size_coord               ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_trans1             , size_trans1              ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_cell_move          , size_cell_move           ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_charge             , size_charge              ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_atmcls             , size_atmcls              ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_fepgrp             , size_fepgrp              ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_natom              , size_natom               ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_nonb_lj12          , size_nonb_lj12           ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_nonb_lj6           , size_nonb_lj6            ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_table_ene          , size_table_ene           ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_table_grad         , size_table_grad          ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_table_nonb_lambda  , size_table_nonb_lambda   ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_cell_pairlist1, size_univ_cell_pairlist1 ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_ix_natom      , size_univ_ix_natom       ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_ix_list       , size_univ_ix_list        ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_iy_natom      , size_univ_iy_natom       ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_iy_list       , size_univ_iy_list        ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_ij_sort_list  , size_univ_ij_sort_list   ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_ene_viri_mid       , size_ene_viri_mid        ) );
+    CUDA_CALL( cudaMalloc_WN( (void**) &dev_virial_check       , size_virial_check        ) );
+    // CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_mask2         , size_univ_mask2          ) );
+
+    // CUDA_CALL( cudaDeviceSetSharedMemConfig( cudaSharedMemBankSizeFourByte ) );
+    CUDA_CALL( cudaDeviceSetSharedMemConfig( cudaSharedMemBankSizeEightByte ) );
+#ifdef DEBUG
+    cudaSharedMemConfig pConfig;
+    CUDA_CALL( cudaDeviceGetSharedMemConfig ( &pConfig ) );
+    printf( "SharedMemConfig: %d\n", pConfig );
+#endif
+}
+
+
 /*
  * JJ : send data from host to device before energy/force calculation
  */
@@ -425,6 +538,103 @@ void gpu_memcpy_h2d_energy(
     }
 }
 
+// FEP
+// HO : send data from host to device before energy/force calculation for FEP
+void gpu_memcpy_h2d_energy_fep(
+    const REAL   *_coord_pbc,
+    const REAL   *_force,
+    const double *_ene_virial,
+    const double *_coord,
+    const REAL   *_trans1,
+    const REAL   *_cell_move,
+    const REAL   *_charge,
+    const int    *_atmcls,
+    const int    *_fepgrp,
+    const int    *_natom,
+    const REAL   *_nonb_lj12,
+    const REAL   *_nonb_lj6,
+    const REAL   *_table_ene, 
+    const REAL   *_table_grad,
+    const REAL   *_table_nonb_lambda,
+    const int    *_univ_cell_pairlist1,
+    const char   *_univ_mask2,
+    const int    *_univ_ix_natom,
+    const uchar  *_univ_ix_list,
+    const int    *_univ_iy_natom,
+    const uchar  *_univ_iy_list,
+    const int    *_univ_ij_sort_list,
+    const int    *_virial_check,
+    int  MaxAtom,
+    int  univ_maxcell,
+    int  univ_ncell_near,
+    int  univ_mask2_size,
+    const int   update,
+    const int   check_virial,
+    int   first
+    )
+{
+    CUDA_CALL( cudaMemsetAsync( dev_force,  0, size_force, stream[0] ) );
+    CUDA_CALL( cudaMemsetAsync( dev_ene_virial, 0, size_ene_virial, stream[0] ) );
+    CUDA_CALL( cudaMemcpyAsync( dev_coord, _coord, size_coord, cudaMemcpyHostToDevice, stream[0] ) );
+    CUDA_CALL( cudaEventRecord( event[0], stream[0] ) ); /* dev_coord */
+	if ( first ) {
+		CUDA_CALL( cudaMemcpy( dev_charge             , _charge             , size_charge             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_atmcls             , _atmcls             , size_atmcls             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_fepgrp             , _fepgrp             , size_fepgrp             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_nonb_lj12          , _nonb_lj12          , size_nonb_lj12          , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_nonb_lj6           , _nonb_lj6           , size_nonb_lj6           , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_table_ene          , _table_ene          , size_table_ene          , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_table_grad         , _table_grad         , size_table_grad         , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_table_nonb_lambda  , _table_nonb_lambda  , size_table_nonb_lambda  , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_natom              , _natom              , size_natom              , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaEventRecord( event[0], stream[0] ) ); /* dev_natom */
+		if ( flag_build_pairlist_on_GPU == 0 ) {
+			CUDA_CALL( cudaMemcpy( dev_trans1             , _trans1             , size_trans1             , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_cell_move          , _cell_move          , size_cell_move          , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_cell_pairlist1, _univ_cell_pairlist1, size_univ_cell_pairlist1, cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_ix_list       , _univ_ix_list       , size_univ_ix_list       , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_iy_list       , _univ_iy_list       , size_univ_iy_list       , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_ix_natom      , _univ_ix_natom      , size_univ_ix_natom      , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_iy_natom      , _univ_iy_natom      , size_univ_iy_natom      , cudaMemcpyHostToDevice ) );
+		}
+		CUDA_CALL( cudaMemcpy( dev_univ_ij_sort_list  , _univ_ij_sort_list  , size_univ_ij_sort_list  , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_virial_check       , _virial_check       , size_virial_check       , cudaMemcpyHostToDevice ) );
+		// CUDA_CALL( cudaMemcpy( dev_univ_mask2         , _univ_mask2         , size_univ_mask2         , cudaMemcpyHostToDevice ) );
+		return;
+    }
+
+    if ( update ) {
+		CUDA_CALL( cudaMemcpy( dev_charge             , _charge             , size_charge             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_atmcls             , _atmcls             , size_atmcls             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_fepgrp             , _fepgrp             , size_fepgrp             , cudaMemcpyHostToDevice ) );
+		CUDA_CALL( cudaMemcpy( dev_natom              , _natom              , size_natom              , cudaMemcpyHostToDevice ) );
+		if ( flag_build_pairlist_on_GPU == 0 ) {
+			CUDA_CALL( cudaMemcpy( dev_trans1             , _trans1             , size_trans1             , cudaMemcpyHostToDevice ) );
+			// CUDA_CALL( cudaMemcpy( dev_univ_cell_pairlist1, _univ_cell_pairlist1, size_univ_cell_pairlist1, cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_ix_list       , _univ_ix_list       , size_univ_ix_list       , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_iy_list       , _univ_iy_list       , size_univ_iy_list       , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_ix_natom      , _univ_ix_natom      , size_univ_ix_natom      , cudaMemcpyHostToDevice ) );
+			CUDA_CALL( cudaMemcpy( dev_univ_iy_natom      , _univ_iy_natom      , size_univ_iy_natom      , cudaMemcpyHostToDevice ) );
+		}
+		CUDA_CALL( cudaMemcpy( dev_univ_ij_sort_list  , _univ_ij_sort_list  , size_univ_ij_sort_list  , cudaMemcpyHostToDevice ) );
+		// size_univ_mask2 = sizeof(char) * univ_mask2_size * univ_ncell_near ;
+		// if (max_size_univ_mask2 < size_univ_mask2){
+		//    max_size_univ_mask2 = size_univ_mask2;
+		//    CUDA_CALL( cudaFree( dev_univ_mask2 ) );
+		//    dev_univ_mask2 = NULL;
+		//    CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_mask2, max_size_univ_mask2 ) );
+		//    show_size();
+		// }
+		// CUDA_CALL( cudaMemcpy( dev_univ_mask2         , _univ_mask2         , size_univ_mask2         , cudaMemcpyHostToDevice ) );
+        return;
+    }
+    else if ( check_virial) {
+  	    CUDA_CALL( cudaMemcpy( dev_trans1             , _trans1             , size_trans1             , cudaMemcpyHostToDevice ) );
+        return;
+    }
+}
+
+
 /*
  * JJ : send data from host to device
  */
@@ -498,6 +708,76 @@ void gpu_memcpy_h2d_force(
         return;
     }
 
+}
+
+// FEP
+void gpu_memcpy_h2d_force_fep(
+    const REAL   *_coord_pbc,       
+    const REAL   *_force,     
+    const double *_ene_virial,   
+    const double *_coord,        
+    const REAL   *_trans1,       
+    const REAL   *_cell_move,    
+    const REAL   *_charge,       
+    const int    *_atmcls,       
+    const int    *_fepgrp,       
+    const int    *_natom,        
+    const REAL   *_nonb_lj12,    
+    const REAL   *_nonb_lj6,     
+    const REAL   *_table_grad,   
+    const REAL   *_table_nonb_lambda,   
+    const int    *_univ_cell_pairlist1,
+    const char   *_univ_mask2,
+    const int    *_univ_ix_natom,
+    const uchar  *_univ_ix_list,
+    const int    *_univ_iy_natom,
+    const uchar  *_univ_iy_list,
+    const int    *_univ_ij_sort_list,
+    const int    *_virial_check,
+    int  MaxAtom,
+    int  univ_maxcell,
+    int  univ_ncell_near,
+    int  univ_mask2_size,
+    const int   update,
+    int   check_virial,
+    cudaStream_t  st
+    )
+{
+	CUDA_CALL( cudaMemsetAsync( dev_force,      0, size_force,      st ) );
+	CUDA_CALL( cudaMemsetAsync( dev_ene_virial, 0, size_ene_virial, st ) );
+	if ( flag_build_pairlist_on_GPU == 0 || update == 0 ) {
+		CUDA_CALL( cudaMemcpyAsync( dev_coord, _coord, size_coord, cudaMemcpyHostToDevice, st ) );
+		CUDA_CALL( cudaEventRecord( event[0], st ) ); /* dev_coord */
+	}
+	if ( update ) {
+		CUDA_CALL( cudaMemcpyAsync( dev_charge, _charge, size_charge, cudaMemcpyHostToDevice, st ) );
+		CUDA_CALL( cudaMemcpyAsync( dev_atmcls, _atmcls, size_atmcls, cudaMemcpyHostToDevice, st ) );
+		CUDA_CALL( cudaMemcpyAsync( dev_fepgrp, _fepgrp, size_fepgrp, cudaMemcpyHostToDevice, st ) );
+		CUDA_CALL( cudaMemcpyAsync( dev_natom , _natom , size_natom , cudaMemcpyHostToDevice, st ) );
+		CUDA_CALL( cudaEventRecord( event[0], st ) ); /* dev_natom */
+		if ( flag_build_pairlist_on_GPU == 0 ) {
+			CUDA_CALL( cudaMemcpyAsync( dev_trans1       , _trans1       , size_trans1       , cudaMemcpyHostToDevice, st ) );
+			CUDA_CALL( cudaMemcpyAsync( dev_univ_ix_list , _univ_ix_list , size_univ_ix_list , cudaMemcpyHostToDevice, st ) );
+			CUDA_CALL( cudaMemcpyAsync( dev_univ_iy_list , _univ_iy_list , size_univ_iy_list , cudaMemcpyHostToDevice, st ) );
+			CUDA_CALL( cudaMemcpyAsync( dev_univ_ix_natom, _univ_ix_natom, size_univ_ix_natom, cudaMemcpyHostToDevice, st ) );
+			CUDA_CALL( cudaMemcpyAsync( dev_univ_iy_natom, _univ_iy_natom, size_univ_iy_natom, cudaMemcpyHostToDevice, st ) );
+		}
+		CUDA_CALL( cudaMemcpyAsync( dev_univ_ij_sort_list, _univ_ij_sort_list, size_univ_ij_sort_list, cudaMemcpyHostToDevice, st ) );
+		// size_univ_mask2 = sizeof(char) * univ_mask2_size * univ_ncell_near ;
+		// if (max_size_univ_mask2 < size_univ_mask2){
+		//     max_size_univ_mask2 = size_univ_mask2;
+		//     CUDA_CALL( cudaFree( dev_univ_mask2 ) );
+		//     dev_univ_mask2 = NULL;
+		//     CUDA_CALL( cudaMalloc_WN( (void**) &dev_univ_mask2, max_size_univ_mask2 ) );
+		//     show_size();
+		// }
+		// CUDA_CALL( cudaMemcpy( dev_univ_mask2         , _univ_mask2         , size_univ_mask2         , cudaMemcpyHostToDevice ) );
+		return;
+	}
+	else if ( check_virial) {
+		CUDA_CALL( cudaMemcpyAsync( dev_trans1   , _trans1   , size_trans1   , cudaMemcpyHostToDevice, st ) );
+		return;
+	}
 }
 
 /*
@@ -911,6 +1191,192 @@ __global__ void kern_compute_energy_nonbond_table_linear_univ__energyforce_intra
     }
 }
 
+// FEP
+__global__ void kern_compute_energy_nonbond_table_linear_univ__energyforce_intra_cell_fep(
+    REAL        * _coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        * _force,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    double      * _ene_virial,          // ( 5 )
+    double      * _ene_viri_mid,        // ( 1:5, 1:ncel_max)
+    const REAL  * _cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  * _charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _natom,               // ( 1:ncel_max )
+    const REAL  * _nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _table_ene,           // ( 1:6*cutoff_int )
+    const REAL  * _table_grad,          // ( 1:6*cutoff_int )
+    const REAL  * _table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   * _univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  * _univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near)
+    const int   * _univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    int  MaxAtom,
+    int  MaxAtomCls,
+    int  num_atom_cls,
+    int  ncel_local,
+    int  ncel_bound,
+    int  ncel_max,
+    int  cutoff_int,
+    int  univ_maxcell,
+    int  univ_maxcell1,
+    int  univ_mask2_size,
+    int  univ_natom_max,
+    int  index_start,
+    int  index_end,
+    REAL  density,
+    REAL  cutoff2 
+    )
+{
+#undef  num_thread_xx
+#undef  num_thread_xy
+#undef  id_thread_xx
+#undef  id_thread_xy
+#define num_thread_xx   8
+#define num_thread_xy   4
+#define id_thread_xx  (id_thread_x / num_thread_xy)
+#define id_thread_xy  (id_thread_x & (num_thread_xy-1))
+
+    const int  num_thread_y = blockDim.y;
+    const int  id_thread_x = threadIdx.x;
+    const int  id_thread_y = threadIdx.y;
+    REAL  _force_local[3];
+    double val_energy_elec = 0.0;
+    double val_energy_evdw = 0.0;
+
+    int  index = index_start + id_thread_y + (num_thread_y * blockIdx.x);
+    if ( index > index_end ) return;
+    int  univ_ij = index;
+
+    const int  i = univ_ij;
+    const int  j = univ_ij;
+
+    int  ix_natom = natom(i);
+    int  iy_natom = natom(j);
+    if ( ix_natom * iy_natom <= 0 ) return;
+
+    for ( int ix = id_thread_xx + 1; ix <= ix_natom; ix += num_thread_xx ) {
+
+        REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i));
+        REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i));
+        REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i));
+        REAL  iqtmp   = __ldg(&charge(ix,i));
+        int   iatmcls = __ldg(&atmcls(ix,i));
+
+		// FEP
+		int fg1       = __ldg(&fepgrp(ix,i));
+
+        force_local(1) = 0.0;
+        force_local(2) = 0.0;
+        force_local(3) = 0.0;
+        REAL   elec_temp = 0.0;
+        REAL   evdw_temp = 0.0;
+
+        for ( int iy = id_thread_xy + 1; iy <= iy_natom; iy += num_thread_xy ) {
+
+            REAL  grad_coef = 0.0;
+            REAL  dij1 = 0.0;
+            REAL  dij2 = 0.0;
+            REAL  dij3 = 0.0;
+            REAL  rij2;
+
+			// FEP
+			int fg2 = __ldg(&fepgrp(iy,j));
+
+            int idx = iy + (ix-1)*univ_natom_max;
+            if (univ_mask2(idx,univ_ij)&&((int)__ldg(&table_nonb_lambda(5,fg1,fg2)))) {
+
+                dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+                dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+                dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+                rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+
+                if ( rij2 < cutoff2) {
+
+					// FEP
+					REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+					REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+					REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+					REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+                    REAL  jqtmp   = __ldg(&charge(iy,j));
+                    int   jatmcls = __ldg(&atmcls(iy,j));
+                    REAL  lj12 = __ldg(&nonb_lj12(iatmcls,jatmcls));
+                    REAL  lj6  = __ldg(&nonb_lj6( iatmcls,jatmcls));
+
+                    rij2 = cutoff2 * density / rij2_sc_lj;
+                    int   L  = int(rij2);
+                    REAL  R  = rij2 - L;
+                    int   L1 = 3*L - 2;
+                    REAL  tg0  = __ldg(&table_ene(L1  ));
+                    REAL  tg1  = __ldg(&table_ene(L1+1));
+                    REAL  tg3  = __ldg(&table_ene(L1+3));
+                    REAL  tg4  = __ldg(&table_ene(L1+4));
+                    REAL  term_lj12 = tg0 + R*(tg3-tg0);
+                    REAL  term_lj6  = tg1 + R*(tg4-tg1);
+                    evdw_temp += lamblj*(term_lj12*lj12 - term_lj6*lj6);
+                    tg0  = __ldg(&table_grad(L1  ));
+                    tg1  = __ldg(&table_grad(L1+1));
+                    tg3  = __ldg(&table_grad(L1+3));
+                    tg4  = __ldg(&table_grad(L1+4));
+                    term_lj12 = tg0 + R*(tg3-tg0);
+                    term_lj6  = tg1 + R*(tg4-tg1);
+
+                    rij2 = cutoff2 * density / rij2_sc_el;
+                    L  = int(rij2);
+                    R  = rij2 - L;
+                    L1 = 3*L - 2;
+                    REAL  tg2  = __ldg(&table_ene(L1+2));
+                    REAL  tg5  = __ldg(&table_ene(L1+5));
+                    REAL  term_elec = tg2 + R*(tg5-tg2);
+                    elec_temp += lambel*iqtmp*jqtmp*term_elec;
+                    tg2  = __ldg(&table_grad(L1+2));
+                    tg5  = __ldg(&table_grad(L1+5));
+                    term_elec = tg2 + R*(tg5-tg2);
+
+                    grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+                }
+            }
+
+            REAL  work1 = grad_coef*dij1;
+            REAL  work2 = grad_coef*dij2;
+            REAL  work3 = grad_coef*dij3;
+
+            force_local(1) -= work1;
+            force_local(2) -= work2;
+            force_local(3) -= work3;
+        }
+        val_energy_elec += elec_temp/2.0;
+        val_energy_evdw += evdw_temp/2.0;
+
+        // update energy/force(:,:,i)
+        WARP_RSUM_12( force_local(1) );
+        WARP_RSUM_12( force_local(2) );
+        WARP_RSUM_12( force_local(3) );
+        if ( id_thread_xy == 0 ) {
+            if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+            if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+            if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+        }
+    }
+
+    WARP_RSUM_12345 ( val_energy_elec );
+    WARP_RSUM_12345 ( val_energy_evdw );
+    if (id_thread_x < 5) {
+        int n = id_thread_x + 1;
+        if ( n == 1 ) ene_viri_mid(n,index) = val_energy_elec;
+        if ( n == 2 ) ene_viri_mid(n,index) = val_energy_evdw;
+        if ( n == 3 ) ene_viri_mid(n,index) = 0.0;
+        if ( n == 4 ) ene_viri_mid(n,index) = 0.0;
+        if ( n == 5 ) ene_viri_mid(n,index) = 0.0;
+    }
+}
+
+
+
 /*
  *
  */
@@ -1067,6 +1533,171 @@ __global__ void kern_compute_force_nonbond_table_linear_univ__force_intra_cell(
     }
 }
 
+// FEP
+__global__ void kern_compute_force_nonbond_table_linear_univ__force_intra_cell_fep(
+    const REAL  * _coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        * _force,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    double      * _ene_virial,          // ( 5 )
+    double      * _ene_viri_mid,        // ( 1:5, 1:ncel_max)
+    const REAL  * _cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  * _charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _natom,               // ( 1:ncel_max )
+    const REAL  * _nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _table_grad,          // ( 1:6*cutoff_int )
+    const REAL  * _table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   * _univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  * _univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near )
+    const int   * _univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    int  MaxAtom,
+    int  MaxAtomCls,
+    int  num_atom_cls,
+    int  ncel_local,
+    int  ncel_bound,
+    int  ncel_max,
+    int  cutoff_int,
+    int  univ_maxcell,
+    int  univ_maxcell1,
+    int  univ_mask2_size,
+    int  univ_natom_max,
+    int  index_s,
+    int  index_e,
+    int  check_virial,
+    REAL  density,
+    REAL  cutoff2,
+    REAL  pairlistdist2
+    )
+{
+#undef  num_thread_xx
+#undef  num_thread_xy
+#undef  id_thread_xx
+#undef  id_thread_xy
+#define num_thread_xx   8
+#define num_thread_xy   4
+#define id_thread_xx  (id_thread_x / num_thread_xy)
+#define id_thread_xy  (id_thread_x & (num_thread_xy-1))
+
+    const int  num_thread_y = blockDim.y;
+    const int  id_thread_x = threadIdx.x;
+    const int  id_thread_y = threadIdx.y;
+    REAL  _force_local[3];
+
+    int  index = index_s + id_thread_y + (num_thread_y * blockIdx.x);
+    if ( index > index_e ) return;
+    int  univ_ij = index;
+
+    const int  i = univ_ij;
+    const int  j = univ_ij;
+
+    int  ix_natom = natom(i);
+    int  iy_natom = natom(j);
+    if ( ix_natom * iy_natom <= 0 ) return;
+
+    for ( int ix = id_thread_xx + 1; ix <= ix_natom; ix += num_thread_xx ) {
+
+	REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i));
+	REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i));
+	REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i));
+	REAL  iqtmp   = __ldg(&charge(ix,i));
+	int   iatmcls = __ldg(&atmcls(ix,i));
+
+	// FEP
+	int   fg1     = __ldg(&fepgrp(ix,i));
+
+	force_local(1) = 0.0;
+	force_local(2) = 0.0;
+	force_local(3) = 0.0;
+
+	for ( int iy = id_thread_xy + 1; iy <= iy_natom; iy += num_thread_xy ) {
+
+		REAL  grad_coef = 0.0;
+		REAL  dij1 = 0.0;
+		REAL  dij2 = 0.0;
+		REAL  dij3 = 0.0;
+		REAL  rij2;
+
+		// FEP
+		int fg2 = __ldg(&fepgrp(iy,j));
+
+		int idx = iy + (ix-1)*univ_natom_max;
+
+		if (univ_mask2(idx,univ_ij)&&((int)__ldg(&table_nonb_lambda(5,fg1,fg2)))) {
+
+			dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+			dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+			dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+			rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+
+			if ( rij2 < cutoff2 && rij2 > 0.0) {
+
+				// FEP
+				REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+				REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+				REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+				REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+				REAL  jqtmp   = __ldg(&charge(iy,j));
+				int   jatmcls = __ldg(&atmcls(iy,j));
+				REAL  lj12 = __ldg(&nonb_lj12(iatmcls,jatmcls));
+				REAL  lj6  = __ldg(&nonb_lj6( iatmcls,jatmcls));
+
+				rij2 = cutoff2 * density / rij2_sc_lj;
+				int   L  = int(rij2);
+				REAL  R  = rij2 - L;
+				int   L1 = 3*L - 2;
+				REAL  tg0  = __ldg(&table_grad(L1  ));
+				REAL  tg1  = __ldg(&table_grad(L1+1));
+				REAL  tg3  = __ldg(&table_grad(L1+3));
+				REAL  tg4  = __ldg(&table_grad(L1+4));
+				REAL  term_lj12 = tg0 + R*(tg3-tg0);
+				REAL  term_lj6  = tg1 + R*(tg4-tg1);
+
+				rij2 = cutoff2 * density / rij2_sc_el;
+				L  = int(rij2);
+				R  = rij2 - L;
+				L1 = 3*L - 2;
+				REAL  tg2  = __ldg(&table_grad(L1+2));
+				REAL  tg5  = __ldg(&table_grad(L1+5));
+				REAL  term_elec = tg2 + R*(tg5-tg2);
+
+				grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+			}
+
+			REAL  work1 = grad_coef*dij1;
+			REAL  work2 = grad_coef*dij2;
+			REAL  work3 = grad_coef*dij3;
+
+			force_local(1) -= work1;
+			force_local(2) -= work2;
+			force_local(3) -= work3;
+		}
+	}
+
+	// update force(:,:,i)
+	WARP_RSUM_12( force_local(1) );
+	WARP_RSUM_12( force_local(2) );
+	WARP_RSUM_12( force_local(3) );
+  	if ( id_thread_xy == 0 ) {
+           if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+           if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+           if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+  	}
+    }
+
+    if (check_virial != 0 && id_thread_x < 3) {
+       int n = id_thread_x + 1;
+       if (n == 1) ene_viri_mid(n,index) = 0.0;
+       if (n == 2) ene_viri_mid(n,index) = 0.0;
+       if (n == 3) ene_viri_mid(n,index) = 0.0;
+    }
+}
+
 
 /* */
 
@@ -1139,6 +1770,7 @@ __global__ void kern_compute_energy_nonbond_table_linear_univ__energyforce_inter
 
     /* shared memory */
     REAL  *_force_iy_smem = & smem[id_thread_y * 3*max_iy_natom]; // 3 * iy_natom
+#undef force_iy_smem
 #define force_iy_smem(X,Y) _force_iy_smem[CALIDX2((X)-1,3, (Y)-1,iy_natom)]
 
     int  index = index_start + id_thread_y + (num_thread_y * blockIdx.x);
@@ -1448,6 +2080,416 @@ __global__ void kern_compute_energy_nonbond_table_linear_univ__energyforce_inter
     }
 }
 
+#ifdef _SINGLE
+#define NUM_CTA__ENERGYFORCE_INTER_CELL 12
+#else
+#define NUM_CTA__ENERGYFORCE_INTER_CELL  8
+#endif
+// FEP
+__global__ void kern_compute_energy_nonbond_table_linear_univ__energyforce_inter_cell_fep(
+    const REAL  * _coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        * _force,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    double      * _ene_virial,          // ( 5 )
+    double      * _ene_viri_mid,        // ( 1:5, 1:univ_maxcell)
+    const REAL  * _cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  * _charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+	const int   * _fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _natom,               // ( 1:ncel_max )
+    const REAL  * _nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _table_ene,           // ( 1:6*cutoff_int )
+    const REAL  * _table_grad,          // ( 1:6*cutoff_int )
+    const REAL  * _table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   * _univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  * _univ_mask2,          
+    const int   * _univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   * _virial_check,        // ( 1:ncel_max, 1:ncel_max )
+    int  MaxAtom,
+    int  MaxAtomCls,
+    int  num_atom_cls,
+    int  ncel_local,
+    int  ncel_bound,
+    int  ncel_max,
+    int  cutoff_int,
+    int  univ_maxcell,
+    int  univ_maxcell1,
+    int  univ_ncell_near,
+    int  univ_mask2_size,
+    int  univ_natom_max,
+    int  index_start,
+    int  index_end,
+    int  max_iy_natom,
+    REAL  density,
+    REAL  cutoff2,
+    REAL  system_x,
+    REAL  system_y,
+    REAL  system_z 
+    )
+{
+#undef  num_thread_xx
+#undef  num_thread_xy
+#undef  id_thread_xx
+#undef  id_thread_xy
+#define num_thread_xx   8
+#define num_thread_xy   4
+#define id_thread_xx  (id_thread_x / num_thread_xy)
+#define id_thread_xy  (id_thread_x & (num_thread_xy-1))
+
+	const int  num_thread_x = blockDim.x;
+	const int  num_thread_y = blockDim.y;
+	const int  id_thread_x = threadIdx.x;
+	const int  id_thread_y = threadIdx.y;
+	REAL  _force_local[3];
+
+    /* shared memory */
+    REAL  *_force_iy_smem = & smem[id_thread_y * 3*max_iy_natom]; // 3 * iy_natom
+#undef force_iy_smem
+#define force_iy_smem(X,Y) _force_iy_smem[CALIDX2((X)-1,3, (Y)-1,iy_natom)]
+
+    int  index = index_start + id_thread_y + (num_thread_y * blockIdx.x);
+    if ( index > index_end ) return;
+    int  univ_ij = univ_ij_sort_list( index );
+
+    int  ix_natom = univ_ix_natom(univ_ij);
+    int  iy_natom = univ_iy_natom(univ_ij);
+    if ( ix_natom * iy_natom <= 0 ) return;
+
+    const int  i = univ_cell_pairlist1(1,univ_ij);
+    const int  j = univ_cell_pairlist1(2,univ_ij);
+    int  k;
+
+#define sumval(Z) _sumval[(Z)-1]
+    double _sumval[5];
+    sumval(1) = 0.0;  // elec
+    sumval(2) = 0.0;  // evdw
+    sumval(3) = 0.0;  // virial(1)
+    sumval(4) = 0.0;  // virial(2)
+    sumval(5) = 0.0;  // virial(3)
+    const int  check_virial = virial_check(j,i);
+
+    if (univ_ij > univ_ncell_near){
+
+        for ( int iiy_s = 1; iiy_s <= iy_natom; iiy_s += max_iy_natom ) { // blocking
+            int  iiy_e = iiy_s + max_iy_natom - 1;
+            if ( iiy_e > iy_natom ) iiy_e = iy_natom;
+
+            // initialize force_iy at shared memory
+            for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+                int   n   = (k % 3) + 1;
+                int   iiy = (k / 3) + iiy_s;
+                force_iy_smem(n,iiy-iiy_s+1) = 0.0;
+            }
+
+            for ( int iix = id_thread_xx + 1; iix <= ix_natom; iix += num_thread_xx ) {
+                int  ix = __ldg(&univ_ix_list(iix,univ_ij));
+
+                REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i)) + __ldg(&cell_move(1,j,i))*system_x;
+                REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i)) + __ldg(&cell_move(2,j,i))*system_y;
+                REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i)) + __ldg(&cell_move(3,j,i))*system_z;
+                REAL  iqtmp   = __ldg(&charge(ix,i));
+                int   iatmcls = __ldg(&atmcls(ix,i));
+
+				// FEP
+				int fg1       = __ldg(&fepgrp(ix,i));
+
+                force_local(1) = 0.0;
+                force_local(2) = 0.0;
+                force_local(3) = 0.0;
+                REAL  elec_temp = 0.0;
+                REAL  evdw_temp = 0.0;
+
+                for ( int iiy = id_thread_xy + iiy_s; iiy <= iiy_e; iiy += num_thread_xy ) {
+                    int  iy = __ldg(&univ_iy_list(iiy,univ_ij));
+
+                    REAL  grad_coef = 0.0;
+                    REAL  dij1 = 0.0;
+                    REAL  dij2 = 0.0;
+                    REAL  dij3 = 0.0;
+                    REAL  rij2;
+
+					// FEP
+					int fg2 = __ldg(&fepgrp(iy,j));
+
+					if ((int)__ldg(&table_nonb_lambda(5,fg1,fg2))) {
+
+                    dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+                    dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+                    dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+                    rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+                    grad_coef = 0.0;
+
+                    if ( rij2 < cutoff2 ) {
+
+						// FEP
+						REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+						REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+						REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+						REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+                        REAL  jqtmp   = __ldg(&charge(iy,j));
+                        int   jatmcls = __ldg(&atmcls(iy,j));
+                        REAL  lj12 = __ldg(&nonb_lj12(iatmcls,jatmcls));
+                        REAL  lj6  = __ldg(&nonb_lj6( iatmcls,jatmcls));
+
+                        rij2 = cutoff2 * density / rij2_sc_lj;
+						int   L  = int(rij2);
+						REAL  R  = rij2 - L;
+						int   L1 = 3*L - 2;
+						REAL  tg0  = __ldg(&table_ene(L1  ));
+						REAL  tg1  = __ldg(&table_ene(L1+1));
+						REAL  tg3  = __ldg(&table_ene(L1+3));
+						REAL  tg4  = __ldg(&table_ene(L1+4));
+						REAL  term_lj12 = tg0 + R*(tg3-tg0);
+						REAL  term_lj6  = tg1 + R*(tg4-tg1);
+						evdw_temp += lamblj*(term_lj12*lj12 - term_lj6*lj6);
+						tg0  = __ldg(&table_grad(L1  ));
+						tg1  = __ldg(&table_grad(L1+1));
+						tg3  = __ldg(&table_grad(L1+3));
+						tg4  = __ldg(&table_grad(L1+4));
+						term_lj12 = tg0 + R*(tg3-tg0);
+						term_lj6  = tg1 + R*(tg4-tg1);
+
+                        rij2 = cutoff2 * density / rij2_sc_el;
+						L  = int(rij2);
+						R  = rij2 - L;
+						L1 = 3*L - 2;
+						REAL  tg2  = __ldg(&table_ene(L1+2));
+						REAL  tg5  = __ldg(&table_ene(L1+5));
+						REAL  term_elec = tg2 + R*(tg5-tg2);
+						elec_temp += lambel*iqtmp*jqtmp*term_elec;
+						tg2  = __ldg(&table_grad(L1+2));
+						tg5  = __ldg(&table_grad(L1+5));
+						term_elec = tg2 + R*(tg5-tg2);
+
+						grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+                    }
+					}
+ 
+                    REAL  work1 = grad_coef*dij1;
+                    REAL  work2 = grad_coef*dij2;
+                    REAL  work3 = grad_coef*dij3;
+
+                    force_local(1) -= work1;
+                    force_local(2) -= work2;
+                    force_local(3) -= work3;
+
+                    // update force_iy(:,iiy) at smem
+                    WARP_RSUM_345( work1 );
+                    WARP_RSUM_345( work2 );
+                    WARP_RSUM_345( work3 );
+                    if ( id_thread_xx == 0 ) {
+                        force_iy_smem(1,iiy-iiy_s+1) += work1;
+                        force_iy_smem(2,iiy-iiy_s+1) += work2;
+                        force_iy_smem(3,iiy-iiy_s+1) += work3;
+                    }
+                }
+                // energy and virial
+                sumval(1) += elec_temp;
+                sumval(2) += evdw_temp;
+                if (check_virial != 0) {
+                    sumval(3) += force_local(1);  // virial(1)
+                    sumval(4) += force_local(2);  // virial(2)
+                    sumval(5) += force_local(3);  // virial(3)
+                }
+
+                // update force(:,:,i)
+                WARP_RSUM_12( force_local(1) );
+                WARP_RSUM_12( force_local(2) );
+                WARP_RSUM_12( force_local(3) );
+                if ( id_thread_xy == 0 ) {
+                    if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+                    if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+                    if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+                }
+            }
+
+            // __syncthreads();
+
+            // update force(:,:,j)
+            for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+                int   n   = (k % 3) + 1;
+                int   iiy = (k / 3) + iiy_s;
+                int   iy  = __ldg(&univ_iy_list(iiy,univ_ij));
+                REAL  val = force_iy_smem(n,iiy-iiy_s+1);
+                if ( val != 0.0 ) atomicAdd( &(force(n,iy,j)), val );
+            }
+        }
+    }
+
+    else{
+ 
+        for ( int iiy_s = 1; iiy_s <= iy_natom; iiy_s += max_iy_natom ) { // blocking
+  	    int  iiy_e = iiy_s + max_iy_natom - 1;
+    	    if ( iiy_e > iy_natom ) iiy_e = iy_natom;
+
+	// initialize force_iy at shared memory
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int   n   = (k % 3) + 1;
+	        int   iiy = (k / 3) + iiy_s;
+	        force_iy_smem(n,iiy-iiy_s+1) = 0.0;
+	    }
+
+	    for ( int iix = id_thread_xx + 1; iix <= ix_natom; iix += num_thread_xx ) {
+	        int  ix = __ldg(&univ_ix_list(iix,univ_ij));
+
+    	        REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i)) + __ldg(&cell_move(1,j,i))*system_x;
+	        REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i)) + __ldg(&cell_move(2,j,i))*system_y;
+	        REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i)) + __ldg(&cell_move(3,j,i))*system_z;
+	        REAL  iqtmp   = __ldg(&charge(ix,i));
+	        int   iatmcls = __ldg(&atmcls(ix,i));
+
+			// FEP
+			int fg1       = __ldg(&fepgrp(ix,i));
+
+	        force_local(1) = 0.0;
+	        force_local(2) = 0.0;
+	        force_local(3) = 0.0;
+	        REAL  elec_temp = 0.0;
+	        REAL  evdw_temp = 0.0;
+
+	        for ( int iiy = id_thread_xy + iiy_s; iiy <= iiy_e; iiy += num_thread_xy ) {
+				int  iy = __ldg(&univ_iy_list(iiy,univ_ij));
+
+				REAL  grad_coef = 0.0;
+				REAL  dij1 = 0.0;
+				REAL  dij2 = 0.0;
+				REAL  dij3 = 0.0;
+				REAL  rij2;
+
+				// FEP
+				int fg2 = __ldg(&fepgrp(iy,j));
+
+				int idx = iy + (ix-1)*univ_natom_max;
+				if (univ_mask2(idx,univ_ij)&&((int)__ldg(&table_nonb_lambda(5,fg1,fg2)))) {
+
+					dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+					dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+					dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+					rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+					grad_coef = 0.0;
+
+					if ( rij2 < cutoff2 ) {
+
+						// FEP
+						REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+						REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+						REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+						REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+						REAL  jqtmp   = __ldg(&charge(iy,j));
+						int   jatmcls = __ldg(&atmcls(iy,j));
+						REAL  lj12 = __ldg(&nonb_lj12(iatmcls,jatmcls));
+						REAL  lj6  = __ldg(&nonb_lj6( iatmcls,jatmcls));
+
+						rij2 = cutoff2 * density / rij2_sc_lj;
+						int   L  = int(rij2);
+						REAL  R  = rij2 - L;
+						int   L1 = 3*L - 2;
+						REAL  tg0  = __ldg(&table_ene(L1  ));
+						REAL  tg1  = __ldg(&table_ene(L1+1));
+						REAL  tg3  = __ldg(&table_ene(L1+3));
+						REAL  tg4  = __ldg(&table_ene(L1+4));
+						REAL  term_lj12 = tg0 + R*(tg3-tg0);
+						REAL  term_lj6  = tg1 + R*(tg4-tg1);
+						evdw_temp += lamblj*(term_lj12*lj12 - term_lj6*lj6);
+						tg0  = __ldg(&table_grad(L1  ));
+						tg1  = __ldg(&table_grad(L1+1));
+						tg3  = __ldg(&table_grad(L1+3));
+						tg4  = __ldg(&table_grad(L1+4));
+						term_lj12 = tg0 + R*(tg3-tg0);
+						term_lj6  = tg1 + R*(tg4-tg1);
+
+						rij2 = cutoff2 * density / rij2_sc_el;
+						L  = int(rij2);
+						R  = rij2 - L;
+						L1 = 3*L - 2;
+						REAL  tg2  = __ldg(&table_ene(L1+2));
+						REAL  tg5  = __ldg(&table_ene(L1+5));
+						REAL  term_elec = tg2 + R*(tg5-tg2);
+						elec_temp += lambel*iqtmp*jqtmp*term_elec;
+						tg2  = __ldg(&table_grad(L1+2));
+						tg5  = __ldg(&table_grad(L1+5));
+						term_elec = tg2 + R*(tg5-tg2);
+
+						grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+					}
+				}
+
+				REAL  work1 = grad_coef*dij1;
+				REAL  work2 = grad_coef*dij2;
+				REAL  work3 = grad_coef*dij3;
+
+				force_local(1) -= work1;
+				force_local(2) -= work2;
+				force_local(3) -= work3;
+
+				WARP_RSUM_345( work1 );
+				WARP_RSUM_345( work2 );
+				WARP_RSUM_345( work3 );
+				if ( id_thread_xx == 0 ) {
+					force_iy_smem(1,iiy-iiy_s+1) += work1;
+					force_iy_smem(2,iiy-iiy_s+1) += work2;
+					force_iy_smem(3,iiy-iiy_s+1) += work3;
+				}
+	        }
+
+			// energy and virial
+			sumval(1) += elec_temp;
+			sumval(2) += evdw_temp;
+			if (check_virial != 0) {
+				sumval(3) += force_local(1);  // virial(1)
+				sumval(4) += force_local(2);  // virial(2)
+				sumval(5) += force_local(3);  // virial(3)
+			}
+
+			// update force(:,:,i)
+			WARP_RSUM_12( force_local(1) );
+			WARP_RSUM_12( force_local(2) );
+			WARP_RSUM_12( force_local(3) );
+			if ( id_thread_xy == 0 ) {
+				if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+				if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+				if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+			}
+	    }
+
+	    // __syncthreads();
+
+	    // update force(:,:,j)
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int   n   = (k % 3) + 1;
+	        int   iiy = (k / 3) + iiy_s;
+	        int   iy  = __ldg(&univ_iy_list(iiy,univ_ij));
+	        REAL  val = force_iy_smem(n,iiy-iiy_s+1);
+	        if ( val != 0.0 ) atomicAdd( &(force(n,iy,j)), val );
+	    }
+        }
+    }
+
+    // update energy and virial
+    sumval(3) *= __ldg(&cell_move(1,j,i))*system_x;  // virial(1)
+    sumval(4) *= __ldg(&cell_move(2,j,i))*system_y;  // virial(2)
+    sumval(5) *= __ldg(&cell_move(3,j,i))*system_z;  // virial(3)
+
+    WARP_RSUM_12345( sumval(1) );  // elec
+    WARP_RSUM_12345( sumval(2) );  // evdw
+    WARP_RSUM_12345( sumval(3) );  // virial(1)
+    WARP_RSUM_12345( sumval(4) );  // virial(2)
+    WARP_RSUM_12345( sumval(5) );  // virial(3)
+    if (id_thread_x < 5) {
+        int n = id_thread_x + 1;
+	ene_viri_mid(n,index) = sumval(n);
+    }
+}
+
+
+
+
 __global__ void kern_compute_energy_nonbond_table_linear_univ_energy_sum(
     double       *_ene_virial,
     const double *_ene_viri_mid,
@@ -1606,6 +2648,7 @@ __global__ void kern_compute_force_nonbond_table_linear_univ__force_inter_cell(
     /* shared memory */
     REAL  *_warp_smem = & smem[id_thread_y * (max_iy_natom*6)]; // iy_natom*6
 
+#undef force_iy_smem
 #define force_iy_smem(X,Y)  _warp_smem[CALIDX2((X)-1,3, (Y)-1,max_iy_natom)]
 #define coord_pbc_smem(X,Y) _warp_smem[CALIDX2((X)-1,3, (Y)-1,max_iy_natom) + (max_iy_natom*3)]
 
@@ -1897,6 +2940,405 @@ __global__ void kern_compute_force_nonbond_table_linear_univ__force_inter_cell(
         }
     }
 }
+
+#ifdef _SINGLE
+#define NUM_CTA__FORCE_INTER_CELL 12
+#else
+#define NUM_CTA__FORCE_INTER_CELL  9
+#endif
+// FEP
+__global__ void kern_compute_force_nonbond_table_linear_univ__force_inter_cell_fep(
+    const REAL  * _coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        * _force,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    double      * _ene_virial,          // ( 5 )
+    double      * _ene_viri_mid,        // ( 1:5, 1:univ_maxcell)
+    const REAL  * _cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  * _charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   * _natom,               // ( 1:ncel_max )
+    const REAL  * _nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  * _table_grad,          // ( 1:6*cutoff_int )
+    const REAL  * _table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   * _univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  * _univ_mask2,
+    const int   * _univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar * _univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   * _univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   * _virial_check,        // ( 1:ncel_max, 1:ncel_max )
+    int  MaxAtom,
+    int  MaxAtomCls,
+    int  num_atom_cls,
+    int  ncel_local,
+    int  ncel_bound,
+    int  ncel_max,
+    int  cutoff_int,
+    int  univ_maxcell,
+    int  univ_maxcell1,
+    int  univ_ncell_near,
+    int  univ_mask2_size,
+    int  univ_natom_max,
+    int  index_s,
+    int  index_e,
+    int  max_iy_natom,
+    int  check_virial,
+    REAL  density,
+    REAL  cutoff2,
+    REAL  pairlistdist2,
+    REAL  system_x,
+    REAL  system_y,
+    REAL  system_z
+    )
+{
+#undef  num_thread_xx
+#undef  num_thread_xy
+#undef  id_thread_xx
+#undef  id_thread_xy
+#define num_thread_xx   8
+#define num_thread_xy   4
+#define id_thread_xx  (id_thread_x / num_thread_xy)
+#define id_thread_xy  (id_thread_x & (num_thread_xy-1))
+
+#define num_thread_x   32
+    // const int  num_thread_x = blockDim.x;
+    const int  num_thread_y = blockDim.y;
+    const int  id_thread_x = threadIdx.x;
+    const int  id_thread_y = threadIdx.y;
+    REAL  _force_local[3];
+
+    /* shared memory */
+    REAL  *_warp_smem = & smem[id_thread_y * (max_iy_natom*6)]; // iy_natom*6
+
+#undef force_iy_smem
+#define force_iy_smem(X,Y)  _warp_smem[CALIDX2((X)-1,3, (Y)-1,max_iy_natom)]
+#define coord_pbc_smem(X,Y) _warp_smem[CALIDX2((X)-1,3, (Y)-1,max_iy_natom) + (max_iy_natom*3)]
+
+    int  index = index_s + id_thread_y + (num_thread_y * blockIdx.x);
+    if ( index > index_e ) return;
+    int  univ_ij = univ_ij_sort_list( index );
+
+    int  ix_natom = univ_ix_natom(univ_ij);
+    int  iy_natom = univ_iy_natom(univ_ij);
+    if ( ix_natom * iy_natom <= 0 ) return;
+
+    const int  i = univ_cell_pairlist1(1,univ_ij);
+    const int  j = univ_cell_pairlist1(2,univ_ij);
+    int  k;
+
+#define sumval(Z) _sumval[(Z)-1]
+    double _sumval[3];
+    sumval(1) = 0.0;  // virial(1)
+    sumval(2) = 0.0;  // virial(2)
+    sumval(3) = 0.0;  // virial(3)
+    char  check_virial_ij = 0;
+    if ( (check_virial != 0) && (virial_check(j,i) != 0) ) {
+	check_virial_ij = 1;
+    }
+
+    if (univ_ij > univ_ncell_near) {
+	/* far */
+        //
+        for ( int iiy_s = 1; iiy_s <= iy_natom; iiy_s += max_iy_natom ) { // blocking
+    	    int  iiy_e = iiy_s + max_iy_natom - 1;
+	    if ( iiy_e > iy_natom ) iiy_e = iy_natom;
+
+	    // initialize force_iy at shared memory
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int  n   = (k % 3) + 1;
+	        int  iiy = (k / 3) + iiy_s;
+	        force_iy_smem(n, iiy-iiy_s+1) = 0.0;
+		int  iy = __ldg(&univ_iy_list(iiy,univ_ij)); /* */
+		coord_pbc_smem(n, iiy-iiy_s+1) = __ldg(&coord_pbc(n, iy, j));
+	    }
+
+	    for ( int iix = id_thread_xx + 1; iix <= ix_natom; iix += num_thread_xx ) {
+	        int  ix = __ldg(&univ_ix_list(iix,univ_ij));
+
+	        REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i)) + __ldg(&cell_move(1,j,i))*system_x;
+	        REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i)) + __ldg(&cell_move(2,j,i))*system_y;
+	        REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i)) + __ldg(&cell_move(3,j,i))*system_z;
+	        REAL  iqtmp   = __ldg(&charge(ix,i));
+	        int   iatmcls = __ldg(&atmcls(ix,i));
+
+			// FEP
+	        int   fg1     = __ldg(&fepgrp(ix,i));
+
+	        force_local(1) = 0.0;
+	        force_local(2) = 0.0;
+	        force_local(3) = 0.0;
+
+	        for ( int iiy = id_thread_xy + iiy_s; iiy <= iiy_e; iiy += num_thread_xy ) {
+				int  iy = __ldg(&univ_iy_list(iiy,univ_ij)); /* */
+
+				REAL  grad_coef = 0.0;
+				REAL  dij1 = 0.0;
+				REAL  dij2 = 0.0;
+				REAL  dij3 = 0.0;
+				REAL  rij2;
+
+				// FEP
+				int fg2 = __ldg(&fepgrp(iy,j));
+
+				if ((int)__ldg(&table_nonb_lambda(5,fg1,fg2))) {
+
+				// dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+				// dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+				// dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+				dij1 = rtmp1 - coord_pbc_smem(1,iiy-iiy_s+1);
+				dij2 = rtmp2 - coord_pbc_smem(2,iiy-iiy_s+1);
+				dij3 = rtmp3 - coord_pbc_smem(3,iiy-iiy_s+1);
+				rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+
+				if ( rij2 < cutoff2 ) {
+
+					// FEP
+					REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+					REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+					REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+					REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+					REAL  jqtmp   = __ldg(&charge(iy,j));
+					int   jatmcls = __ldg(&atmcls(iy,j));
+					REAL  lj12 = __ldg(&nonb_lj12(jatmcls,iatmcls));
+					REAL  lj6  = __ldg(&nonb_lj6( jatmcls,iatmcls));
+
+					rij2 = cutoff2 * density / rij2_sc_lj;
+					int   L  = int(rij2);
+					REAL  R  = rij2 - L;
+					int   L1 = 3*L - 2;
+					REAL  tg0  = __ldg(&table_grad(L1  ));
+					REAL  tg1  = __ldg(&table_grad(L1+1));
+					REAL  tg3  = __ldg(&table_grad(L1+3));
+					REAL  tg4  = __ldg(&table_grad(L1+4));
+					REAL  term_lj12 = tg0 + R*(tg3-tg0);
+					REAL  term_lj6  = tg1 + R*(tg4-tg1);
+
+					rij2 = cutoff2 * density / rij2_sc_el;
+					L  = int(rij2);
+					R  = rij2 - L;
+					L1 = 3*L - 2;
+					REAL  tg2  = __ldg(&table_grad(L1+2));
+					REAL  tg5  = __ldg(&table_grad(L1+5));
+					REAL  term_elec = tg2 + R*(tg5-tg2);
+
+					grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+				}
+				}
+
+				REAL  work1 = grad_coef*dij1;
+				REAL  work2 = grad_coef*dij2;
+				REAL  work3 = grad_coef*dij3;
+
+				force_local(1) -= work1;
+				force_local(2) -= work2;
+				force_local(3) -= work3;
+
+				// update force_iy(:,iiy) at smem
+				WARP_RSUM_345( work1 );
+				WARP_RSUM_345( work2 );
+				WARP_RSUM_345( work3 );
+				if ( id_thread_xx == 0 ) {
+					force_iy_smem(1,iiy-iiy_s+1) += work1;
+					force_iy_smem(2,iiy-iiy_s+1) += work2;
+					force_iy_smem(3,iiy-iiy_s+1) += work3;
+				}
+				}
+
+	        // update virial
+                if ( check_virial_ij != 0 ) {
+                    sumval(1) += force_local(1);
+                    sumval(2) += force_local(2);
+                    sumval(3) += force_local(3);
+                }
+
+	        // update force(:,:,i)
+	        WARP_RSUM_12( force_local(1) );
+	        WARP_RSUM_12( force_local(2) );
+	        WARP_RSUM_12( force_local(3) );
+	        if ( id_thread_xy == 0 ) {
+		    if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+		    if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+		    if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+	        }
+	    }
+
+	    // __syncthreads();
+
+	    // update force(:,:,j)
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int   n   = (k % 3) + 1;
+	        int   iiy = (k / 3) + iiy_s;
+	        int   iy  = __ldg(&univ_iy_list(iiy,univ_ij));
+	        REAL  val = force_iy_smem(n,iiy-iiy_s+1);
+	        if ( val != 0.0 ) atomicAdd( &(force(n,iy,j)), val );
+	    }
+
+        }
+    }
+    else {
+	/* near */
+        //
+        for ( int iiy_s = 1; iiy_s <= iy_natom; iiy_s += max_iy_natom ) { // blocking
+    	    int  iiy_e = iiy_s + max_iy_natom - 1;
+	    if ( iiy_e > iy_natom ) iiy_e = iy_natom;
+
+	    // initialize force_iy at shared memory
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int  n   = (k % 3) + 1;
+	        int  iiy = (k / 3) + iiy_s;
+	        force_iy_smem(n, iiy-iiy_s+1) = 0.0;
+		int  iy = __ldg(&univ_iy_list(iiy,univ_ij)); /* */
+		coord_pbc_smem(n, iiy-iiy_s+1) = __ldg(&coord_pbc(n, iy,j));
+	    }
+
+	    for ( int iix = id_thread_xx + 1; iix <= ix_natom; iix += num_thread_xx ) {
+		int  ix = __ldg(&univ_ix_list(iix,univ_ij));
+
+		REAL  rtmp1   = __ldg(&coord_pbc(1,ix,i)) + __ldg(&cell_move(1,j,i))*system_x;
+		REAL  rtmp2   = __ldg(&coord_pbc(2,ix,i)) + __ldg(&cell_move(2,j,i))*system_y;
+		REAL  rtmp3   = __ldg(&coord_pbc(3,ix,i)) + __ldg(&cell_move(3,j,i))*system_z;
+		REAL  iqtmp   = __ldg(&charge(ix,i));
+		int   iatmcls = __ldg(&atmcls(ix,i));
+
+		// FEP
+		int   fg1     = __ldg(&fepgrp(ix,i));
+
+		force_local(1) = 0.0;
+		force_local(2) = 0.0;
+		force_local(3) = 0.0;
+
+		int   idx0 = (ix-1) * univ_natom_max;
+
+		for ( int iiy = id_thread_xy + iiy_s; iiy <= iiy_e; iiy += num_thread_xy ) {
+		    int  iy = __ldg(&univ_iy_list(iiy,univ_ij));
+
+		    REAL  grad_coef = 0.0;
+		    REAL  dij1 = 0.0;
+		    REAL  dij2 = 0.0;
+		    REAL  dij3 = 0.0;
+		    REAL  rij2;
+
+			// FEP
+			int fg2 = __ldg(&fepgrp(iy,j));
+
+		    // int idx = iy + (ix-1)*univ_natom_max;
+		    int  idx = iy + idx0;
+			if (univ_mask2(idx,univ_ij)&&((int)__ldg(&table_nonb_lambda(5,fg1,fg2)))) {
+		    
+				// dij1 = rtmp1 - __ldg(&coord_pbc(1,iy,j));
+				// dij2 = rtmp2 - __ldg(&coord_pbc(2,iy,j));
+				// dij3 = rtmp3 - __ldg(&coord_pbc(3,iy,j));
+				dij1 = rtmp1 - coord_pbc_smem(1,iiy-iiy_s+1);
+				dij2 = rtmp2 - coord_pbc_smem(2,iiy-iiy_s+1);
+				dij3 = rtmp3 - coord_pbc_smem(3,iiy-iiy_s+1);
+				rij2 = dij1*dij1 + dij2*dij2 + dij3*dij3;
+
+				if ( rij2 < cutoff2 ) {
+
+					// FEP
+					REAL lamblj = __ldg(&table_nonb_lambda(1,fg1,fg2));
+					REAL lambel = __ldg(&table_nonb_lambda(2,fg1,fg2));
+					REAL rij2_sc_lj = rij2 + __ldg(&table_nonb_lambda(3,fg1,fg2));
+					REAL rij2_sc_el = rij2 + __ldg(&table_nonb_lambda(4,fg1,fg2));
+
+					REAL  jqtmp   = __ldg(&charge(iy,j));
+					int   jatmcls = __ldg(&atmcls(iy,j));
+					REAL  lj12 = __ldg(&nonb_lj12(jatmcls,iatmcls));
+					REAL  lj6  = __ldg(&nonb_lj6( jatmcls,iatmcls));
+
+					rij2 = cutoff2 * density / rij2_sc_lj;
+					int   L  = int(rij2);
+					REAL  R  = rij2 - L;
+					int   L1 = 3*L - 2;
+					REAL  tg0  = __ldg(&table_grad(L1  ));
+					REAL  tg1  = __ldg(&table_grad(L1+1));
+					REAL  tg3  = __ldg(&table_grad(L1+3));
+					REAL  tg4  = __ldg(&table_grad(L1+4));
+					REAL  term_lj12 = tg0 + R*(tg3-tg0);
+					REAL  term_lj6  = tg1 + R*(tg4-tg1);
+
+					rij2 = cutoff2 * density / rij2_sc_el;
+					L  = int(rij2);
+					R  = rij2 - L;
+					L1 = 3*L - 2;
+					REAL  tg2  = __ldg(&table_grad(L1+2));
+					REAL  tg5  = __ldg(&table_grad(L1+5));
+					REAL  term_elec = tg2 + R*(tg5-tg2);
+
+					grad_coef = lamblj*(term_lj12*lj12 - term_lj6*lj6) + lambel*iqtmp*jqtmp*term_elec;
+				}
+			}
+		    REAL  work1 = grad_coef*dij1;
+		    REAL  work2 = grad_coef*dij2;
+		    REAL  work3 = grad_coef*dij3;
+
+		    force_local(1) -= work1;
+		    force_local(2) -= work2;
+		    force_local(3) -= work3;
+
+		    // update force_iy(:,iiy) at smem
+		    WARP_RSUM_345( work1 );
+		    WARP_RSUM_345( work2 );
+		    WARP_RSUM_345( work3 );
+		    if ( id_thread_xx == 0 ) {
+			force_iy_smem(1,iiy-iiy_s+1) += work1;
+			force_iy_smem(2,iiy-iiy_s+1) += work2;
+			force_iy_smem(3,iiy-iiy_s+1) += work3;
+		    }
+		}
+
+		// update virial
+                if ( check_virial_ij != 0 ) {
+                    sumval(1) += force_local(1);
+                    sumval(2) += force_local(2);
+                    sumval(3) += force_local(3);
+                }
+
+		// update force(:,:,i)
+		WARP_RSUM_12( force_local(1) );
+		WARP_RSUM_12( force_local(2) );
+		WARP_RSUM_12( force_local(3) );
+		if ( id_thread_xy == 0 ) {
+		    if ( force_local(1) != 0.0 ) atomicAdd( &(force(1,ix,i)), force_local(1) );
+		    if ( force_local(2) != 0.0 ) atomicAdd( &(force(2,ix,i)), force_local(2) );
+		    if ( force_local(3) != 0.0 ) atomicAdd( &(force(3,ix,i)), force_local(3) );
+		}
+	    }
+
+	    // __syncthreads();
+
+	    // update force(:,:,j)
+	    for ( k = id_thread_x; k < 3 * (iiy_e - iiy_s + 1); k += num_thread_x ) {
+	        int   n   = (k % 3) + 1;
+	        int   iiy = (k / 3) + iiy_s;
+	        int   iy  = __ldg(&univ_iy_list(iiy,univ_ij));
+	        REAL  val = force_iy_smem(n,iiy-iiy_s+1);
+	        if ( val != 0.0 ) atomicAdd( &(force(n,iy,j)), val );
+	    }
+
+        }
+    }
+
+
+    // update virial
+    if (check_virial != 0) {
+        WARP_RSUM_12345( sumval(1) );  // virial(1)
+        WARP_RSUM_12345( sumval(2) );  // virial(2)
+        WARP_RSUM_12345( sumval(3) );  // virial(3)
+        if (id_thread_x < 3) {
+            int n = id_thread_x + 1;
+            if (n == 1) sumval(n) *= __ldg(&cell_move(n,j,i))*system_x;
+            if (n == 2) sumval(n) *= __ldg(&cell_move(n,j,i))*system_y;
+            if (n == 3) sumval(n) *= __ldg(&cell_move(n,j,i))*system_z;
+            ene_viri_mid(n,index) = sumval(n);
+        }
+    }
+}
+
+
 __global__ void kern_compute_force_nonbond_table_linear_univ_sum(
     double       *_ene_virial,
     const double *_ene_viri_mid,
@@ -2456,6 +3898,297 @@ void gpu_launch_compute_energy_nonbond_table_linear_univ(
 }
 
 
+// FEP
+// HO : energy calculation with linear lookup table for FEP
+void gpu_launch_compute_energy_nonbond_table_linear_univ_fep(
+    REAL    *_coord_pbc,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL    *_force,                   // ( 1:3, 1:MaxAtom, 1:ncell_all, 1:nthread )
+    double  *_ene_virial,
+    const double *_coord,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_trans1,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  *_charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_natom,               // ( 1:ncel_max )
+    const REAL  *_nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_table_ene,           // ( 1:6*cutoff_int )
+    const REAL  *_table_grad,          // ( 1:6*cutoff_int )
+	const REAL  *_table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   *_univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  *_univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near)
+    const int   *_univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   *_virial_check,        // ( 1:ncel_max, 1:ncel_max)
+    int   MaxAtom,
+    int   MaxAtomCls,
+    int   num_atom_cls,
+    int   ncel_local,
+    int   ncel_bound,
+    int   ncel_max,
+    int   cutoff_int,
+    int   univ_maxcell,
+    int   univ_maxcell1,
+    int   univ_ncell_nonzero,
+    int   univ_ncell_near,   
+    int   univ_update,
+    int   univ_mask2_size,
+    int   univ_natom_max,
+    int   check_virial,     
+    REAL  density,
+    REAL  cutoff2,
+    REAL  system_x,
+    REAL  system_y,
+    REAL  system_z
+    )
+{
+
+#ifdef DEBUG
+    printf( "[%s,%s,%d]\n", __FILE__, __func__, __LINE__ );
+    printf( "MaxAtom = %d\n", MaxAtom );
+    printf( "MaxAtomCls = %d\n", MaxAtomCls );
+    printf( "num_atom_cls = %d\n", num_atom_cls );
+    printf( "ncel_local = %d\n", ncel_local );
+    printf( "ncel_bound = %d\n", ncel_bound );
+    printf( "ncel_max   = %d\n", ncel_max );
+    printf( "cutoff_int = %d\n", cutoff_int );
+    printf( "univ_maxcell = %d\n", univ_maxcell );
+    printf( "univ_maxcell1 = %d\n", univ_maxcell1 );
+    printf( "univ_ncell_nonzero = %d\n", univ_ncell_nonzero );
+    printf( "univ_update = %d\n", univ_update );
+    printf( "check_virial = %d\n", check_virial );
+    printf( "cutoff2 = %lf\n", cutoff2 );
+#endif
+
+    static int first = 1;
+
+    // memory allocation
+    if ( first ) {
+        gpu_init_buffer_fep(
+            _coord_pbc,
+            _force,
+            _ene_virial,
+            _coord,
+            _trans1,
+            _cell_move,
+            _charge,
+            _atmcls,
+            _fepgrp,
+            _natom,
+            _nonb_lj12,
+            _nonb_lj6,
+            _table_ene,
+            _table_grad,
+			_table_nonb_lambda,
+            _univ_cell_pairlist1,
+            _univ_mask2,
+            _univ_ix_natom,
+            _univ_ix_list,
+            _univ_iy_natom,
+            _univ_iy_list,
+            _virial_check,
+            MaxAtom,
+            MaxAtomCls,
+            num_atom_cls,
+            ncel_local,
+            ncel_bound,
+            ncel_max,
+            cutoff_int,
+            univ_maxcell,
+            univ_maxcell1,
+            univ_ncell_near,
+            univ_mask2_size
+            );
+    }
+
+    // send data to GPU
+    gpu_memcpy_h2d_energy_fep(
+        _coord_pbc,
+        _force,
+        _ene_virial,
+        _coord,
+        _trans1,
+        _cell_move,
+        _charge,
+        _atmcls,
+        _fepgrp,
+        _natom,
+        _nonb_lj12,
+        _nonb_lj6,
+        _table_ene,
+        _table_grad,
+		_table_nonb_lambda,
+        _univ_cell_pairlist1,
+        _univ_mask2,
+        _univ_ix_natom,
+        _univ_ix_list,
+        _univ_iy_natom,
+        _univ_iy_list,
+        _univ_ij_sort_list,
+        _virial_check,
+        MaxAtom,
+        univ_maxcell,
+        univ_ncell_near,
+        univ_mask2_size,
+        univ_update,
+        check_virial,
+        first
+        );
+
+    first = 0;
+
+    // return; // debug
+
+    /* */
+    dim3  def_dim3(1,1,1);
+    dim3  num_block;
+    dim3  num_thread;
+    int  index_start, index_end;
+
+    /* */
+    num_block = def_dim3;
+    num_block.x = ncel_local + ncel_bound;
+    num_thread = def_dim3;
+    num_thread.x = 256;
+
+    /* coordinates in periodic boundary condition is written */
+    kern_compute_force_nonbond_table_linear_univ__coord_pbc<<< num_block, num_thread, 0, stream[0] >>>(
+        dev_coord_pbc,
+        dev_coord,
+        dev_trans1,
+        dev_natom,
+        MaxAtom,
+        ncel_local,
+        ncel_bound,
+        ncel_max );
+
+    /* energy/force calculation within a cell */
+    index_start = 1;
+    index_end  = ncel_local;
+    num_thread = def_dim3;
+    num_thread.x = 32; num_thread.y = 4;
+    assert( num_thread.x == 32 );
+    assert( num_thread.y ==  4 );
+    num_block = def_dim3;
+    num_block.x = DIVCEIL((index_end - index_start + 1), num_thread.y);
+
+    CUDA_CALL( cudaStreamWaitEvent( stream[0], event[1], 0 ) ); /* univ_mask2 1st copy */
+    CUDA_CALL( cudaStreamWaitEvent( stream[0], event[2], 0 ) ); /* univ_mask2 2nd copy */
+
+    // CUDA_CALL( cudaStreamSynchronize( stream[1] ) );
+
+    /* energy calculation */
+    kern_compute_energy_nonbond_table_linear_univ__energyforce_intra_cell_fep<<< num_block, num_thread, 0, stream[0] >>>(
+        dev_coord_pbc,
+        dev_force,
+        dev_ene_virial,
+        dev_ene_viri_mid,
+        dev_cell_move,
+        dev_charge,
+        dev_atmcls,
+        dev_fepgrp,
+        dev_natom,
+        dev_nonb_lj12,
+        dev_nonb_lj6,
+        dev_table_ene,
+        dev_table_grad,
+		dev_table_nonb_lambda,
+        dev_univ_cell_pairlist1,
+        dev_univ_mask2,
+        dev_univ_ix_natom,
+        dev_univ_ix_list,
+        dev_univ_iy_natom,
+        dev_univ_iy_list,
+        dev_univ_ij_sort_list,
+        MaxAtom,
+        MaxAtomCls,
+        num_atom_cls,
+        ncel_local,
+        ncel_bound,
+        ncel_max,
+        cutoff_int,
+        univ_maxcell,
+        univ_maxcell1,
+        univ_mask2_size,
+        univ_natom_max,
+        index_start, index_end,
+        density,
+        cutoff2 );
+
+    /* energy/force calculation between different near cells */
+    index_start = ncel_local + 1;
+    index_end = univ_ncell_nonzero;   
+    num_thread = def_dim3;
+    num_thread.x = 32; num_thread.y = 4;  /* do not change */
+    assert( num_thread.x == 32 );
+    assert( num_thread.y ==  4 );
+    num_block = def_dim3;
+    num_block.x = DIVCEIL((index_end - index_start + 1), num_thread.y);
+
+    int max_iy_natom = (SMEM_SIZE/sizeof(REAL)/3) / (num_thread.y*NUM_CTA__ENERGYFORCE_INTER_CELL);
+    max_iy_natom -= max_iy_natom % 4;
+
+    size_t  smem_size = num_thread.y * max_iy_natom * 3 * sizeof(REAL);
+
+    kern_compute_energy_nonbond_table_linear_univ__energyforce_inter_cell_fep<<< num_block, num_thread, smem_size, stream[0] >>>(
+	dev_coord_pbc,
+	dev_force,
+	dev_ene_virial,
+	dev_ene_viri_mid,
+	dev_cell_move,
+	dev_charge,
+	dev_atmcls,
+	dev_fepgrp,
+	dev_natom,
+	dev_nonb_lj12,
+	dev_nonb_lj6,
+	dev_table_ene,
+	dev_table_grad,
+	dev_table_nonb_lambda,
+	dev_univ_cell_pairlist1,
+        dev_univ_mask2,
+	dev_univ_ix_natom,
+	dev_univ_ix_list,
+	dev_univ_iy_natom,
+	dev_univ_iy_list,
+	dev_univ_ij_sort_list,
+	dev_virial_check,
+	MaxAtom,
+	MaxAtomCls,
+	num_atom_cls,
+	ncel_local,
+	ncel_bound,
+	ncel_max,
+	cutoff_int,
+	univ_maxcell,
+	univ_maxcell1,
+        univ_ncell_near,
+        univ_mask2_size,
+        univ_natom_max,
+	index_start, index_end, max_iy_natom,
+	density,
+	cutoff2,
+        system_x, system_y, system_z );
+    /* */
+    num_block = def_dim3;
+    num_thread = def_dim3;
+    num_thread.x = 32;
+    num_thread.y = 32;
+    kern_compute_energy_nonbond_table_linear_univ_energy_sum<<< num_block, num_thread, 0, stream[0] >>>(
+	dev_ene_virial,
+	dev_ene_viri_mid,
+	ncel_local,
+	ncel_max,
+	univ_maxcell,
+	univ_ncell_nonzero);
+
+}
+
+
 /*
  *
  */
@@ -2707,6 +4440,264 @@ void gpu_launch_compute_force_nonbond_table_linear_univ(
     
 }
 
+// FEP
+void gpu_launch_compute_force_nonbond_table_linear_univ_fep(
+    REAL    *_coord_pbc,               // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL    *_force,                   // ( 1:3, 1:MaxAtom, 1:ncell_all, 1:nthread )
+    double  *_ene_virial,              // ( 5 )
+    const double *_coord,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_trans1,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  *_charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_natom,               // ( 1:ncel_max )
+    const REAL  *_nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_table_grad,          // ( 1:6*cutoff_int )
+    const REAL  *_table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   *_univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  *_univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near )
+    const int   *_univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   *_virial_check,        // ( 1:univ_maxcell1 )
+    int   MaxAtom,
+    int   MaxAtomCls,
+    int   num_atom_cls,
+    int   ncel_local,
+    int   ncel_bound,
+    int   ncel_max,
+    int   cutoff_int,
+    int   univ_maxcell,
+    int   univ_maxcell1,
+    int	  univ_ncell_nonzero,
+    int	  univ_ncell_near,   
+    int	  univ_update,
+    int   univ_mask2_size,
+    int   univ_natom_max,
+    int   check_virial,
+    int   cpu_calc,
+    REAL  density,
+    REAL  cutoff2,
+    REAL  pairlistdist2,
+    int   univ_gpu_start,
+    REAL  system_x, 
+    REAL  system_y, 
+    REAL  system_z
+    )
+{
+#ifdef DEBUG
+    printf( "[%s,%s,%d]\n", __FILE__, __func__, __LINE__ );
+    printf( "MaxAtom = %d\n", MaxAtom );
+    printf( "MaxAtomCls = %d\n", MaxAtomCls );
+    printf( "num_atom_cls = %d\n", num_atom_cls );
+    printf( "ncel_local = %d\n", ncel_local );
+    printf( "ncel_bound = %d\n", ncel_bound );
+    printf( "ncel_max   = %d\n", ncel_max );
+    printf( "cutoff_int = %d\n", cutoff_int );
+    printf( "univ_maxcell = %d\n", univ_maxcell );
+    printf( "univ_maxcell1 = %d\n", univ_maxcell1 );
+    printf( "univ_ncell_nonzero = %d\n", univ_ncell_nonzero );
+    printf( "univ_update = %d\n", univ_update );
+    printf( "check_virial = %d\n", check_virial );
+    printf( "cutoff2 = %lf\n", cutoff2 );
+    printf( "pairlistdist2 = %lf\n", pairlistdist2 );
+#endif
+
+    gpu_memcpy_h2d_force_fep(
+	_coord_pbc,    
+	_force, 
+        _ene_virial,
+	_coord,     
+	_trans1,    
+	_cell_move, 
+	_charge,    
+	_atmcls,    
+	_fepgrp,    
+	_natom,     
+	_nonb_lj12,   
+	_nonb_lj6,    
+	_table_grad,  
+	_table_nonb_lambda,  
+	_univ_cell_pairlist1,
+        _univ_mask2,
+	_univ_ix_natom,
+	_univ_ix_list,
+	_univ_iy_natom,
+	_univ_iy_list,
+	_univ_ij_sort_list,
+        _virial_check,
+	MaxAtom,
+	univ_maxcell,
+        univ_ncell_near,
+        univ_mask2_size,
+	univ_update,
+	check_virial,
+	stream[0]
+	);
+
+    // return; // debug
+
+    /* */
+    dim3  def_dim3(1,1,1);
+    dim3  num_block;
+    dim3  num_thread;
+    int  index_s, index_e;
+
+    /* */
+    if ( flag_build_pairlist_on_GPU == 0 || univ_update == 0 ) {
+	num_block = def_dim3;
+	num_block.x = ncel_local + ncel_bound;
+	num_thread = def_dim3;
+	num_thread.x = 256;
+	kern_compute_force_nonbond_table_linear_univ__coord_pbc<<< num_block, num_thread, 0, stream[0] >>>(
+	    dev_coord_pbc,
+	    dev_coord,
+	    dev_trans1,
+	    dev_natom,
+	    MaxAtom,
+	    ncel_local,
+	    ncel_bound,
+	    ncel_max );
+    }
+
+    /* force calculation within a cell */
+    if ( cpu_calc == 0) index_s = 1;
+    if ( cpu_calc != 0) index_s = ncel_local + 1;
+    index_e = ncel_local;
+    num_thread = def_dim3;
+    num_thread.x = 32; num_thread.y = 4;
+    assert( num_thread.x == 32 );
+    assert( num_thread.y ==  4 );
+    num_block = def_dim3;
+    num_block.x = DIVCEIL((index_e - index_s + 1), num_thread.y); 
+
+    CUDA_CALL( cudaStreamWaitEvent( stream[0], event[1], 0 ) ); /* univ_mask2 1st copy */
+    CUDA_CALL( cudaStreamWaitEvent( stream[0], event[2], 0 ) ); /* univ_mask2 2nd copy */
+    // CUDA_CALL( cudaStreamSynchronize( stream[1] ) );
+
+    kern_compute_force_nonbond_table_linear_univ__force_intra_cell_fep<<< num_block, num_thread, 0, stream[0] >>>(
+	dev_coord_pbc,       
+	dev_force,
+        dev_ene_virial,
+        dev_ene_viri_mid,
+	dev_cell_move,    
+	dev_charge,       
+	dev_atmcls,       
+	dev_fepgrp,       
+	dev_natom,        
+	dev_nonb_lj12,    
+	dev_nonb_lj6,     
+	dev_table_grad,   
+	dev_table_nonb_lambda,   
+	dev_univ_cell_pairlist1,
+        dev_univ_mask2,
+	dev_univ_ix_natom,
+	dev_univ_ix_list,
+        dev_univ_iy_natom,
+	dev_univ_iy_list,
+	dev_univ_ij_sort_list,
+	MaxAtom,
+	MaxAtomCls,
+	num_atom_cls,
+	ncel_local,
+	ncel_bound,
+	ncel_max,
+	cutoff_int,
+	univ_maxcell,
+	univ_maxcell1,
+        univ_mask2_size,
+        univ_natom_max,
+	index_s, index_e,
+        check_virial,
+	density,
+	cutoff2,
+	pairlistdist2 );
+
+    /* force calculation between different cells */
+//  index_s = ncel_local + 1;
+//  index_e = univ_ncell_nonzero;
+    index_s = univ_gpu_start + 1;
+    index_e = univ_ncell_nonzero;
+    num_thread = def_dim3;
+    num_thread.x = 32; num_thread.y = 4;  /* do not change */
+    assert( num_thread.x == 32 );
+    assert( num_thread.y ==  4 );
+    num_block = def_dim3;
+    num_block.x = DIVCEIL((index_e - index_s + 1), num_thread.y);
+
+    // int max_iy_natom = (SMEM_SIZE/sizeof(REAL)/3) / (num_thread.y*NUM_CTA__FORCE_INTER_CELL);
+    int max_iy_natom = SMEM_SIZE / (num_thread.y*NUM_CTA__FORCE_INTER_CELL) / (sizeof(REAL)*6);
+    max_iy_natom -= max_iy_natom % 4;
+    // if ( max_iy_natom > 32 ) max_iy_natom = 32;
+
+    // size_t  smem_size = num_thread.y * max_iy_natom * 3 * sizeof(REAL);
+    size_t smem_size = num_thread.y * sizeof(REAL) * (max_iy_natom*6);
+    // printf( "max_iy_natom: %d, smem_size: %d\n", max_iy_natom, smem_size ); /* debug */
+  
+    kern_compute_force_nonbond_table_linear_univ__force_inter_cell_fep<<< num_block, num_thread, smem_size, stream[0] >>>(
+	dev_coord_pbc,       
+	dev_force,
+	dev_ene_virial,
+	dev_ene_viri_mid,
+	dev_cell_move,    
+	dev_charge,       
+	dev_atmcls,       
+	dev_fepgrp,       
+	dev_natom,        
+	dev_nonb_lj12,    
+	dev_nonb_lj6,     
+	dev_table_grad,   
+	dev_table_nonb_lambda,   
+	dev_univ_cell_pairlist1,
+        dev_univ_mask2,
+	dev_univ_ix_natom,
+	dev_univ_ix_list,
+	dev_univ_iy_natom,
+	dev_univ_iy_list,
+	dev_univ_ij_sort_list,
+	dev_virial_check,
+	MaxAtom,
+	MaxAtomCls,
+	num_atom_cls,
+	ncel_local,
+	ncel_bound,
+	ncel_max,
+	cutoff_int,
+	univ_maxcell,
+	univ_maxcell1,
+        univ_ncell_near,
+        univ_mask2_size,
+        univ_natom_max,
+	index_s, index_e, max_iy_natom,
+	check_virial,
+	density,
+	cutoff2,
+	pairlistdist2,
+        system_x, system_y, system_z );
+
+    if (check_virial != 0) {
+       num_block = def_dim3;
+       num_thread = def_dim3;
+       num_thread.x = 32;
+       num_thread.y = 32;
+
+       kern_compute_force_nonbond_table_linear_univ_sum<<< num_block, num_thread, 0, stream[0] >>>(
+               dev_ene_virial,
+               dev_ene_viri_mid,
+               ncel_local,
+               ncel_max,
+               univ_maxcell,
+               univ_gpu_start,
+               univ_ncell_nonzero);
+    }
+    
+}
+
+
 /*
  * wapper function called from fortran subroutine
  */
@@ -2771,6 +4762,103 @@ void gpu_launch_compute_energy_nonbond_table_linear_univ_(
         _nonb_lj6,
         _table_ene,
         _table_grad,
+        _univ_cell_pairlist1,
+        _univ_mask2,
+        _univ_ix_natom,
+        _univ_ix_list,
+        _univ_iy_natom,
+        _univ_iy_list,
+        _univ_ij_sort_list,
+        _virial_check,
+        *_MaxAtom,
+        *_MaxAtomCls,
+        *_num_atom_cls,
+        *_ncel_local,
+        *_ncel_bound,
+        *_ncel_max,
+        *_cutoff_int,
+        *_univ_maxcell,
+        *_univ_maxcell1,
+        *_univ_ncell_nonzero,
+        *_univ_ncell_near,
+        *_univ_update,
+        *_univ_mask2_size,
+        *_univ_natom_max,
+        *_maxcell,
+        *_density,
+        *_cutoff2,
+        *_system_x, *_system_y, *_system_z
+        );
+}
+
+
+// FEP
+// wapper function called from fortran subroutine
+extern "C"
+void gpu_launch_compute_energy_nonbond_table_linear_univ_fep_(
+    REAL        *_coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        *_force,               // ( 1:3, 1:MaxAtom, 1:ncell_all )
+    double      *_ene_virial,
+    const double *_coord,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_trans1,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  *_charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_natom,               // ( 1:ncel_max )
+    const REAL  *_nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_table_ene,           // ( 1:6*cutoff_int )
+    const REAL  *_table_grad,          // ( 1:6*cutoff_int )
+	const REAL  *_table_nonb_lambda,   // ( 1:5, 1:5, 1:5)
+    const int   *_univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  *_univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near)
+    const int   *_univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   *_virial_check,        // ( 1:ncel_max, 1:ncel_max)
+    int  *_MaxAtom,
+    int  *_MaxAtomCls,
+    int  *_num_atom_cls,
+    int  *_ncel_local,
+    int  *_ncel_bound,
+    int  *_ncel_max,
+    int  *_cutoff_int,
+    int  *_univ_maxcell,
+    int  *_univ_maxcell1,
+    int  *_univ_ncell_nonzero,
+    int  *_univ_ncell_near,
+    int  *_univ_update,
+    int  *_univ_mask2_size,
+    int  *_univ_natom_max,
+    int  *_maxcell,
+    REAL *_density,
+    REAL *_cutoff2,
+    REAL *_system_x,
+    REAL *_system_y,
+    REAL *_system_z
+    )
+{
+    gpu_init();
+
+    gpu_launch_compute_energy_nonbond_table_linear_univ_fep(
+        _coord_pbc,
+        _force,
+        _ene_virial,
+        _coord,
+        _trans1,
+        _cell_move,
+        _charge,
+        _atmcls,
+		_fepgrp,
+        _natom,
+        _nonb_lj12,
+        _nonb_lj6,
+        _table_ene,
+        _table_grad,
+		_table_nonb_lambda,
         _univ_cell_pairlist1,
         _univ_mask2,
         _univ_ix_natom,
@@ -2896,6 +4984,108 @@ void gpu_launch_compute_force_nonbond_table_linear_univ_(
         *_system_x, *_system_y, *_system_z
 	);
 }
+
+
+// FEP
+// wapper function called from fortran subroutine
+extern "C"
+void gpu_launch_compute_force_nonbond_table_linear_univ_fep_(
+    REAL        *_coord_pbc,           // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    REAL        *_force,               // ( 1:3, 1:MaxAtom, 1:ncell_all )
+    double      *_ene_virial,          // ( 5 )
+    const double *_coord,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_trans1,              // ( 1:3, 1:MaxAtom, 1:ncel_max )
+    const REAL  *_cell_move,           // ( 1:3, 1:ncel_max, 1:ncel_max )
+    const REAL  *_charge,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_atmcls,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_fepgrp,              // ( 1:MaxAtom, 1:ncel_max )
+    const int   *_natom,               // ( 1:ncel_max )
+    const REAL  *_nonb_lj12,           // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_nonb_lj6,            // ( 1:num_atom_cls, 1:num_atom_cls )
+    const REAL  *_table_grad,          // ( 1:6*cutoff_int )
+    const REAL  *_table_nonb_lambda,   // ( 1:5, 1:5, 1:5 )
+    const int   *_univ_cell_pairlist1, // ( 1:2, 1:univ_maxcell )
+    const char  *_univ_mask2,          // ( 1:univ_mask2_size, 1:univ_ncell_near)
+    const int   *_univ_ix_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_ix_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_iy_natom,       // ( 1:univ_maxcell1 )
+    const uchar *_univ_iy_list,        // ( 1:MaxAtom, 1:univ_maxcell1 )
+    const int   *_univ_ij_sort_list,   // ( 1:univ_maxcell1 )
+    const int   *_virial_check,        // ( 1:univ_maxcell1 )
+    int  *_MaxAtom,
+    int  *_MaxAtomCls,
+    int  *_num_atom_cls,
+    int  *_ncel_local,
+    int  *_ncel_bound,
+    int  *_ncel_max,
+    int  *_cutoff_int,
+    int  *_univ_maxcell,
+    int  *_univ_maxcell1,
+    int	 *_univ_ncell_nonzero,
+    int	 *_univ_ncell_near,
+    int	 *_univ_update,
+    int  *_univ_mask2_size,
+    int  *_univ_natom_max,
+    int  *_check_virial,
+    int  *_cpu_calc,
+    REAL *_density,
+    REAL *_cutoff2,
+    REAL *_pairlistdist2,
+    int  *_univ_gpu_start,
+    REAL *_system_x,
+    REAL *_system_y,
+    REAL *_system_z
+    )
+{
+    gpu_init();
+
+    gpu_launch_compute_force_nonbond_table_linear_univ_fep(
+	_coord_pbc,
+	_force, 
+        _ene_virial,
+	_coord,     
+	_trans1,    
+	_cell_move, 
+	_charge,    
+	_atmcls,    
+	_fepgrp,    
+	_natom,     
+	_nonb_lj12,   
+	_nonb_lj6,    
+	_table_grad,  
+	_table_nonb_lambda,  
+	_univ_cell_pairlist1,
+        _univ_mask2,
+	_univ_ix_natom,
+	_univ_ix_list,
+        _univ_iy_natom,
+	_univ_iy_list,
+	_univ_ij_sort_list,
+	_virial_check,
+	*_MaxAtom,
+	*_MaxAtomCls,
+	*_num_atom_cls,
+	*_ncel_local,
+	*_ncel_bound,
+	*_ncel_max,
+	*_cutoff_int,
+	*_univ_maxcell,
+	*_univ_maxcell1,
+	*_univ_ncell_nonzero,
+	*_univ_ncell_near,
+	*_univ_update,
+        *_univ_mask2_size,
+        *_univ_natom_max,
+	*_check_virial,
+        *_cpu_calc,
+	*_density,
+	*_cutoff2,
+	*_pairlistdist2,
+        *_univ_gpu_start,
+        *_system_x, *_system_y, *_system_z
+	);
+}
+
 
 /*
  *
@@ -4699,3 +6889,20 @@ void gpu_alocate_packdata_(
 }
 
 
+// FEP
+void gpu_upload_table_nonb_lambda( const REAL *_table_nonb_lambda ) {
+  if ( dev_table_nonb_lambda != NULL ) {
+    // upload only if the array is allocated
+    CUDA_CALL( cudaMemcpy( dev_table_nonb_lambda, _table_nonb_lambda, size_table_nonb_lambda,
+                           cudaMemcpyHostToDevice ) );
+  }
+}
+
+// FEP
+// HO : upload table_nonb_lambda if necessary
+extern "C"
+void gpu_upload_table_nonb_lambda_( const REAL *_table_nonb_lambda) {
+  gpu_init();
+
+  gpu_upload_table_nonb_lambda( _table_nonb_lambda );
+}

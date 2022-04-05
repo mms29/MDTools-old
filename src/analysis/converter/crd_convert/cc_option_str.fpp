@@ -25,18 +25,18 @@ module cc_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical             :: check_only
-    integer             :: trjout_format
-    integer             :: trjout_type
-    character(MaxLine)  :: trjout_atom_exp
-    type(s_selatoms)    :: trjout_atom
-    type(s_selatoms)    :: trjout_atom_trj
-    logical             :: centering
-    character(MaxLine)  :: centering_atom_exp
-    type(s_selatoms)    :: centering_atom
-    real(wp)            :: center_coord(3)
-    logical             :: split_trjpdb
-    integer             :: pbcc_mode
+    logical                :: check_only
+    integer                :: trjout_format
+    integer                :: trjout_type
+    character(MaxLineLong) :: trjout_atom_exp
+    type(s_selatoms)       :: trjout_atom
+    type(s_selatoms)       :: trjout_atom_trj
+    logical                :: centering
+    character(MaxLineLong) :: centering_atom_exp
+    type(s_selatoms)       :: centering_atom
+    real(wp)               :: center_coord(3)
+    logical                :: split_trjpdb
+    integer                :: pbcc_mode
 
   end type s_option
 

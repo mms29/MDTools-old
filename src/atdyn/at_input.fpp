@@ -17,6 +17,8 @@ module at_input_mod
 
   use at_remd_str_mod
   use at_rpath_str_mod
+  use fileio_table_mod
+  use fileio_mode_mod
   use fileio_grocrd_mod
   use fileio_grotop_mod
   use fileio_ambcrd_mod
@@ -31,6 +33,7 @@ module at_input_mod
   use fileio_pdb_mod
   use fileio_mode_mod
   use fileio_eef1_mod
+  use fileio_morph_mod
   use fileio_spot_mod
   use fileio_control_mod
   use fileio_rstmep_mod
@@ -43,26 +46,29 @@ module at_input_mod
 
   ! structures
   type, public :: s_inp_info
-    character(MaxFilename) :: topfile    = ''
-    character(MaxFilename) :: parfile    = ''
-    character(MaxFilename) :: strfile    = ''
-    character(MaxFilename) :: gprfile    = ''
-    character(MaxFilename) :: psffile    = ''
-    character(MaxFilename) :: prmtopfile = ''
-    character(MaxFilename) :: grotopfile = ''
-    character(MaxFilename) :: pdbfile    = ''
-    character(MaxFilename) :: crdfile    = ''
-    character(MaxFilename) :: ambcrdfile = ''
-    character(MaxFilename) :: grocrdfile = ''
-    character(MaxFilename) :: rstfile    = ''
-    character(MaxFilename) :: reffile    = ''
-    character(MaxFilename) :: fitfile    = ''
-    character(MaxFilename) :: ambreffile = ''
-    character(MaxFilename) :: groreffile = ''
-    character(MaxFilename) :: modefile   = ''
-    character(MaxFilename) :: rstmepfile = ''
-    character(MaxFilename) :: eef1file   = ''
-    character(MaxFilename) :: spotfile   = ''
+    character(MaxFilenameLong) :: topfile    = ''
+    character(MaxFilenameLong) :: parfile    = ''
+    character(MaxFilenameLong) :: strfile    = ''
+    character(MaxFilename)     :: gprfile    = ''
+    character(MaxFilename)     :: psffile    = ''
+    character(MaxFilename)     :: prmtopfile = ''
+    character(MaxFilename)     :: grotopfile = ''
+    character(MaxFilename)     :: pdbfile    = ''
+    character(MaxFilename)     :: crdfile    = ''
+    character(MaxFilename)     :: ambcrdfile = ''
+    character(MaxFilename)     :: grocrdfile = ''
+    character(MaxFilename)     :: rstfile    = ''
+    character(MaxFilename)     :: reffile    = ''
+    character(MaxFilename)     :: fitfile    = ''
+    character(MaxFilename)     :: ambreffile = ''
+    character(MaxFilename)     :: groreffile = ''
+    character(MaxFilename)     :: modefile   = ''
+    character(MaxFilename)     :: rstmepfile = ''
+    character(MaxFilename)     :: eef1file   = ''
+    character(MaxFilename)     :: tablefile  = ''
+    character(MaxFilename)     :: morphfile  = ''
+    character(MaxFilename)     :: spotfile   = ''
+    character(MaxFilename)     :: minfofile   = ''
   end type s_inp_info
 
   ! subroutines
@@ -72,6 +78,9 @@ module at_input_mod
   public  :: input_min
   public  :: input_remd
   public  :: input_rpath
+  public  :: input_bd
+  public  :: input_morph
+  public  :: input_rpath_resetup
   private :: include_id_to_filename
 
 contains
@@ -127,6 +136,8 @@ contains
         write(MsgOut,'(A)') '# grotopfile = sample.top   # GROMACS parameter topology file'
         write(MsgOut,'(A)') '# grocrdfile = sample.crd   # GROMACS coordinate file'
         write(MsgOut,'(A)') '# groreffile = sample.crd   # reference GROMACS coordinate file'
+        write(MsgOut,'(A)') '##  Lookup table file'
+        write(MsgOut,'(A)') '# tablefile = sample.tbl    # lookup table file'
         write(MsgOut,'(A)') ' '
 
 
@@ -160,6 +171,8 @@ contains
         write(MsgOut,'(A)') '# grotopfile = sample.top   # GROMACS parameter topology file'
         write(MsgOut,'(A)') '# grocrdfile = sample.crd   # GROMACS coordinate file'
         write(MsgOut,'(A)') '# groreffile = sample.crd   # reference GROMACS coordinate file'
+        write(MsgOut,'(A)') '##  Minfo file for restart'
+        write(MsgOut,'(A)') '# minfofile = sample.minfo  # file obtained from a less number of vibatom'
         write(MsgOut,'(A)') ' '
 
 
@@ -176,6 +189,8 @@ contains
         write(MsgOut,'(A)') '# rstfile  = sample{}.rst    # restart file'
         write(MsgOut,'(A)') '# reffile  = sample.pdb      # reference for restraint'
         write(MsgOut,'(A)') '# eef1file = sample.inp     # solvation parameter file for EEF1/IMM1'
+        write(MsgOut,'(A)') '##  Lookup table file'
+        write(MsgOut,'(A)') '# tablefile = sample.tbl    # lookup table file'
         write(MsgOut,'(A)') '# spotfile = sample.xyz     # center of spherical potential'
         write(MsgOut,'(A)') ' '
 
@@ -210,10 +225,25 @@ contains
         write(MsgOut,'(A)') '# grotopfile = sample.top   # GROMACS parameter topology file'
         write(MsgOut,'(A)') '# grocrdfile = sample.crd   # GROMACS coordinate file'
         write(MsgOut,'(A)') '# groreffile = sample.crd   # reference GROMACS coordinate file'
-        write(MsgOut,'(A)') '##  Rpath (MEP, FEP)'
-        write(MsgOut,'(A)') '# rstmepfile = sample{}.rstmep  # restart file for MEP and FEP'
+        !write(MsgOut,'(A)') '##  Rpath (MEP, FEP)'
+        !write(MsgOut,'(A)') '# rstmepfile = sample{}.rstmep  # restart file for MEP and FEP'
         write(MsgOut,'(A)') ' '
 
+        write(MsgOut,'(A)') '##  Lookup table file'
+        write(MsgOut,'(A)') '# tablefile = sample.tbl    # lookup table file'
+        write(MsgOut,'(A)') ' '
+
+      case ('bd')
+
+        write(MsgOut,'(A)') '[INPUT]'
+        write(MsgOut,'(A)') '##  GROMACS Force Field'
+        write(MsgOut,'(A)') 'grotopfile = sample.top   # GROMACS parameter topology file'
+        write(MsgOut,'(A)') 'grocrdfile = sample.crd   # GROMACS coordinate file'
+        write(MsgOut,'(A)') '# groreffile = sample.crd   # reference GROMACS coordinate file'
+        write(MsgOut,'(A)') '##  Lookup table file'
+        write(MsgOut,'(A)') '# tablefile = sample.tbl    # lookup table file'
+        write(MsgOut,'(A)') 'morphfile = sample.mor     # morph file'
+        write(MsgOut,'(A)') ' '
 
       end select
 
@@ -260,6 +290,13 @@ contains
         write(MsgOut,'(A)') 'pdbfile  =  sample{}.pdb   # PDB file'
         write(MsgOut,'(A)') ' '
 
+      case ('bd')
+
+        write(MsgOut,'(A)') '[INPUT]'
+        write(MsgOut,'(A)') 'grotopfile = sample.top   # GROMACS parameter topology file'
+        write(MsgOut,'(A)') 'grocrdfile = sample.crd   # GROMACS coordinate file'
+        write(MsgOut,'(A)') '# morphfile = sample.mor      # Morph file'
+        write(MsgOut,'(A)') ' '
 
       end select
 
@@ -312,7 +349,10 @@ contains
     call read_ctrlfile_string(handle, Section, 'Modefile',  inp_info%modefile)
     call read_ctrlfile_string(handle, Section, 'rstmepfile',inp_info%rstmepfile)
     call read_ctrlfile_string(handle, Section, 'Eef1file',  inp_info%eef1file)
+    call read_ctrlfile_string(handle, Section, 'Tablefile', inp_info%tablefile)
+    call read_ctrlfile_string(handle, Section, 'Morphfile', inp_info%morphfile)
     call read_ctrlfile_string(handle, Section, 'Spotfile',  inp_info%spotfile)
+    call read_ctrlfile_string(handle, Section, 'minfofile', inp_info%minfofile)
 
     call end_ctrlfile_section(handle)
 
@@ -397,8 +437,20 @@ contains
         write(MsgOut,*) ' rstmepfile = ', trim(inp_info%rstmepfile)
       end if
 
+      if (inp_info%tablefile /= '') then
+        write(MsgOut,*) ' tablefile = ', trim(inp_info%tablefile)
+      end if
+
       if (inp_info%spotfile /= '') then
         write(MsgOut,*) ' spotfile = ', trim(inp_info%spotfile)
+      end if
+
+      if (inp_info%morphfile /= '') then
+        write(MsgOut,*) ' morphfile = ', trim(inp_info%morphfile)
+      end if
+
+      if (inp_info%minfofile /= '') then
+        write(MsgOut,*) ' minfofile = ', trim(inp_info%minfofile)
       end if
 
       write(MsgOut,'(A)') ' '
@@ -430,13 +482,14 @@ contains
   !! @param[out]   ambref   : information of refernece AMBER coordinate data
   !! @param[out]   groref   : information of refernece GROMACS coordinate data
   !! @param[out]   mode     : information of principal component vector
+  !! @param[out]   table    : information of lookup table data
   !! @param[out]   spot     : information of spherical potential
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine input_md(inp_info, top, par, gpr, psf, prmtop, grotop,       &
                       pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref, &
-                      mode, eef1, spot)
+                      mode, eef1, table, morph_in, spot)
 
     ! formal arguments
     type(s_inp_info),        intent(in)    :: inp_info
@@ -456,6 +509,8 @@ contains
     type(s_grocrd),          intent(inout) :: groref
     type(s_mode),            intent(inout) :: mode
     type(s_eef1),            intent(inout) :: eef1
+    type(s_table),           intent(inout) :: table
+    type(s_morph_in),        intent(inout) :: morph_in
     type(s_spot),            intent(inout) :: spot
 
 
@@ -469,9 +524,11 @@ contains
     call init_crd(crd)
     call init_ambcrd(ambcrd)
     call init_grocrd(grocrd)
+    call init_rst(rst)
     call init_pdb(ref)
     call init_ambcrd(ambref)
     call init_grocrd(groref)
+    call init_morph_in(morph_in)
 
     if (inp_info%topfile /= '') then
       call input_top(inp_info%topfile, top)
@@ -539,6 +596,14 @@ contains
 
     if (inp_info%eef1file /= '') then
       call input_eef1(inp_info%eef1file, eef1)
+    end if
+
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    if (inp_info%morphfile /= '') then
+      call input_morph_in(inp_info%morphfile, morph_in)
     end if
 
     if (inp_info%spotfile /= '') then
@@ -570,13 +635,14 @@ contains
   !! @param[out]   ambref   : information of refernece AMBER coordinate data
   !! @param[out]   groref   : information of refernece GROMACS coordinate data
   !! @param[out]   mode     : information of principal component vector
+  !! @param[out]   table    : information of lookup table data
   !! @param[out]   spot     : information of spherical potential
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine input_min(inp_info, top, par, gpr, psf, prmtop, grotop,       &
                        pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref, &
-                       mode, eef1, spot)
+                       mode, eef1, table, morph_in, spot)
 
     ! formal arguments
     type(s_inp_info),        intent(in)    :: inp_info
@@ -596,6 +662,8 @@ contains
     type(s_grocrd),          intent(inout) :: groref
     type(s_mode),            intent(inout) :: mode
     type(s_eef1),            intent(inout) :: eef1
+    type(s_table),           intent(inout) :: table
+    type(s_morph_in),        intent(inout) :: morph_in
     type(s_spot),            intent(inout) :: spot
 
 
@@ -609,9 +677,11 @@ contains
     call init_crd(crd)
     call init_ambcrd(ambcrd)
     call init_grocrd(grocrd)
+    call init_rst(rst)
     call init_pdb(ref)
     call init_ambcrd(ambref)
     call init_grocrd(groref)
+    call init_morph_in(morph_in)
 
     if (inp_info%topfile /= '') then
       call input_top(inp_info%topfile, top)
@@ -681,6 +751,14 @@ contains
       call input_eef1(inp_info%eef1file, eef1)
     end if
 
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    if (inp_info%morphfile /= '') then
+      call input_morph_in(inp_info%morphfile, morph_in)
+    end if
+
     if (inp_info%spotfile /= '') then
       call input_spot(inp_info%spotfile, spot)
     end if
@@ -710,13 +788,14 @@ contains
   !! @param[out]   ambref   : information of refernece AMBER coordinate data
   !! @param[out]   groref   : information of refernece GROMACS coordinate data
   !! @param[out]   mode     : information of principal component vector
+  !! @param[out]   table    : information of lookup table data
   !! @param[out]   spot     : information of spherical potential
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine input_remd(inp_info, top, par, gpr, psf, prmtop, grotop, pdb, &
                         crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
-                        mode, eef1, spot)
+                        mode, eef1, table, morph_in, spot)
 
     ! formal arguments
     type(s_inp_info),        intent(in)    :: inp_info
@@ -736,10 +815,13 @@ contains
     type(s_grocrd),          intent(inout) :: groref
     type(s_mode),            intent(inout) :: mode
     type(s_eef1),            intent(inout) :: eef1
+    type(s_table),           intent(inout) :: table
+    type(s_morph_in),        intent(inout) :: morph_in
     type(s_spot),            intent(inout) :: spot
 
     ! local variables
     character(MaxMultiFilename)            :: filename
+    character(MaxFilenameLong)             :: filename_long
 
 
     call init_top(top)
@@ -752,23 +834,25 @@ contains
     call init_crd(crd)
     call init_ambcrd(ambcrd)
     call init_grocrd(grocrd)
+    call init_rst(rst)
     call init_pdb(ref)
     call init_ambcrd(ambref)
     call init_grocrd(groref)
+    call init_morph_in(morph_in)
 
     if (inp_info%topfile /= '') then
-      filename = inp_info%topfile
-      call input_top(filename, top)
+      filename_long = inp_info%topfile
+      call input_top(filename_long, top)
     end if
 
     if (inp_info%parfile /= '') then
-      filename = inp_info%parfile
-      call input_par(filename, par, top)
+      filename_long = inp_info%parfile
+      call input_par(filename_long, par, top)
     end if
 
     if (inp_info%strfile /= '') then
-      filename = inp_info%strfile
-      call input_str(filename, top, par)
+      filename_long = inp_info%strfile
+      call input_str(filename_long, top, par)
     end if
 
     if (inp_info%gprfile /= '') then
@@ -845,6 +929,14 @@ contains
       call input_eef1(inp_info%eef1file, eef1)
     end if
 
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    if (inp_info%morphfile /= '') then
+      call input_morph_in(inp_info%morphfile, morph_in)
+    end if
+
     if (inp_info%spotfile /= '') then
       call input_spot(inp_info%spotfile, spot)
     end if
@@ -876,13 +968,14 @@ contains
   !! @param[out]   groref   : information of refernece GROMACS coordinate data
   !! @param[out]   mode     : information of principal component vector
   !! @param[out]   rstmep   : information of rpath
+  !! @param[out]   table    : information of lookup table data
   !! @param[out]   spot     : information of spherical potential
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine input_rpath(inp_info, top, par, gpr, psf, prmtop, grotop, pdb, &
                         crd, ambcrd, grocrd, rst, ref, fit, ambref,         &
-                        groref, mode, rstmep, eef1, spot)
+                        groref, mode, rstmep, eef1, table, morph_in, spot)
 
     ! formal arguments
     type(s_inp_info),        intent(in)    :: inp_info
@@ -904,10 +997,13 @@ contains
     type(s_mode),            intent(inout) :: mode
     type(s_rstmep),          intent(inout) :: rstmep
     type(s_eef1),            intent(inout) :: eef1
+    type(s_table),           intent(inout) :: table
+    type(s_morph_in),        intent(inout) :: morph_in
     type(s_spot),            intent(inout) :: spot
 
     ! local variables
     character(MaxMultiFilename)            :: filename
+    character(MaxFilenameLong)             :: filename_long
 
 
     call init_top(top)
@@ -920,24 +1016,26 @@ contains
     call init_crd(crd)
     call init_ambcrd(ambcrd)
     call init_grocrd(grocrd)
+    call init_rst(rst)
     call init_pdb(ref)
     call init_pdb(fit)
     call init_ambcrd(ambref)
     call init_grocrd(groref)
+    call init_morph_in(morph_in)
 
     if (inp_info%topfile /= '') then
-      filename = inp_info%topfile
-      call input_top(filename, top)
+      filename_long = inp_info%topfile
+      call input_top(filename_long, top)
     end if
 
     if (inp_info%parfile /= '') then
-      filename = inp_info%parfile
-      call input_par(filename, par, top)
+      filename_long = inp_info%parfile
+      call input_par(filename_long, par, top)
     end if
 
     if (inp_info%strfile /= '') then
-      filename = inp_info%strfile
-      call input_str(filename, top, par)
+      filename_long = inp_info%strfile
+      call input_str(filename_long, top, par)
     end if
 
     if (inp_info%gprfile /= '') then
@@ -1026,8 +1124,17 @@ contains
       call input_mode(filename, mode)
     end if
 
+
     if (inp_info%eef1file /= '') then
       call input_eef1(inp_info%eef1file, eef1)
+    end if
+
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    if (inp_info%morphfile /= '') then
+      call input_morph_in(inp_info%morphfile, morph_in)
     end if
 
     if (inp_info%spotfile /= '') then
@@ -1037,6 +1144,395 @@ contains
     return
 
   end subroutine input_rpath
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    input_rpath_resetup
+  !> @brief        read input data from files for the case "nreplica > nproc"
+  !! @authors      SI
+  !! @param[in]    inp_info : information of INPUT section control parameters
+  !! @param[out]   pdb      : information of coordinate data
+  !! @param[out]   crd      : information of coordinate data
+  !! @param[out]   ambcrd   : information of AMBER coordinate data
+  !! @param[out]   grocrd   : information of GROMACS coordinate data
+  !! @param[out]   rst      : information of restart data
+  !! @param[out]   ref      : information of reference coordinate data
+  !! @param[out]   fit      : information of fit coordinate data
+  !! @param[out]   ambref   : information of refernece AMBER coordinate data
+  !! @param[out]   groref   : information of refernece GROMACS coordinate data
+  !! @param[out]   mode     : information of principal component vector
+  !! @param[out]   rstmep   : information of rpath
+  !! @param[out]   spot     : information of spherical potential
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine input_rpath_resetup(inp_info, top, par, gpr, psf, &
+                                 prmtop, grotop, pdb, crd, ambcrd, grocrd, &
+                                 rst, ref, fit, ambref, groref, mode, rstmep, &
+                                 eef1, spot, rpath, rst_filename)
+
+    ! formal arguments
+    type(s_inp_info),        intent(inout) :: inp_info
+    type(s_top),             intent(inout) :: top
+    type(s_par),             intent(inout) :: par
+    type(s_gpr),             intent(inout) :: gpr
+    type(s_psf),             intent(inout) :: psf
+    type(s_prmtop),          intent(inout) :: prmtop
+    type(s_grotop),          intent(inout) :: grotop
+    type(s_pdb),             intent(inout) :: pdb
+    type(s_crd),             intent(inout) :: crd
+    type(s_ambcrd),          intent(inout) :: ambcrd
+    type(s_grocrd),          intent(inout) :: grocrd
+    type(s_rst),             intent(inout) :: rst
+    type(s_pdb),             intent(inout) :: ref
+    type(s_pdb),             intent(inout) :: fit
+    type(s_ambcrd),          intent(inout) :: ambref
+    type(s_grocrd),          intent(inout) :: groref
+    type(s_mode),            intent(inout) :: mode
+    type(s_rstmep),          intent(inout) :: rstmep
+    type(s_eef1),            intent(inout) :: eef1
+    type(s_spot),            intent(inout) :: spot
+    type(s_rpath),           intent(inout) :: rpath
+
+    character(MaxFilename),  intent(in)    :: rst_filename
+    ! local variables
+    character(MaxMultiFilename)            :: filename
+    character(MaxFilenameLong)             :: filename_long
+
+
+    call init_pdb(pdb)
+    call init_crd(crd)
+    call init_ambcrd(ambcrd)
+    call init_grocrd(grocrd)
+    call init_pdb(ref)
+    call init_ambcrd(ambref)
+    call init_grocrd(groref)
+
+    if (rpath%first_replica .and. rpath%first_iter) then
+      call init_top(top)
+      call init_par(par)
+      call init_gpr(gpr)
+      call init_psf(psf)
+      call init_pdb(fit)
+      call init_prmtop(prmtop)
+      call init_grotop(grotop)
+
+      if (inp_info%topfile /= '') then
+        filename_long = inp_info%topfile
+        call input_top(filename_long, top)
+      end if
+
+      if (inp_info%parfile /= '') then
+        filename_long = inp_info%parfile
+        call input_par(filename_long, par, top)
+      end if
+
+      if (inp_info%strfile /= '') then
+        filename_long = inp_info%strfile
+        call input_str(filename_long, top, par)
+      end if
+
+      if (inp_info%gprfile /= '') then
+        filename = inp_info%gprfile
+        call input_gpr(filename, gpr)
+      end if
+
+      if (inp_info%psffile /= '') then
+        filename = inp_info%psffile
+        call input_psf(filename, psf)
+      end if
+
+      if (inp_info%prmtopfile /= '') then
+        filename = inp_info%prmtopfile
+        call input_prmtop(filename, prmtop)
+      end if
+
+      if (inp_info%grotopfile /= '') then
+        filename = inp_info%grotopfile
+        call input_grotop(filename, grotop)
+      end if
+
+      if (inp_info%fitfile /= '') then
+        filename = inp_info%fitfile
+        call input_pdb(filename, fit)
+      end if
+
+      if (inp_info%eef1file /= '') then
+        call input_eef1(inp_info%eef1file, eef1)
+      end if
+
+      if (inp_info%spotfile /= '') then
+        call input_spot(inp_info%spotfile, spot)
+      end if
+      !rpath%first_replica = .false.
+    end if
+
+    if (inp_info%pdbfile /= '') then
+      filename = inp_info%pdbfile
+      call include_id_to_filename(filename)
+      call input_pdb(filename, pdb)
+    end if
+
+    if (inp_info%crdfile /= '') then
+      filename = inp_info%crdfile
+      call include_id_to_filename(filename)
+      call input_crd(filename, crd)
+    end if
+
+    if (inp_info%ambcrdfile /= '') then
+      filename = inp_info%ambcrdfile
+      call include_id_to_filename(filename)
+      call input_ambcrd(filename, ambcrd)
+    end if
+
+    if (inp_info%grocrdfile /= '') then
+      filename = inp_info%grocrdfile
+      call include_id_to_filename(filename)
+      call input_grocrd(filename, grocrd)
+    end if
+
+    rst%rstfile_type = RstfileTypeUndef
+    if (.not. rpath%first_iter) inp_info%rstfile = rst_filename
+    if (inp_info%rstfile /= '') then
+      filename = inp_info%rstfile
+      call include_id_to_filename(filename)
+      call input_rst(filename, rst)
+    end if
+
+    if (inp_info%reffile /= '') then
+      filename = inp_info%reffile
+      call include_id_to_filename(filename)
+      call input_pdb(filename, ref)
+    end if
+
+    if (inp_info%rstmepfile /= '') then
+      filename = inp_info%rstmepfile
+      call include_id_to_filename(filename)
+      call input_rstmep(filename, rstmep)
+    end if
+
+    if (inp_info%ambreffile /= '') then
+      filename = inp_info%ambreffile
+      call include_id_to_filename(filename)
+      call input_ambcrd(filename, ambref)
+    end if
+
+    if (inp_info%groreffile /= '') then
+      filename = inp_info%groreffile
+      call include_id_to_filename(filename)
+      call input_grocrd(filename, groref)
+    end if
+
+    if (inp_info%modefile /= '') then
+      filename = inp_info%modefile
+      call include_id_to_filename(filename)
+      call input_mode(filename, mode)
+    end if
+
+    return
+
+  end subroutine input_rpath_resetup
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    input_bd
+  !> @brief        read input data from files
+  !! @authors      TA
+  !! @param[in]    inp_info : information of INPUT section control parameters
+  !! @param[out]   grotop   : information of GROMACS parameter topology data
+  !! @param[out]   grocrd   : information of GROMACS coordinate data
+  !! @param[out]   groref   : information of refernece GROMACS coordinate data
+  !! @param[out]   rst      : information of restart data
+  !! @param[out]   table    : information of lookup table data
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine input_bd(inp_info, grotop, grocrd, groref, rst, table)
+
+    ! formal arguments
+    type(s_inp_info),        intent(in)    :: inp_info
+    type(s_grotop),          intent(inout) :: grotop
+    type(s_grocrd),          intent(inout) :: grocrd
+    type(s_grocrd),          intent(inout) :: groref
+    type(s_rst),             intent(inout) :: rst
+    type(s_table),           intent(inout) :: table
+
+
+    call init_grotop(grotop)
+    call init_grocrd(grocrd)
+    call init_grocrd(groref)
+    call init_rst(rst)
+
+    if (inp_info%grotopfile /= '') then
+      call input_grotop(inp_info%grotopfile, grotop)
+    end if
+
+    if (inp_info%grocrdfile /= '') then
+      call input_grocrd(inp_info%grocrdfile, grocrd)
+    end if
+
+    if (inp_info%groreffile /= '') then
+      call input_grocrd(inp_info%groreffile, groref)
+    end if
+
+    if (inp_info%rstfile /= '') then
+      call input_rst(inp_info%rstfile, rst)
+    end if
+
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    return
+
+  end subroutine input_bd
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    input_morph
+  !> @brief        read input data from files
+  !! @authors      TM, CK
+  !! @param[in]    inp_info : information of INPUT section control parameters
+  !! @param[out]   top      : information of CHARMM topology data
+  !! @param[out]   par      : information of CHARMM force field parameters
+  !! @param[out]   gpr      : information of GENESIS Go model parameters
+  !! @param[out]   psf      : information of Protein structure data
+  !! @param[out]   prmtop   : information of AMBER parameter topology data
+  !! @param[out]   grotop   : information of GROMACS parameter topology data
+  !! @param[out]   pdb      : information of coordinate data
+  !! @param[out]   crd      : information of coordinate data
+  !! @param[out]   ambcrd   : information of AMBER coordinate data
+  !! @param[out]   grocrd   : information of GROMACS coordinate data
+  !! @param[out]   rst      : information of restart data
+  !! @param[out]   ref      : information of reference coordinate data
+  !! @param[out]   ambref   : information of refernece AMBER coordinate data
+  !! @param[out]   groref   : information of refernece GROMACS coordinate data
+  !! @param[out]   mode 
+  !! @param[out]   morph    : information of morphing file
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine input_morph(inp_info, top, par, gpr, psf, prmtop, grotop,        &
+                       pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,  &
+                       mode, eef1, table, morph_in)
+
+    ! formal arguments
+    type(s_inp_info),        intent(in)    :: inp_info
+    type(s_top),             intent(inout) :: top
+    type(s_par),             intent(inout) :: par
+    type(s_gpr),             intent(inout) :: gpr
+    type(s_psf),             intent(inout) :: psf
+    type(s_prmtop),          intent(inout) :: prmtop
+    type(s_grotop),          intent(inout) :: grotop
+    type(s_pdb),             intent(inout) :: pdb
+    type(s_crd),             intent(inout) :: crd
+    type(s_ambcrd),          intent(inout) :: ambcrd
+    type(s_grocrd),          intent(inout) :: grocrd
+    type(s_rst),             intent(inout) :: rst
+    type(s_pdb),             intent(inout) :: ref
+    type(s_ambcrd),          intent(inout) :: ambref
+    type(s_grocrd),          intent(inout) :: groref
+    type(s_mode),            intent(inout) :: mode
+    type(s_eef1),            intent(inout) :: eef1
+    type(s_table),           intent(inout) :: table
+    type(s_morph_in),        intent(inout) :: morph_in
+
+
+    call init_top(top)
+    call init_par(par)
+    call init_gpr(gpr)
+    call init_psf(psf)
+    call init_prmtop(prmtop)
+    call init_grotop(grotop)
+    call init_pdb(pdb)
+    call init_crd(crd)
+    call init_ambcrd(ambcrd)
+    call init_grocrd(grocrd)
+    call init_pdb(ref)
+    call init_rst(rst)
+    call init_ambcrd(ambref)
+    call init_grocrd(groref)
+    call init_morph_in(morph_in)
+
+    if (inp_info%topfile /= '') then
+      call input_top(inp_info%topfile, top)
+    end if
+
+    if (inp_info%parfile /= '') then
+      call input_par(inp_info%parfile, par, top)
+    end if
+
+    if (inp_info%strfile /= '') then
+      call input_str(inp_info%strfile, top, par)
+    end if
+
+    if (inp_info%gprfile /= '') then
+      call input_gpr(inp_info%gprfile, gpr)
+    end if
+
+    if (inp_info%psffile /= '') then
+      call input_psf(inp_info%psffile, psf)
+    end if
+
+    if (inp_info%prmtopfile /= '') then
+      call input_prmtop(inp_info%prmtopfile, prmtop)
+    end if
+
+    if (inp_info%grotopfile /= '') then
+      call input_grotop(inp_info%grotopfile, grotop)
+    end if
+
+    if (inp_info%pdbfile /= '') then
+      call input_pdb(inp_info%pdbfile, pdb)
+    end if
+
+    if (inp_info%crdfile /= '') then
+      call input_crd(inp_info%crdfile, crd)
+    end if
+
+    if (inp_info%ambcrdfile /= '') then
+      call input_ambcrd(inp_info%ambcrdfile, ambcrd)
+    end if
+
+    if (inp_info%grocrdfile /= '') then
+      call input_grocrd(inp_info%grocrdfile, grocrd)
+    end if
+
+    if (inp_info%rstfile /= '') then
+      call input_rst(inp_info%rstfile, rst)
+    end if
+
+    if (inp_info%reffile /= '') then
+      call input_pdb(inp_info%reffile, ref)
+    end if
+
+    if (inp_info%ambreffile /= '') then
+      call input_ambcrd(inp_info%ambreffile, ambref)
+    end if
+
+    if (inp_info%groreffile /= '') then
+      call input_grocrd(inp_info%groreffile, groref)
+    end if
+
+    if (inp_info%modefile /= '') then
+      call input_mode(inp_info%modefile, mode)
+    end if
+
+    if (inp_info%eef1file /= '') then
+      call input_eef1(inp_info%eef1file, eef1)
+    end if
+
+    if (inp_info%tablefile /= '') then
+      call input_table(inp_info%tablefile, table)
+    end if
+
+    if (inp_info%morphfile /= '') then
+      call input_morph_in(inp_info%morphfile, morph_in)
+    end if
+
+    return
+
+  end subroutine input_morph
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1064,6 +1560,7 @@ contains
     ! define replica id
     !
     id = my_country_no + 1
+    if (nrep_per_proc > 1) id = my_replica_no
     do i = 1, 100
       comp = 10**i
       if (id < comp) then

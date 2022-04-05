@@ -21,6 +21,7 @@ module at_md_vverlet_mod
   use at_constraints_mod
   use at_boundary_mod
   use at_pairlist_mod
+  use at_energy_str_mod
   use at_energy_mod
   use at_output_str_mod
   use at_dynamics_str_mod
@@ -65,6 +66,7 @@ module at_md_vverlet_mod
   private :: bussi_barostat_vv1
   private :: bussi_barostat_vv2
   private :: simulated_annealing_vverlet
+  private :: update_qm_charge_vverlet
 
 
 contains
@@ -102,23 +104,27 @@ contains
 
     ! local variables
     real(wp)                  :: simtim, dt
+    real(wp)                  :: shrink_ratio_x, shrink_ratio_y, shrink_ratio_z 
     integer                   :: i, j, natom
     integer                   :: nsteps, istart, iend
+    integer                   :: count_qm
 
-    real(wp),         pointer :: coord(:,:), coord_ref(:,:)
+    real(wp),         pointer :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
     real(wp),         pointer :: vel(:,:), vel_ref(:,:)
     real(wp),         pointer :: force(:,:), mass(:), inv_mass(:)
+    real(wp),         pointer :: force_omp(:,:,:)
     character(256)            :: folder,basename
     character                 :: num*9
-    logical                   :: savefile
 
     integer :: icount
 
     mass      => molecule%mass
     inv_mass  => molecule%inv_mass
     coord     => dynvars%coord
+    coord_pbc => dynvars%coord_pbc
     coord_ref => dynvars%coord_ref
     force     => dynvars%force
+    force_omp => dynvars%force_omp
     vel       => dynvars%velocity
     vel_ref   => dynvars%velocity_ref
 
@@ -145,6 +151,11 @@ contains
     if (.not. dynamics%restart) then
       call initial_vverlet(output, molecule, enefunc, dynamics, pairlist, &
                            boundary, ensemble, constraints, dynvars)
+    else
+      ! Remove velocity of fixed atoms
+      ! 
+      if (constraints%num_fixatm > 0) &
+        call clear_fixatm_component(constraints, natom, dynvars%velocity)
     end if
 
     !
@@ -156,14 +167,12 @@ contains
       call error_msg('Vverlet_dynamics> Barostats are not allowed in ATDYN')
 
 
-#ifdef KCOMP
-    ! Start performance check on K computer
-    !
-    call fpcoll_start()
-#endif
-
     ! Reset qm_count
-    if(enefunc%qmmm%do_qmmm) enefunc%qmmm%qm_count = istart
+    ! 
+    if(enefunc%qmmm%do_qmmm) then 
+      count_qm = 0
+      enefunc%qmmm%qm_count = istart
+    end if
 
     ! Main MD loop
     ! at this point
@@ -242,11 +251,15 @@ contains
                           mod(i,dynamics%eneout_period) == 0,    &
                           enefunc%nonb_limiter,  &
                           dynvars%coord,         &
+                          dynvars%trans,         &
+                          dynvars%coord_pbc,     &
                           dynvars%energy,        &
                           dynvars%temporary,     &
                           dynvars%force,         &
+                          dynvars%force_omp,     &
                           dynvars%virial,        &
-                          dynvars%virial_extern)
+                          dynvars%virial_extern, &
+                          constraints)
 
 
       call timer(TimerIntegrator, TimerOn)
@@ -311,7 +324,7 @@ contains
                                    dynamics%stop_com_translation,     &
                                    dynamics%stop_com_rotation,        &
                                    dynvars%coord,                     &
-                                   boundary%fixatm,                   &
+                                   constraints%fixatm,                &
                                    dynvars%velocity)
         end if
 
@@ -325,11 +338,66 @@ contains
 
           ! Update boundary if pressure is controlled
           !
-          if (ensemble%use_barostat) &
-            call update_boundary(enefunc%table%table,  &
-                                 enefunc%pairlistdist, &
-                                 boundary)
-          call update_pairlist(enefunc, boundary, coord, pairlist)
+          if (ensemble%use_barostat) then
+            if (enefunc%forcefield == ForcefieldRESIDCG) then
+              call update_boundary_cg(enefunc%cg_pairlistdist_ele, &
+                  enefunc%cg_pairlistdist_126,                     &
+                  enefunc%cg_pairlistdist_PWMcos,                  &
+                  enefunc%cg_pairlistdist_DNAbp,                   &
+                  enefunc%cg_pairlistdist_exv,                     &
+                  boundary)
+            else
+              call update_boundary(enefunc%table%table,               &
+                  enefunc%pairlistdist,                               &
+                  boundary)
+            end if
+          end if
+
+          ! Shrink box
+          !
+          if (dynamics%shrink_box) then
+            if (.not. ensemble%use_barostat .and. &
+                mod(i, dynamics%shrink_period) == 0) then
+              boundary%box_size_x     = boundary%box_size_x - dynamics%dbox_x
+              boundary%box_size_y     = boundary%box_size_y - dynamics%dbox_y
+              boundary%box_size_z     = boundary%box_size_z - dynamics%dbox_z
+              boundary%box_size_x_ref = boundary%box_size_x
+              boundary%box_size_y_ref = boundary%box_size_y
+              boundary%box_size_z_ref = boundary%box_size_z
+
+              shrink_ratio_x = boundary%box_size_x &
+                               / (boundary%box_size_x + dynamics%dbox_x)
+              shrink_ratio_y = boundary%box_size_y &
+                               / (boundary%box_size_y + dynamics%dbox_y)
+              shrink_ratio_z = boundary%box_size_z &
+                               / (boundary%box_size_z + dynamics%dbox_z)
+
+              do j = 1, natom
+                coord(1,j) = coord(1,j) * shrink_ratio_x
+                coord(2,j) = coord(2,j) * shrink_ratio_y
+                coord(3,j) = coord(3,j) * shrink_ratio_z
+                vel(1,j)   = vel(1,j) * shrink_ratio_x
+                vel(2,j)   = vel(2,j) * shrink_ratio_y
+                vel(3,j)   = vel(3,j) * shrink_ratio_z
+              end do
+
+              if (enefunc%forcefield == ForcefieldRESIDCG) then
+                call update_boundary_cg(enefunc%cg_pairlistdist_ele, &
+                    enefunc%cg_pairlistdist_126,                     &
+                    enefunc%cg_pairlistdist_PWMcos,                  &
+                    enefunc%cg_pairlistdist_DNAbp,                   &
+                    enefunc%cg_pairlistdist_exv,                     &
+                    boundary)
+              else
+                call update_boundary(enefunc%table%table,               &
+                    enefunc%pairlistdist,                               &
+                    boundary)
+              end if
+            end if
+          end if
+
+          call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+                               coord_pbc, pairlist)
 
           !if(enefunc%spot_use) &
           !  call update_spot_atomlist(molecule%num_atoms, coord, boundary)
@@ -356,18 +424,22 @@ contains
         end if
       end if
 
+      ! Update QM charge for ESP-MM
+      !
+      if (dynamics%esp_mm .and. dynamics%calc_qm_period > 0) then
+        if (mod(i,dynamics%calc_qm_period) == 0) then
+          count_qm = count_qm + 1
+          call update_qm_charge_vverlet(molecule, dynamics, i, count_qm, &
+                  dynvars, enefunc%qmmm)
+        end if
+      end if
+
       ! Output energy(t + dt) and dynamical variables(t + dt)
       !
       call output_md(output, molecule, enefunc, dynamics, boundary, &
                      ensemble, dynvars)
 
     end do
-
-#ifdef KCOMP
-    ! Stop performance check on K computer
-    !
-    call fpcoll_stop()
-#endif
 
     
     return
@@ -409,19 +481,20 @@ contains
     real(wp)                  :: dt, simtim
     integer                   :: j, natom
 
-    real(wp),         pointer :: coord(:,:), coord_ref(:,:)
+    real(wp),         pointer :: coord(:,:), coord_ref(:,:), coord_pbc(:,:)
     real(wp),         pointer :: vel(:,:), vel_ref(:,:)
     real(wp),         pointer :: force(:,:), mass(:), inv_mass(:)
+    real(wp),         pointer :: force_omp(:,:,:)
     integer,          pointer :: iseed
     character(256)            :: folder,basename
     character                 :: num*9
-    logical                   :: savefile
 
     ! use pointers
     natom     =  molecule%num_atoms
     coord     => dynvars%coord
     coord_ref => dynvars%coord_ref
     force     => dynvars%force
+    force_omp => dynvars%force_omp
     vel       => dynvars%velocity
     vel_ref   => dynvars%velocity_ref
     mass      => molecule%mass
@@ -438,14 +511,17 @@ contains
     !
     call generate_velocity(ensemble%temperature, molecule%num_atoms, &
                            molecule%mass, iseed, dynvars%velocity)
-    if (boundary%num_fixatm > 0) &
-      call clear_fixatm_component(boundary, natom, dynvars%velocity)
+
+    ! Remove velocity of fixed atoms
+    ! 
+    if (constraints%num_fixatm > 0) &
+      call clear_fixatm_component(constraints, natom, dynvars%velocity)
 
     call stop_trans_rotation(molecule%num_atoms, molecule%mass,      &
                              dynamics%stop_com_translation,          &
                              dynamics%stop_com_rotation,             &
                              dynvars%coord,                          &
-                             boundary%fixatm,                        &
+                             constraints%fixatm,                     &
                              dynvars%velocity)
 
 
@@ -479,11 +555,15 @@ contains
     call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                         enefunc%nonb_limiter,  &
                         dynvars%coord,     &
+                        dynvars%trans,     &
+                        dynvars%coord_pbc, &
                         dynvars%energy,    &
                         dynvars%temporary, &
                         dynvars%force,     &
+                        dynvars%force_omp, &
                         dynvars%virial,    &
-                        dynvars%virial_extern)
+                        dynvars%virial_extern, &
+                        constraints)
 
 
     ! if rigid-body on, update velocity(0 + dt/2 and 0 - dt/2)
@@ -1117,8 +1197,8 @@ contains
     type(s_dynamics),         intent(in)    :: dynamics
     type(s_molecule), target, intent(in)    :: molecule
     type(s_ensemble), target, intent(inout) :: ensemble
-    type(s_boundary), target, intent(in)    :: boundary
-    type(s_constraints),      intent(inout) :: constraints
+    type(s_boundary),         intent(in)    :: boundary
+    type(s_constraints), target, intent(inout) :: constraints
     type(s_dynvars),  target, intent(inout) :: dynvars
 
     ! local variables
@@ -1155,7 +1235,7 @@ contains
     temporary     => dynvars%temporary
     viri          => dynvars%virial
     viri_const    => dynvars%virial_const
-    fixatm        => boundary%fixatm
+    fixatm        => constraints%fixatm
 
     ! setup variables
     !
@@ -1272,8 +1352,8 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_dynamics),         intent(in)    :: dynamics
     type(s_ensemble), target, intent(inout) :: ensemble
-    type(s_boundary), target, intent(in)    :: boundary
-    type(s_constraints),      intent(inout) :: constraints
+    type(s_boundary),         intent(in)    :: boundary
+    type(s_constraints), target, intent(inout) :: constraints
     type(s_dynvars),  target, intent(inout) :: dynvars
 
     ! local variables
@@ -1308,7 +1388,7 @@ contains
     temporary  => dynvars%temporary
     virial     => dynvars%virial
     viri_const => dynvars%virial_const
-    fixatm     => boundary%fixatm
+    fixatm     => constraints%fixatm
 
     ! time step
     !
@@ -2837,6 +2917,9 @@ contains
     else if (enefunc%gbsa_use) then
       enefunc%gbsa%temperature = ensemble%temperature
     end if
+    if (enefunc%cg_ele_calc) then
+      enefunc%cg_ele_sol_T = ensemble%temperature
+    end if
 
     if (ensemble%temperature < 0.0_wp) &
       call error_msg( &
@@ -2884,5 +2967,50 @@ contains
     return
 
   end subroutine update_gamd_vverlet
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_qm_charge_vverlet
+  !> @brief        Perform QM/MM to obtain QM charges
+  !! @authors      KY
+  !! @param[in]    molecule  : molecular information
+  !! @param[in]    dynamics  : dynamics information
+  !! @param[in]    step      : step number
+  !! @param[in]    ncount    : number of QM calc
+  !! @param[in]    dynvars   : dynamic variables information
+  !! @param[inout] qmmm      : QM/MM information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  
+  subroutine update_qm_charge_vverlet(molecule, dynamics, step, ncount, &
+                                      dynvars, qmmm)
+
+    ! formal arguments
+    type(s_molecule),   intent(inout) :: molecule
+    type(s_dynamics),   intent(inout) :: dynamics
+    integer,            intent(in)    :: step
+    integer,            intent(in)    :: ncount
+    type(s_dynvars),    intent(inout) :: dynvars
+    type(s_qmmm),       intent(inout) :: qmmm
+
+    ! local variables
+    type(s_energy) :: energy
+    real(wp)       :: dummy(3,1)
+
+      qmmm%qm_charge_save = qmmm%qm_charge
+
+      qmmm%qm_count     = step
+      qmmm%qm_classical = .false.
+      call compute_energy_qmmm(molecule, dynvars%coord, qmmm, energy, dummy)
+      qmmm%qm_classical = .true.
+
+      if (dynamics%avg_qm_charge) then
+        qmmm%qm_charge = (qmmm%qm_charge_save*real(ncount) + qmmm%qm_charge) &
+                         /real(ncount+1)
+      end if
+
+    return
+
+  end subroutine update_qm_charge_vverlet
 
 end module at_md_vverlet_mod

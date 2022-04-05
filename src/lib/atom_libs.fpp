@@ -130,7 +130,8 @@ contains
 
     atom_element = adjustl(atom_type(1:3))
 
-    if      (atom_element(1:1) == 'H'  .or. atom_element(1:1) == 'h') then
+    if      (atom_element(1:1) == 'H'  .or. atom_element(1:1) == 'h'  .or. &
+             atom_element(1:2) == 'TH') then       ! amber param19_ipq.dat
       z = 1
   
     else if (atom_element(1:2) == 'Na' .or. atom_element(1:3) == 'SOD') then
@@ -165,7 +166,9 @@ contains
       z = 6
 
     else if (atom_element(1:2) == '2C' .or. atom_element(1:2) == '3C' .or. &
-             atom_element(1:2) == 'TG')  then   ! amber parm14ipq
+             atom_element(1:2) == 'TG' .or. atom_element(1:2) == 'TJ' .or. &
+             atom_element(1:2) == 'TP' .or. atom_element(1:2) == 'TM' .or. &
+             atom_element(1:2) == 'TA') then    ! amber param19_ipq.dat
       z = 6
   
     else if (atom_element(1:1) == 'N'  .or. atom_element(1:1) == 'n') then

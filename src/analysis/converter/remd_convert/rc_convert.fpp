@@ -71,7 +71,7 @@ contains
     integer                       :: num_conv_id, nlines
     integer                       :: num_open_files
     integer                       :: istep, parmid, unit_no, imdstep
-    logical                       :: conv_crd, conv_ene, do_skip
+    logical                       :: conv_crd, conv_log, conv_ene, do_skip
     logical                       :: done
     integer                       :: ierr
     character(MaxFilename)        :: filename
@@ -79,6 +79,7 @@ contains
     type(s_selatoms)              :: trjout_atom_trj
     integer,          allocatable :: conv_id(:), open_id(:), rem_unit_in(:)
     integer,          allocatable :: log_unit_in(:), log_unit_out(:)
+    integer,          allocatable :: ene_unit_in(:), ene_unit_out(:)
     integer,          allocatable :: param_index(:)
     logical,          allocatable :: do_open_file(:)
     type(s_trj_file), allocatable :: trj_in(:), trj_out(:)
@@ -90,9 +91,9 @@ contains
       return
 
 
-    ! check remfile, dcdfile, logfile existing
+    ! check remfile, dcdfile, logfile, enefile existing
     !
-    call setup_convert(input, output, option, conv_crd, conv_ene)
+    call setup_convert(input, output, option, conv_crd, conv_log, conv_ene)
 
 
     ! make convert id lists
@@ -122,6 +123,8 @@ contains
              rem_unit_in (option%num_replicas), &
              log_unit_in (option%num_replicas), &
              log_unit_out(option%num_replicas), &
+             ene_unit_in (option%num_replicas), &
+             ene_unit_out(option%num_replicas), &
              param_index (option%num_replicas))
 
 
@@ -184,6 +187,7 @@ contains
     trj_in(:)%unit_no = 0
     rem_unit_in(:) = 0
     log_unit_in(:) = 0
+    ene_unit_in(:) = 0
 
     do i = 1, option%num_replicas
        if (do_open_file(i)) then
@@ -203,10 +207,17 @@ contains
          end if
 
          ! assign file unit no for logfiles
-         if (conv_ene) then
+         if (conv_log) then
            filename = get_replicate_name(input%logfile,i)
            call open_file(unit_no, filename, IOFileInput)
            log_unit_in(i) = unit_no
+         end if
+
+         ! assign file unit no for enefiles of gREST
+         if (conv_ene) then
+           filename = get_replicate_name(input%enefile,i)
+           call open_file(unit_no, filename, IOFileInput)
+           ene_unit_in(i) = unit_no
          end if
 
        end if
@@ -217,6 +228,7 @@ contains
     !
     trj_out(:)%unit_no = 0
     log_unit_out(:)    = 0
+    ene_unit_out(:)    = 0
 
     do k = 1, num_conv_id
       m = conv_id(k)
@@ -227,10 +239,16 @@ contains
                       option%trjout_type, IOFileOutputNew)
       end if
 
-      if (conv_ene) then
+      if (conv_log) then
         filename = get_replicate_name(output%logfile,m)
         call open_file(unit_no, filename, IOFileOutputNew)
         log_unit_out(k) = unit_no
+      end if
+
+      if (conv_ene) then
+        filename = get_replicate_name(output%enefile,m)
+        call open_file(unit_no, filename, IOFileOutputNew)
+        ene_unit_out(k) = unit_no
       end if
 
     end do
@@ -241,12 +259,16 @@ contains
     write(MsgOut,*)     ' Input  remfiles :', rem_unit_in(:)
     if (conv_crd) &
       write(MsgOut,*)   ' Input  dcdfiles :', trj_in(:)%unit_no
-    if (conv_ene) &
+    if (conv_log) &
       write(MsgOut,*)   ' Input  logfiles :', log_unit_in(:)
+    if (conv_ene) &
+      write(MsgOut,*)   ' Input  logfiles :', ene_unit_in(:)
     if (conv_crd) &
       write(MsgOut,*)   ' Output trjfiles :', trj_out(:)%unit_no
-    if (conv_ene) &
+    if (conv_log) &
       write(MsgOut,*)   ' Output logfiles :', log_unit_out(:)
+    if (conv_ene) &
+      write(MsgOut,*)   ' Output logfiles :', ene_unit_out(:)
     write(MsgOut,'(A)') ''
 
 
@@ -275,7 +297,7 @@ contains
 
     ! read(i)/write(j) logfile header
     !
-    if (conv_ene) then
+    if (conv_log) then
 
       do i = 1, option%num_replicas
         if (do_open_file(i)) then
@@ -368,11 +390,12 @@ contains
                   end if
 
                   ! write trj(j)
-                  call write_trj(trj_out(j), trajectory,     &
-                               trjout_atom_trj, molecule)
-
+                  if (mod(imdstep,option%trjout_period) == 0) then
+                    call write_trj(trj_out(j), trajectory,     &
+                                 trjout_atom_trj, molecule)
+                    write(MsgOut,'(I5,A,I5,$)') trj_in(i)%unit_no,'>',trj_out(j)%unit_no
+                  end if
                   do_skip = .false.
-                  write(MsgOut,'(I5,A,I5,$)') trj_in(i)%unit_no,'>',trj_out(j)%unit_no
 
                 end if
               end do
@@ -395,7 +418,7 @@ contains
 
       ! read logfile(i) / write logfile(j)
       !
-      if (conv_ene) then
+      if (conv_log) then
 
         if (mod(imdstep,option%eneout_period) == 0) then
 
@@ -424,8 +447,10 @@ contains
                     end if
 
                     if (line(1:5) == 'INFO:') then
-                      write(log_unit_out(j),'(A)') trim(line)
-                      write(log_unit_out(j),'(A)') ''
+                      if (mod(imdstep,option%logout_period) == 0) then
+                        write(log_unit_out(j),'(A)') trim(line)
+                        write(log_unit_out(j),'(A)') ''
+                      endif
                       done = .true.
                     end if
 
@@ -443,6 +468,73 @@ contains
                   read (log_unit_in(i),'(A)') line
                   if (line(1:5) == 'INFO:') then
                     read (log_unit_in(i),'(A)') line
+                    done = .true.
+                  end if
+                end do
+
+              end if
+
+            end if
+          end do
+
+          write(MsgOut,'(A)') ''
+          write(MsgOut,'(A)') ''
+
+        end if
+
+      end if
+
+
+      ! read enefile(i) / write enefile(j) for gREST
+      !
+      if (conv_ene) then
+
+        if (mod(imdstep,option%crdout_period) == 0) then
+
+          write(MsgOut,'(A,I10,A)') 'Convert> ', imdstep, ' step  read enefile > write enefile'
+          write(MsgOut,'(A,$)')     '         '
+
+          do i = 1, option%num_replicas
+            if (do_open_file(i)) then
+
+              do_skip = .true.
+              do j = 1, num_conv_id
+                m = conv_id(j)
+                if (m == param_index(i)) then
+
+                  done = .false.
+                  do while (.not. done)
+
+                    read(ene_unit_in(i),'(A)',iostat=ierr) line
+
+                    if (ierr < 0) then
+                      write(0,*) trim(line)
+                      write(MsgOut,'(A,I10,A)') 'Convert> Something is wrong around ', imdstep, ' step in enefile'
+                      write(MsgOut,'(A,I10,A,I10)') 'Convert> error: ', ierr, &
+                                                    ' unit: ', ene_unit_in(i)
+                      call error_msg('Convert> Convert is failed due to unrecognized lines in enefile')
+                    end if
+
+
+                    if (line(1:1) .ne. '#' .and. line(1:1) .ne. '@') then
+                      write(ene_unit_out(j),'(A)') trim(line)
+                      done = .true.
+                    end if
+
+                  end do
+
+                  do_skip = .false.
+                  write(MsgOut,'(I5,A,I5,$)') ene_unit_in(i),'>',ene_unit_out(j)
+                end if
+              end do
+
+              if (do_skip) then
+
+                done = .false.
+                do while (.not. done)
+                  read (ene_unit_in(i),'(A)') line
+                  if (line(1:5) == 'INFO:') then
+                    read (ene_unit_in(i),'(A)') line
                     done = .true.
                   end if
                 end do
@@ -495,13 +587,15 @@ contains
         if (option%convert_type == ConvertTypeParameter) &
           call close_file(rem_unit_in(i))
         if (conv_crd) call close_trj(trj_in(i))
-        if (conv_ene) call close_file(log_unit_in(i))
+        if (conv_log) call close_file(log_unit_in(i))
+        if (conv_ene) call close_file(ene_unit_in(i))
       end if
     end do
 
     do j = 1, num_conv_id
       if (conv_crd) call close_trj(trj_out(j))
-      if (conv_ene) call close_file(log_unit_out(j))
+      if (conv_log) call close_file(log_unit_out(j))
+      if (conv_ene) call close_file(ene_unit_out(j))
     end do
 
 
@@ -516,18 +610,20 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_convert(input, output, option, conv_crd, conv_ene)
+  subroutine setup_convert(input, output, option, conv_crd, conv_log, conv_ene)
 
     ! formal arguments
     type(s_input),           intent(in)    :: input
     type(s_output),          intent(in)    :: output
     type(s_option),          intent(in)    :: option
     logical,                 intent(out)   :: conv_crd
+    logical,                 intent(out)   :: conv_log
     logical,                 intent(out)   :: conv_ene
 
 
     conv_crd = .false.
-    conv_crd = .false.
+    conv_log = .false.
+    conv_ene = .false.
 
     ! check remfile, dcdfile, logfile existing
     !
@@ -550,6 +646,15 @@ contains
         (input%logfile /= '' .and. output%logfile == '')) then
       call error_msg('Setup_Convert> logfile in [INPUT] or logfile in [OUTPUT] is not specified')
     else if (input%logfile == '' .and. output%logfile == '') then
+      conv_log = .false.
+    else
+      conv_log = .true.
+    end if
+
+    if ((input%enefile == '' .and. output%enefile /= '') .or. &
+        (input%enefile /= '' .and. output%enefile == '')) then
+      call error_msg('Setup_Convert> enefile in [INPUT] or enefile in [OUTPUT] is not specified')
+    else if (input%enefile == '' .and. output%enefile == '') then
       conv_ene = .false.
     else
       conv_ene = .true.
@@ -558,8 +663,11 @@ contains
     if (conv_crd .and. option%crdout_period == 0) &
       call error_msg('Setup_Convert> error: crdout_period in [OPTION] = 0')
 
-    if (conv_ene .and. option%eneout_period == 0) &
+    if (conv_log .and. option%eneout_period == 0) &
       call error_msg('Setup_Convert> error: eneout_period in [OPTION] = 0')
+
+    if (conv_ene .and. option%crdout_period == 0) &
+      call error_msg('Setup_Convert> error: crdout_period in [OPTION] = 0')
 
     if (option%nsteps == 0) &
       call error_msg('Setup_Convert> error: nsteps in [OPTION] = 0')
@@ -567,8 +675,8 @@ contains
     if (option%num_replicas == 0) &
       call error_msg('Setup_Convert> error: num_replicas in [OPTION] = 0')
 
-    if (.not. conv_crd .and. .not. conv_ene) then
-      write(MsgOut,'(A)') 'Setup_Convert> Nothing was done, because dcdfile, trjfile, and logfile are empty'
+    if (.not. conv_crd .and. .not. conv_log .and. .not. conv_ene) then
+      write(MsgOut,'(A)') 'Setup_Convert> Nothing was done, because dcdfile, trjfile, logfile, and enefile are empty'
       write(MsgOut,'(A)') ''
       return
     end if

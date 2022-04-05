@@ -445,9 +445,7 @@ contains
     if (len_trim(output%qmmm_pdbfile) /= 0) then
 
       call export_molecules(molecule, option%qmmm_atom_trj, pdb=tmp_pdb)
-      tmp_pdb%atom_col7 = ref%atom_col7
-      tmp_pdb%res_col5  = ref%res_col5
-      tmp_pdb%res_col6  = ref%res_col6
+      tmp_pdb%ter_rec   = ref%ter_rec
       call output_pdb(filename(output%qmmm_pdbfile, iframe), tmp_pdb)
       call dealloc_pdb_all(tmp_pdb)
 
@@ -491,9 +489,7 @@ contains
       endif
 
       call export_molecules(molecule, option%qm_atom, pdb=tmp_pdb) 
-      tmp_pdb%atom_col7 = ref%atom_col7
-      tmp_pdb%res_col5  = ref%res_col5
-      tmp_pdb%res_col6  = ref%res_col6
+      tmp_pdb%ter_rec   = ref%ter_rec
       call output_pdb(line, tmp_pdb)
       call dealloc_pdb_all(tmp_pdb)
 

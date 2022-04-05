@@ -2,7 +2,7 @@
 # Process this file with autoconf to produce a configure script.
 
 AC_PREREQ(2.59)
-AC_INIT(genesis, [1.4.0], genesis@riken.jp)
+AC_INIT(genesis, [1.7.1], genesis@riken.jp)
 AC_CONFIG_SRCDIR([src/atdyn/atdyn.fpp])
 AC_CONFIG_HEADER([src/config.h])
 
@@ -24,17 +24,43 @@ AC_LANG_PUSH(Fortran)
 #
 DEFINED_VARIABLES=""
 
+AC_ARG_ENABLE([double],
+    [AS_HELP_STRING(
+      [--enable-double],
+      [enable double precision (default = yes)])],
+    [],[enable_double=yes])
+
+AC_ARG_ENABLE([mixed],
+    [AS_HELP_STRING(
+      [--enable-mixed],
+      [enable mixed precision (default = no)])],
+    [],[enable_mixed=no])
+
 AC_ARG_ENABLE([single],
     [AS_HELP_STRING(
       [--enable-single],
       [enable single precision (default = no)])],
     [],[enable_single=no])
 
+if test x"${enable_mixed}" = x"yes"; then
+  enable_double=no
+fi
+
+if test x"${enable_single}" = x"yes"; then
+  enable_double=no
+  enable_mixed=no
+fi
+
+mainly_single=no
 if test x"${enable_single}" = x"yes"; then
   AC_DEFINE(_SINGLE, 1, [defined if _SINGLE is used.])
   DEFINED_VARIABLES+=" -D_SINGLE"
+  mainly_single=yes
+elif test x"${enable_mixed}" = x"yes"; then
+  AC_DEFINE(_MIXED, 1, [defined if _MIXED is used.])
+  DEFINED_VARIABLES+=" -D_MIXED"
+  mainly_single=yes
 fi
-
 
 ## Debug
 #
@@ -64,18 +90,42 @@ AC_ARG_ENABLE([debug],
 ## MPI
 #
 
-AC_DEFINE(MPI, 1, [defined if MPI is used.])
-DEFINED_VARIABLES+=" -DMPI"
+AC_ARG_ENABLE([mpi],
+        [AS_HELP_STRING([--disable-mpi], [disable MPI parallel])],
+        [], [enable_mpi=yes])
 
+if test x"${enable_mpi}" = x"yes"; then
+  AC_DEFINE(HAVE_MPI_GENESIS, 1, [defined if MPI is used.])
+  DEFINED_VARIABLES+=" -DHAVE_MPI_GENESIS"
+fi
+AM_CONDITIONAL(SPDYN, test x"${enable_mpi}" = x"yes")
+
+AC_ARG_WITH([msmpi],
+	[AS_HELP_STRING([--with-msmpi],
+	[use MSMPI (default: does not use MSMPI)])],
+	[], [with_msmpi=no])
+
+AC_ARG_WITH([msmpi],
+	[AS_HELP_STRING([--with-msmpi],
+	[use MSMPI (default: does not use MSMPI)])],
+	[], [with_msmpi=no])
 
 ## fortran compiler
 #
 
-genesis_default_fc="mpifrtpx mpifrt mpif90"
+if test x"${enable_mpi}" = x"yes"; then
+  genesis_default_fc="mpifrtpx mpifrt mpif90 mpiifort"
+else
+  genesis_default_fc="frtpx frt ifort gfortran ifort"
+fi
 
 # check usablility
 AC_PROG_FC($genesis_default_fc)
 AC_PROG_F77($genesis_default_fc)
+
+## C++ compiler
+qsimulate_default_cxx="mpicxx mpic++"
+AC_PROG_CXX($qsimulate_default_cxx)
 
 # check actual compiler
 AC_MSG_CHECKING([for actual compiler])
@@ -116,12 +166,17 @@ done
 if test -z "${FC_ACT}"; then
   FC_ACT=${FC}
 fi
+F77_ACT=FC_ACT
 
 AC_MSG_RESULT([$FC_ACT])
 
 version_warning=yes
 # check gfortran & intel version
-if test x"${FC_ACT}" = x"ifort" ; then
+if test x"${FC_ACT}" = x"frtpx" ; then
+  if test x"${enable_mpi}" != x"yes"; then
+    AC_MSG_ERROR([disable_mpi is not available on Fugaku])
+  fi
+elif test x"${FC_ACT}" = x"ifort" ; then
 
   AC_MSG_CHECKING([for fortran version])
 
@@ -156,6 +211,7 @@ elif test x"${FC_ACT}" = x"gfortran"; then
   FC_GNU_VER=`echo "__GNUC__ __GNUC_MINOR__ __GNUC_PATCHLEVEL__"\
    | ${FC_ACT} -E -P - | xargs printf "%02d%02d%02d"`
 
+
   if test ${FC_GNU_VER} -lt 040407; then
     AC_MSG_ERROR([Gfortran version must be >= 4.4.7])
   fi
@@ -184,7 +240,12 @@ fi
 ## C compiler
 #
 
-genesis_default_cc="mpifccpx mpifcc mpicc"
+if test x"${enable_mpi}" = x"yes"; then
+  genesis_default_cc="mpifccpx mpifcc mpicc mpiicc"
+else
+  genesis_default_cc="fccpx fcc icc gcc"
+fi
+
 
 # check usablility
 AC_PROG_CC($genesis_default_cc)
@@ -271,6 +332,10 @@ if test x"${enable_openmp}" = x"yes"; then
 	if test ${FC_GNU_VER} -gt 160000; then
 	  OPT_OPENMP="-qopenmp"
 	fi
+	if test ${FC_GNU_VER} -gt 190000; then
+          AC_DEFINE(IFORT19, 1, [defined if ifort version (>19) is used.])
+	  DEFINED_VARIABLES+=" -DIFORT19"
+	fi
   
   elif test x"${FC_ACT}" = x"gfortran"; then
     OPT_OPENMP="-fopenmp"
@@ -285,11 +350,14 @@ if test x"${enable_openmp}" = x"yes"; then
     OPT_OPENMP="-Kopenmp"
   
   elif test x"${FC_ACT}" = x"frt"; then
-    OPT_OPENMP="-KOMP"
+    OPT_OPENMP="-Kopenmp"
 
   elif test x"${FC_ACT}" = x"mpifrt"; then
-    OPT_OPENMP="-KOMP"
+    OPT_OPENMP="-Kopenmp"
 
+  fi
+  if test x"${with_msmpi}" = x"yes"; then
+     AC_MSG_ERROR([OpenMP is not available with MSMPI])
   fi
 fi
 
@@ -302,12 +370,10 @@ DEFINED_VARIABLES+=" -DFFTE"
 
 ## lapack
 #
-
 AC_ARG_WITH([lapack],
 	[AS_HELP_STRING([--without-lapack],
 	[do not use LAPACK (default: uses LAPACK)])],
 	[], [with_lapack=yes])
-
 
 AC_ARG_VAR([LAPACK_PATH], 
     [LAPACK library path (linker flags, e.g. -L<lapack dir>)])
@@ -316,26 +382,28 @@ AC_ARG_VAR([LAPACK_LIBS],
     [LAPACK library files (libraries, e.g. -l<lapack library>)])
 
 
-if test x"${with_lapack}" == x"yes"; then
+if test x"${with_lapack}" = x"yes"; then
 
   AC_DEFINE(LAPACK, 1, [defined if LAPACK is used.])
   DEFINED_VARIABLES+=" -DLAPACK"
 
   blaslink="-lblas"
+  lapacklib=""
+
   if test -n "${LAPACK_PATH}"; then
-
+  
     lapack_path_string=${LAPACK_PATH}
-
+  
     if test x"${FC_ACT}" = x"gfortran" -o \
-	        x"${FC_ACT}" = x"pgf90" ; then
-	  lapack_lib_path=""
+            x"${FC_ACT}" = x"pgf90" ; then
+      lapack_lib_path=""
   	  blas_lib_path=""
       for vtok in ${lapack_path_string} ; do
      
         if test -z "${lapack_lib_path}"; then
-          AC_CHECK_FILE([${vtok}/liblapack.a],[lapack_lib_path=${vtok}],[])
+          AC_CHECK_FILE([${vtok}/liblapack.a],[lapack_lib_path=${vtok} ; lapacklib="lapack"],[])
           if test -z "${lapack_lib_path}"; then
-            AC_CHECK_FILE([${vtok}/liblapack.so],[lapack_lib_path=${vtok}],[])
+            AC_CHECK_FILE([${vtok}/liblapack.so],[lapack_lib_path=${vtok} ; lapacklib="lapack"],[])
           fi
         fi
      
@@ -354,41 +422,62 @@ if test x"${with_lapack}" == x"yes"; then
       done
      
       if test -z "${lapack_lib_path}"; then
-         AC_MSG_ERROR([LAPACK is not found])
+         AC_MSG_ERROR([Lapack is not found.])
       fi
       if test -z "${blas_lib_path}"; then
          AC_MSG_ERROR([BLAS is not found])
       fi
-      if test x"${lapack_lib_path}" == x"${blas_lib_path}"; then
+      if test x"${lapack_lib_path}" = x"${blas_lib_path}"; then
         OPT_LD_LAPACK+=" -L${lapack_lib_path}" 
       else 
         OPT_LD_LAPACK+=" -L${lapack_lib_path} -L${blas_lib_path}" 
       fi
-
+  
     else
-
+  
       for vtok in ${lapack_path_string} ; do
         OPT_LD_LAPACK+=" -L${vtok}" 
-	  done
-
+      done
+  
     fi
-
+  
   fi
 
   if test -n "${LAPACK_LIBS}"; then
     OPT_LD_LAPACK+="${LAPACK_LIBS}"
-
+  
   elif test x"${FC_ACT}" = x"ifort"; then
     OPT_LD_LAPACK+=" -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lmkl_lapack95_lp64"
+    lapacklib="mkl_lapack95_lp64"
 
+    LDFLAGS=${OPT_LD_LAPACK}
+    AC_CHECK_LIB([${lapacklib}], [dsyev],
+          [], [AC_MSG_ERROR([lapack is not correct])],[-lmkl_intel_lp64 -lmkl_sequential -lmkl_core])
+    LDFLAGS=""
+  
   elif test x"${FC_ACT}" = x"pgf90"; then
-      OPT_LD_LAPACK+=" -llapack ${blaslink}"
-
+#    OPT_LD_LAPACK+=" -llapack ${blaslink}"
+    lapacklib="lapack"
+    LDFLAGS=${OPT_LD_LAPACK}
+    AC_CHECK_LIB([${lapacklib}], [dsyev],
+          [OPT_LD_LAPACK+=" -llapack ${blaslink}"], [AC_MSG_ERROR([lapack is not correct])],["${blaslink} ${OPT_LD_LAPACK}"])
+    LDFLAGS=""
+  
   elif test x"${FC_ACT}" = x"gfortran"; then
-      OPT_LD_LAPACK+=" -llapack ${blaslink}"
+#    OPT_LD_LAPACK+=" -llapack ${blaslink}"
+    lapacklib="lapack"
+    LDFLAGS=${OPT_LD_LAPACK}
+    AC_CHECK_LIB([${lapacklib}], [dsyev],
+          [OPT_LD_LAPACK+=" -llapack ${blaslink}"], [AC_MSG_ERROR([lapack is not correct])],["${blaslink}"])
+    LDFLAGS=""
   fi
 
+
 fi
+
+with_internallapack="no"
+AM_CONDITIONAL(INTERNAL_LAPACK, test x"${with_internallapack}" = x"yes")
+AM_CONDITIONAL(INTERNAL_SCALAPACK, test x"${with_internallapack}" = x"yes" -a x"${enable_mpi}" = x"yes")
 
 ## parallel I/O
 #
@@ -396,6 +485,9 @@ AC_ARG_ENABLE([parallel_IO],
 	[AS_HELP_STRING([--enable-parallel_IO], [enable parallel_IO (defalt: yes(intel)/no(fujitsu))])],
 	[], [enable_parallel_IO=yes])
 if test x"${FC_ACT}" = x"frtpx" -o x"${FC_ACT}" = x"mpifrtpx"; then
+  enable_parallel_IO=no
+fi
+if test x"${FC_ACT}" = x"frt" -o x"${FC_ACT}" = x"mpifrt"; then
   enable_parallel_IO=no
 fi
 if test x"${enable_single}" = x"yes"; then
@@ -453,6 +545,9 @@ fi
 if test x"${with_cuda}" != x"no"; then
 	cuda_lib_path=""
 	cuda_path=""
+    if test x"${with_msmpi}" = x"yes"; then
+       AC_MSG_ERROR([GPU is not available with MSMPI])
+    fi
     if test x"${with_cuda}" != x"yes"; then
 	  cuda_path=${with_cuda}
       AC_CHECK_FILE([${cuda_path}/libcudart.so],
@@ -495,11 +590,12 @@ if test x"${with_cuda}" != x"no"; then
     fi
 
 #	AC_CHECK_PROG(NVCC, nvcc)
+    version=""
 	nvcc_ver_info=$(${NVCC} -V)
 	for vtok in ${nvcc_ver_info} ; do
       if test x"${vtok}" = x"(NVCC)"; then
         check_ver=yes
-      else
+      elif echo ${vtok} | egrep -q "V@<:@0-9@:>@*\.@<:@0-9@:>@*\.@<:@0-9@:>@*"; then
         version=${vtok}
       fi
 	done
@@ -509,6 +605,7 @@ if test x"${with_cuda}" != x"no"; then
 	NVCC_VER=`echo ${version}\
 	   | sed -e 's/\V\(@<:@0-9@:>@*\).\(@<:@0-9@:>@*\).\(@<:@0-9@:>@*\)/\1 \2 \3/'\
 	   | xargs printf "%02d%02d%02d"`
+
 
   	if test ${NVCC_VER} -lt 060000; then
     	AC_MSG_ERROR([CUDA version must be >= 6.0.0])
@@ -584,12 +681,23 @@ if test x"${FC_ACT}" = x"pgif90" -o \
 fi
 AM_CONDITIONAL(ANALYSIS, test x"${enable_analysis}" = x"yes")
 
+### gprof
+AC_ARG_ENABLE([gprof],
+    [AS_HELP_STRING(
+      [--enable-gprof],
+      [enable gprof profiler (default = no)])],
+    [],[enable_gprof=no])
+
+OPT_GPROF=""
+if test x"${enable_gprof}" = x"yes"; then
+  OPT_GPROF="-pg -g"
+fi
+
 ## dSFMT settings
 #
 
 AC_DEFINE(DSFMT_MEXP, 19937, [defined always.])
 DEFINED_VARIABLES+=" -DDSFMT_MEXP=19937"
-
 
 ## compile flags
 #
@@ -600,7 +708,7 @@ if test x"${ac_test_FFLAGS}" = x"set"; then
 
 else
 
-  if test x"${enable_debug}" == x"0"; then
+  if test x"${enable_debug}" = x"0"; then
 
 # no-debug no report
     if   test x"${FC_ACT}" = x"ifort"; then
@@ -613,25 +721,35 @@ else
 
     elif test x"${FC_ACT}" = x"gfortran"; then
       FCFLAGS="-O3 -ffast-math -march=native -ffree-line-length-none"
+      echo ${FC_GNU_VER}
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             FCFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             FCFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${FC_ACT}" = x"pgf90"; then
       FCFLAGS="-O2 -fastsse -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
     elif test x"${FC_ACT}" = x"frtpx"; then
-      FCFLAGS="-m -Kvisimpact -Kocl -Kswp"
+      FCFLAGS="-m -Kocl -Kfast,openmp,parallel,simd=2,noalias -Nlst=t  -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND="-m -O3 -Kocl  -Kfsimple,noreduction,fp_contract,fp_relaxed,fz,ilfunc,mfunc,omitfp,simd_packed_promotion,openmp,parallel,simd=2 -Nlst=t -Koptmsg=2" 
 
     elif test x"${FC_ACT}" = x"mpifrtpx"; then
-      FCFLAGS="-m -Kvisimpact -Kocl -Kswp"
+      FCFLAGS="-m -Kocl -Kfast,openmp,parallel,simd=2,noalias -Nlst=t  -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND="-m -O3 -Kocl  -Kfsimple,noreduction,fp_contract,fp_relaxed,fz,ilfunc,mfunc,omitfp,simd_packed_promotion,openmp,parallel,simd=2 -Nlst=t -Koptmsg=2" 
 
     elif test x"${FC_ACT}" = x"frt"; then
-      FCFLAGS="-m -Am -Kfast"
+      FCFLAGS="-m  -Kfast"
 
     elif test x"${FC_ACT}" = x"mpifrt"; then
-      FCFLAGS="-m -Am -Kfast"
+      FCFLAGS="-m  -Kfast"
 
     fi
 
-  elif test x"${enable_debug}" == x"1"; then
+  elif test x"${enable_debug}" = x"1"; then
 
 # debug level 1 (without higher optmization ) (default)
     if   test x"${FC_ACT}" = x"ifort"; then
@@ -639,15 +757,25 @@ else
 
     elif test x"${FC_ACT}" = x"gfortran"; then
       FCFLAGS="-Wall -ffree-line-length-none"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             FCFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             FCFLAGS+=" -O2 -march=x86-64 -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${FC_ACT}" = x"pgf90"; then
       FCFLAGS="-m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge  -Mbackslash"
 
     elif test x"${FC_ACT}" = x"frtpx"; then
-      FCFLAGS="-m "
+      FCFLAGS="-m -Kocl -Kopenmp -Nlst=t  -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND="-m -Kocl -Kopenmp -Nlst=t -Koptmsg=2" 
+
 
     elif test x"${FC_ACT}" = x"mpifrtpx"; then
-      FCFLAGS="-m "
+      FCFLAGS="-m -Kocl -Kopenmp -Nlst=t  -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND="-m -Kocl -Kopenmp -Nlst=t -Koptmsg=2" 
 
     elif test x"${FC_ACT}" = x"frt"; then
       FCFLAGS="-m "
@@ -657,7 +785,7 @@ else
 
     fi
 
-  elif test x"${enable_debug}" == x"2"; then
+  elif test x"${enable_debug}" = x"2"; then
 
 # debug level 2 (with g)
     AC_DEFINE(DEBUG, 1, [defined if Debug is used.])
@@ -668,15 +796,24 @@ else
 
     elif test x"${FC_ACT}" = x"gfortran"; then
       FCFLAGS="-g -Wall -ffree-line-length-none"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             FCFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             FCFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${FC_ACT}" = x"pgf90"; then
       FCFLAGS="-g  -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge  -Mbackslash"
 
     elif test x"${FC_ACT}" = x"frtpx"; then
-      FCFLAGS="-g -m "
+      FCFLAGS="-g -m -Kocl -Kopenmp"
+      FCFLAGS_KERNELS_NONBOND=" -g -m -Kocl -Kopenmp  -Nlst=t -Koptmsg=2"
 
     elif test x"${FC_ACT}" = x"mpifrtpx"; then
-      FCFLAGS="-g -m "
+      FCFLAGS=" -g -m -Kocl -Kopenmp  -Nlst=t -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND=" -g -m -Kocl -Kopenmp  -Nlst=t -Koptmsg=2"
 
     elif test x"${FC_ACT}" = x"frt"; then
       FCFLAGS="-g -m "
@@ -686,7 +823,7 @@ else
 
     fi
 
-  elif test x"${enable_debug}" == x"3"; then
+  elif test x"${enable_debug}" = x"3"; then
 
 # debug level 3 (with g and traceback and without optimization)
     AC_DEFINE(DEBUG, 1, [defined if Debug is used.])
@@ -697,15 +834,23 @@ else
 
     elif test x"${FC_ACT}" = x"gfortran"; then
       FCFLAGS="-O0 -g -Wall -fbounds-check -ffree-line-length-none"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             FCFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             FCFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${FC_ACT}" = x"pgf90"; then
       FCFLAGS="-O0 -g -m64 -Msmartalloc=huge"
 
     elif test x"${FC_ACT}" = x"frtpx"; then
-      FCFLAGS="-O0 -g -Hs -Hu -Ha"
+      FCFLAGS=" -O0 -g -m -Kocl -Kopenmp -Hs -Hu -Ha -Nlst=t -Koptmsg=2"
+      FCFLAGS_KERNELS_NONBOND=" -O0 -g -m -Kocl -Kopenmp -Hs -Hu -Ha -Nlst=t -Koptmsg=2"
 
     elif test x"${FC_ACT}" = x"mpifrtpx"; then
-      FCFLAGS="-O0 -g -Hs -Hu -Ha"
+      FCFLAGS_KERNELS_NONBOND=" -O0 -g -m -Kocl -Kopenmp -Hs -Hu -Ha -Nlst=t -Koptmsg=2"
 
     elif test x"${FC_ACT}" = x"frt"; then
       FCFLAGS="-O0 -g"
@@ -722,6 +867,13 @@ else
 
     if   test x"${FC_ACT}" = x"ifort"; then
       FCFLAGS="-O0 -g -traceback -check all,noarg_temp_created"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             FCFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             FCFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     else
       AC_MSG_ERROR([DEBUG=4 is only allowed in IFORT])
@@ -738,6 +890,8 @@ fi
 
 FCFLAGS+=" ${OPT_OPENMP}"
 FCFLAGS+=" ${OPT_FC_CUDA}"
+FCFLAGS+=" ${OPT_GPROF}"
+AC_SUBST(FCFLAGS_KERNELS_NONBOND)
 
 # CFLAGS
 if test x"${ac_test_CFLAGS}" = x"set"; then
@@ -745,7 +899,7 @@ if test x"${ac_test_CFLAGS}" = x"set"; then
 
 else
 
-  if test x"${enable_debug}" == x"0"; then
+  if test x"${enable_debug}" = x"0"; then
 
 # no-debug no report
     if   test x"${CC_ACT}" = x"icc"; then
@@ -753,6 +907,13 @@ else
 
     elif test x"${CC_ACT}" = x"gcc"; then
       CFLAGS="-O3 -ffast-math -march=native"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             CFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             CFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${CC_ACT}" = x"pgcc"; then
       CFLAGS="-O3 -fastsse -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge"
@@ -764,14 +925,14 @@ else
       CFLAGS="-m -Kvisimpact -Kocl -Kswp"
 
     elif test x"${CC_ACT}" = x"fcc"; then
-      CFLAGS="-m -Am -Kfast"
+      CFLAGS="-m  -Kfast"
 
     elif test x"${CC_ACT}" = x"mpifcc"; then
-      CFLAGS="-m -Am -Kfast"
+      CFLAGS="-m  -Kfast"
 
     fi
 
-  elif test x"${enable_debug}" == x"1"; then
+  elif test x"${enable_debug}" = x"1"; then
 
 # debug level 1 (without O3) (default)
     if   test x"${CC_ACT}" = x"icc"; then
@@ -779,25 +940,32 @@ else
 
     elif test x"${CC_ACT}" = x"gcc"; then
       CFLAGS="-Wall"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             CFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             CFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${CC_ACT}" = x"pgcc"; then
       CFLAGS="-fastsse -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge"
 
     elif test x"${CC_ACT}" = x"fccpx"; then
-      CFLAGS="-m "
+      CFLAGS="-m -Kocl"
 
     elif test x"${CC_ACT}" = x"mpifccpx"; then
-      CFLAGS="-m "
+      CFLAGS="-m -Kocl"
 
     elif test x"${CC_ACT}" = x"fcc"; then
-      CFLAGS="-m -Am -Kfast"
+      CFLAGS="-m  -Kfast"
 
     elif test x"${CC_ACT}" = x"mpifcc"; then
-      CFLAGS="-m -Am -Kfast"
+      CFLAGS="-m  -Kfast"
 
     fi
 
-  elif test x"${enable_debug}" == x"2"; then
+  elif test x"${enable_debug}" = x"2"; then
 
 # debug level 2 (with g)
     AC_DEFINE(DEBUG, 1, [defined if Debug is used.])
@@ -808,21 +976,28 @@ else
 
     elif test x"${CC_ACT}" = x"gcc"; then
       CFLAGS="-g -Wall"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             CFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             CFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${CC_ACT}" = x"pgcc"; then
       CFLAGS="-g -fastsse -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge"
 
     elif test x"${CC_ACT}" = x"fccpx"; then
-      CFLAGS="-g -m "
+      CFLAGS="-g -m -Kocl"
 
     elif test x"${CC_ACT}" = x"mpifccpx"; then
-      CFLAGS="-g -m "
+      CFLAGS="-g -m -Kocl"
 
     elif test x"${CC_ACT}" = x"fcc"; then
-      CFLAGS="-g -m -Am -Kfast"
+      CFLAGS="-g -m  -Kfast"
 
     elif test x"${CC_ACT}" = x"mpifcc"; then
-      CFLAGS="-g -m -Am -Kfast"
+      CFLAGS="-g -m  -Kfast"
 
     fi
 
@@ -837,15 +1012,22 @@ else
 
     elif test x"${CC_ACT}" = x"gcc"; then
       CFLAGS="-O0 -g -Wall -fbounds-check"
+      if test ${FC_GNU_VER} -gt 100000; then
+	      if test x"${with_msmpi}" = x"no"; then
+             CFLAGS+=" -fallow-argument-mismatch -fallow-invalid-boz"
+	      else
+             CFLAGS+=" -Wno-argument-mismatch"
+		  fi
+      fi
 
     elif test x"${CC_ACT}" = x"pgcc"; then
       CFLAGS="-O0 -g -m64 -Msmartalloc=huge"
 
     elif test x"${CC_ACT}" = x"fccpx"; then
-      CFLAGS="-O0 -g -Hs -Hu -Ha"
+      CFLAGS="-O0 -g -Kocl"
 
     elif test x"${CC_ACT}" = x"mpifccpx"; then
-      CFLAGS="-O0 -g -Hs -Hu -Ha"
+      CFLAGS="-O0 -g -Kocl"
 
     elif test x"${CC_ACT}" = x"fcc"; then
       CFLAGS="-O0 -g"
@@ -860,6 +1042,7 @@ else
 fi
 
 CFLAGS+=" ${OPT_OPENMP}"
+CFLAGS+=" ${OPT_GPROF}"
 
 # LDFLAGS
 if test -z "${LDFLAGS}"; then
@@ -874,27 +1057,31 @@ if test -z "${LDFLAGS}"; then
     #LDFLAGS="-march=native -fuse-linker-plugin"
   
   elif test x"${FC_ACT}" = x"frtpx"; then
-    LDFLAGS="-SSL2 -Kparallel"
+    LDFLAGS="-SSL2 -Kparallel -Nfjomplib"
   
   elif test x"${FC_ACT}" = x"mpifrtpx"; then
-    LDFLAGS="-SSL2BLAMP -Kparallel -Kns"
+    LDFLAGS="-SSL2BLAMP -Kparallel -Nfjomplib"
 
   elif test x"${FC_ACT}" = x"frt"; then
-    LDFLAGS="-KSPARC64VII,V9FMADD -SSL2"
+    LDFLAGS="-SSL2 -Kparallel -Nfjomplib"
   
   elif test x"${FC_ACT}" = x"mpifrt"; then
-    LDFLAGS="-KSPARC64VII,V9FMADD -SSL2"
+    LDFLAGS="-SSL2BLAMP -Kparallel -Nfjomplib"
 
   fi
 fi
 
 if test x"${FC_ACT}" = x"ifort"; then
-  LDFLAGS+=" -assume byterecl"
+  LDFLAGS+=" -assume byterecl -lgfortran"
 fi
 
 LDFLAGS+=" ${OPT_OPENMP}"
+if test x"${with_msmpi}" = x"yes"; then
+  LDFLAGS+=" -lmsmpi -static"
+fi
 LDFLAGS+=" ${OPT_LD_LAPACK}"
 LDFLAGS+=" ${OPT_LD_CUDA}"
+LDFLAGS+=" ${OPT_GPROF}"
 
 # PPFLAGS
 if test -z "${PPFLAGS}"; then
@@ -918,10 +1105,16 @@ AC_SUBST(PPFLAGS)
 
 # USEKCOMP
 AM_CONDITIONAL(USEKCOMP, test x"${FC_ACT}" = x"frtpx" -o \
-			      x"${FC_ACT}" = x"mpifrtpx")
+			      x"${FC_ACT}" = x"mpifrtpx" -o \
+			      x"${FC_ACT}" = x"frt" -o \
+			      x"${FC_ACT}" = x"mpifrt")
 
 # KCOMP preprocess macro
 if test x"${FC_ACT}" = x"frtpx" -o x"${FC_ACT}" = x"mpifrtpx"; then
+  AC_DEFINE(KCOMP, 1, [defined if K-computer compiler is used.])
+  DEFINED_VARIABLES+=" -DKCOMP"
+fi
+if test x"${FC_ACT}" = x"frt" -o x"${FC_ACT}" = x"mpifrt"; then
   AC_DEFINE(KCOMP, 1, [defined if K-computer compiler is used.])
   DEFINED_VARIABLES+=" -DKCOMP"
 fi
@@ -955,6 +1148,13 @@ AC_MSG_CHECKING([platform is RICC])
 
 IS_RICC="no"
 
+## MS-MPI setting
+
+if test x"${with_msmpi}" = x"yes"; then
+  AC_DEFINE(MSMPI, 1, [defined if MS-MPI compiler is used.])
+  DEFINED_VARIABLES+=" -DMSMPI"
+fi
+
 uname_info=$(uname -a)
 for vtok in ${uname_info} ; do
 
@@ -969,7 +1169,7 @@ for vtok in ${uname_info} ; do
 
 done
 
-if test x"${IS_RICC}" == x"yes"; then
+if test x"${IS_RICC}" = x"yes"; then
   AC_DEFINE(RICC, 1, [define if platform is RICC.])
   DEFINED_VARIABLES+=" -DRICC"
 
@@ -1033,16 +1233,16 @@ if test x"${enable_single}" = x"yes" -a \
 
   else
 
-    if test x"${enable_debug}" == x"0"; then
+    if test x"${enable_debug}" = x"0"; then
       FCFLAGS_FFTE_KERNEL_FPP__PGI__SP=" -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge  -Mbackslash"
 
-    elif test x"${enable_debug}" == x"1"; then
+    elif test x"${enable_debug}" = x"1"; then
       FCFLAGS_FFTE_KERNEL_FPP__PGI__SP="-m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
-    elif test x"${enable_debug}" == x"2"; then
+    elif test x"${enable_debug}" = x"2"; then
       FCFLAGS_FFTE_KERNEL_FPP__PGI__SP="-g -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
-    elif test x"${enable_debug}" == x"3"; then
+    elif test x"${enable_debug}" = x"3"; then
       FCFLAGS_FFTE_KERNEL_FPP__PGI__SP="-O0 -g -m64 -Msmartalloc=huge -Mbackslash"
 
     fi
@@ -1063,16 +1263,16 @@ if test x"${FC_ACT}"        = x"pgf90"; then
 
   else
 
-    if test x"${enable_debug}" == x"0"; then
+    if test x"${enable_debug}" = x"0"; then
       FCFLAGS_FPP__PGI_NOOPT="-m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
-    elif test x"${enable_debug}" == x"1"; then
+    elif test x"${enable_debug}" = x"1"; then
       FCFLAGS_FPP__PGI_NOOPT="-m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
-    elif test x"${enable_debug}" == x"2"; then
+    elif test x"${enable_debug}" = x"2"; then
       FCFLAGS_FPP__PGI_NOOPT="-g -m64 -Mflushz -pc 64 -mcmodel=medium -Msmartalloc=huge -Mbackslash"
 
-    elif test x"${enable_debug}" == x"3"; then
+    elif test x"${enable_debug}" = x"3"; then
       FCFLAGS_FPP__PGI_NOOPT="-O0 -g -m64 -Msmartalloc=huge -Mbackslash"
 
     fi
@@ -1104,10 +1304,38 @@ fi
 
 ##
 
+
+## QSimulate-QM/MM calculation
+#
+AC_ARG_ENABLE([qsimulate],
+    [AS_HELP_STRING([--enable-qsimulate],[enable QSimulate integration.])]
+	[], [enable_qsimulate=yes])
+AM_CONDITIONAL(QSIMULATE, test x"${enable_qsimulate}" = x"yes")
+if  test x"${enable_qsimulate}" = x"yes"; then
+  AC_DEFINE(QSIMULATE, 1, [defined if QSimulate is used.])
+  AC_LANG_PUSH(C++)
+  AC_ARG_WITH([include], [AS_HELP_STRING([--with-include],[include flags])], [with_include=$withval], [with_include=no])
+  if test "x${with_include}" != xno; then
+    CXXFLAGS="${with_include} ${CXXFLAGS}"
+    CPPFLAGS="${with_include} ${CPPFLAGS}"
+  fi
+  AC_DEFINE(HAVE_MPI_H, 1, [defined if MPI is used.]) # there has to be
+  AC_CHECK_HEADERS([bagel.h], [], [AC_MSG_ERROR([bagel.h not found or not working, set the include path])], [])
+  AC_CHECK_LIB(bagel, main,  [LDFLAGS+=" -lbagel"], [AC_MSG_ERROR("Linking against BAGEL library failed; perhaps add -L/path/to/bagel/lib in LDFLAGS")])
+  ## because we changed the linked to CXX
+  LDFLAGS+=" -lmpifort -lgfortran -lstdc++"
+
+ if test x"${with_msmpi}" = x"yes"; then
+    AC_MSG_ERROR([qsimulate is not available with MSMPI])
+ fi
+fi
+
+
 AC_CONFIG_FILES([Makefile
               src/Makefile
               src/lib/Makefile
-              src/spdyn/Makefile])
+              src/lib/qsimulate/Makefile])
+AM_COND_IF([SPDYN],[AC_CONFIG_FILES([src/spdyn/Makefile])])
 AM_COND_IF([ATDYN],[AC_CONFIG_FILES([src/atdyn/Makefile])])
 AM_COND_IF([ANALYSIS],[AC_CONFIG_FILES([src/analysis/Makefile
                 src/analysis/libana/Makefile
@@ -1121,11 +1349,19 @@ AM_COND_IF([ANALYSIS],[AC_CONFIG_FILES([src/analysis/Makefile
                 src/analysis/trj_analysis/hb_analysis/Makefile
                 src/analysis/trj_analysis/lipidthick_analysis/Makefile
                 src/analysis/trj_analysis/qval_analysis/Makefile
+                src/analysis/trj_analysis/qval_residcg_analysis/Makefile
                 src/analysis/trj_analysis/rg_analysis/Makefile
                 src/analysis/trj_analysis/rmsd_analysis/Makefile
                 src/analysis/trj_analysis/tilt_analysis/Makefile
                 src/analysis/trj_analysis/trj_analysis/Makefile
-                src/analysis/trj_analysis/energy_analysis/Makefile
+                src/analysis/trj_analysis/ring_analysis/Makefile
+                src/analysis/sp_analysis/Makefile
+                src/analysis/sp_analysis/libspana/Makefile
+                src/analysis/sp_analysis/rdf_analysis/Makefile
+                src/analysis/sp_analysis/density_analysis/Makefile
+                src/analysis/sp_analysis/hbond_analysis/Makefile
+                src/analysis/sp_analysis/contact_analysis/Makefile
+                src/analysis/sp_analysis/sasa_analysis/Makefile
                 src/analysis/mode_analysis/Makefile
                 src/analysis/mode_analysis/avecrd_analysis/Makefile
                 src/analysis/mode_analysis/eigmat_analysis/Makefile
@@ -1138,6 +1374,7 @@ AM_COND_IF([ANALYSIS],[AC_CONFIG_FILES([src/analysis/Makefile
                 src/analysis/converter/remd_convert/Makefile
                 src/analysis/converter/rst_convert/Makefile
                 src/analysis/converter/rst_upgrade/Makefile
+                src/analysis/converter/cg_convert/Makefile
                 src/analysis/free_energy/Makefile
                 src/analysis/free_energy/mbar_analysis/Makefile
                 src/analysis/free_energy/meanforce_analysis/Makefile
@@ -1151,5 +1388,6 @@ AM_COND_IF([ANALYSIS],[AC_CONFIG_FILES([src/analysis/Makefile
                 src/analysis/utilities/pathcv_analysis/Makefile
                 src/analysis/utilities/qmmm_generator/Makefile
                 src/analysis/utilities/rpath_generator/Makefile
-                src/analysis/utilities/emmap_generator/Makefile])])
+                src/analysis/utilities/emmap_generator/Makefile
+                src/analysis/utilities/morph_generator/Makefile])])
 AC_OUTPUT

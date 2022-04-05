@@ -31,12 +31,15 @@ module table_libs_mod
   public :: table_water_pme_linear_fswitch
   public :: table_water_pme_linear_groshift
   public :: table_water_pme_linear_groswitch
+  public :: table_water_pme_linear_user_defined
+  public :: table_water_pme_linear_user_defined_lj1264
   public :: table_cutoff_cubic_noswitch
   public :: table_cutoff_cubic_switch
   public :: table_cutoff_cubic_fswitch
   public :: table_cutoff_cubic_groshift
   public :: table_cutoff_cubic_groswitch
   public :: table_cutoff_cubic_grodoubleshift
+  public :: table_flexibleangle
 
 contains
 
@@ -1575,6 +1578,248 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    table_water_pme_linear_user_defined
+  !> @brief        table for pme and linear in water table
+  !! @authors      CK, JJ
+  !! @param[in]    table_ene    : energy table
+  !! @param[in]    table_grad   : gradient table
+  !! @param[in]    lj6_OO       : LJ6 oxygen-oxygen
+  !! @param[in]    lj6_OH       : LJ6 oxygen-hydrogen
+  !! @param[in]    lj6_HH       : LJ6 hydrogen-hydrogen
+  !! @param[in]    lj12_OO      : LJ12 oxygen-oxygen
+  !! @param[in]    lj12_OH      : LJ12 oxygen-hydrogen
+  !! @param[in]    lj12_HH      : LJ12 hydrogen-hydrogen
+  !! @param[in]    cc_OO        : charge oxygen-oxygen
+  !! @param[in]    cc_OH        : charge oxygen-hydrogen
+  !! @param[in]    cc_HH        : charge hydrogen-hydrogen
+  !! @param[out]   table_ene_WW : energy table
+  !! @param[out]   table_de_WW  : gradient table
+  !! @note         J.Jung et al., J.Comput.Chem., 34, 2412-2420 (2013)
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine table_water_pme_linear_user_defined(table_ene, table_grad,       &
+                                                 lj6_OO,  lj6_OH,  lj6_HH,    &
+                                                 lj12_OO, lj12_OH, lj12_HH,   &
+                                                 cc_OO, cc_OH, cc_HH,         &
+                                                 table_ene_WW, table_de_WW)
+
+    ! formal arguments
+    real(wp),                intent(in)    :: table_ene(:)
+    real(wp),                intent(in)    :: table_grad(:)
+    real(wp),                intent(in)    :: lj6_OO
+    real(wp),                intent(in)    :: lj6_OH
+    real(wp),                intent(in)    :: lj6_HH
+    real(wp),                intent(in)    :: lj12_OO
+    real(wp),                intent(in)    :: lj12_OH
+    real(wp),                intent(in)    :: lj12_HH
+    real(wp),                intent(in)    :: cc_OO
+    real(wp),                intent(in)    :: cc_OH
+    real(wp),                intent(in)    :: cc_HH
+    real(wp),                intent(inout) :: table_ene_WW(:,:)
+    real(wp),                intent(inout) :: table_de_WW(:,:)
+
+    ! local variables
+    integer                  :: i, n_table_grid
+    real(wp)                 :: inv_r6, inv_r12, coul
+    real(wp)                 :: inv_de_r6, inv_de_r12, coul_de
+    real(wp)                 :: term_lj12_OO, term_lj12_OH, term_lj12_HH
+    real(wp)                 :: term_lj6_OO, term_lj6_OH, term_lj6_HH
+    real(wp)                 :: term_lj_OO, term_lj_OH, term_lj_HH
+
+
+    n_table_grid = size(table_ene)/6
+
+    do i = 1, n_table_grid-1
+      inv_r12  = table_ene(3*i-2)
+      inv_r6   = table_ene(3*i-1)
+      coul     = table_ene(3*i)
+
+      term_lj12_OO  = lj12_OO * inv_r12
+      term_lj12_OH  = lj12_OH * inv_r12
+      term_lj12_HH  = lj12_HH * inv_r12
+      term_lj6_OO   = lj6_OO * inv_r6
+      term_lj6_OH   = lj6_OH * inv_r6
+      term_lj6_HH   = lj6_HH * inv_r6
+
+      table_ene_WW(6*i-5,1) = term_lj12_OO - term_lj6_OO
+      table_ene_WW(6*i-5,2) = term_lj12_OH - term_lj6_OH
+      table_ene_WW(6*i-5,3) = term_lj12_HH - term_lj6_HH
+
+      table_ene_WW(6*i-4,1) = cc_OO*coul
+      table_ene_WW(6*i-4,2) = cc_OH*coul
+      table_ene_WW(6*i-4,3) = cc_HH*coul
+
+      inv_de_r12  = table_grad(3*i-2)
+      inv_de_r6   = table_grad(3*i-1)
+      coul_de     = table_grad(3*i)
+
+      term_lj12_OO  = lj12_OO * inv_de_r12
+      term_lj12_OH  = lj12_OH * inv_de_r12
+      term_lj12_HH  = lj12_HH * inv_de_r12
+      term_lj6_OO   = lj6_OO * inv_de_r6
+      term_lj6_OH   = lj6_OH * inv_de_r6
+      term_lj6_HH   = lj6_HH * inv_de_r6
+
+      table_de_WW(i,1) = term_lj12_OO - term_lj6_OO
+      table_de_WW(i,2) = term_lj12_OH - term_lj6_OH
+      table_de_WW(i,3) = term_lj12_HH - term_lj6_HH
+
+      table_de_WW(i,1) = table_de_WW(i,1) + cc_OO*coul_de
+      table_de_WW(i,2) = table_de_WW(i,2) + cc_OH*coul_de
+      table_de_WW(i,3) = table_de_WW(i,3) + cc_HH*coul_de
+
+      table_ene_WW(6*i-3,1:3) = table_de_WW(i,1:3)
+
+    end do
+
+    do i = 1, n_table_grid-1
+      table_ene_WW(6*i-2,1:3) = table_ene_WW(6*(i+1)-5,1:3) - &
+                                table_ene_WW(6*i-5,1:3)
+      table_ene_WW(6*i-1,1:3) = table_ene_WW(6*(i+1)-4,1:3) - &
+                                table_ene_WW(6*i-4,1:3)
+      table_ene_WW(6*i,1:3)   = table_ene_WW(6*(i+1)-3,1:3) - &
+                                table_ene_WW(6*i-3,1:3)
+    end do
+
+    return
+
+  end subroutine table_water_pme_linear_user_defined
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    table_water_pme_linear_user_defined_lj1264
+  !> @brief        table for pme and linear without switch
+  !! @authors      CK
+  !! @param[in]    table_ene   : energy table
+  !! @param[in]    tblj4_ene   : energy table lj4
+  !! @param[in]    table_grad  : gradient table
+  !! @param[in]    tblj4_grad  : gradient table lj4
+  !! @param[in]    lj4_OO      : LJ4 oxygen-oxygen
+  !! @param[in]    lj4_OH      : LJ4 oxygen-hydrogen
+  !! @param[in]    lj4_HH      : LJ4 hydrogen-hydrogen
+  !! @param[in]    lj6_OO      : LJ6 oxygen-oxygen
+  !! @param[in]    lj6_OH      : LJ6 oxygen-hydrogen
+  !! @param[in]    lj6_HH      : LJ6 hydrogen-hydrogen
+  !! @param[in]    lj12_OO     : LJ12 oxygen-oxygen
+  !! @param[in]    lj12_OH     : LJ12 oxygen-hydrogen
+  !! @param[in]    lj12_HH     : LJ12 hydrogen-hydrogen
+  !! @param[in]    cc_OO       : charge oxygen-oxygen
+  !! @param[in]    cc_OH       : charge oxygen-hydrogen
+  !! @param[in]    cc_HH       : charge hydrogen-hydrogen
+  !! @param[out]   table_ene_WW: energy table
+  !! @param[out]   table_de_WW : gradient table
+  !! @note         J.Jung et al., J.Comput.Chem., 34, 2412-2420 (2013)
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine table_water_pme_linear_user_defined_lj1264( &
+                                                    table_ene, tblj4_ene,      &
+                                                    table_grad, tblj4_grad,    &
+                                                    lj4_OO,  lj4_OH,  lj4_HH,  &
+                                                    lj6_OO,  lj6_OH,  lj6_HH,  &
+                                                    lj12_OO, lj12_OH, lj12_HH, &
+                                                    cc_OO, cc_OH, cc_HH,       &
+                                                    table_ene_WW, table_de_WW)
+
+    ! formal arguments
+    real(wp),                intent(in)    :: table_ene(:)
+    real(wp),                intent(in)    :: tblj4_ene(:)
+    real(wp),                intent(in)    :: table_grad(:)
+    real(wp),                intent(in)    :: tblj4_grad(:)
+    real(wp),                intent(in)    :: lj4_OO
+    real(wp),                intent(in)    :: lj4_OH
+    real(wp),                intent(in)    :: lj4_HH
+    real(wp),                intent(in)    :: lj6_OO
+    real(wp),                intent(in)    :: lj6_OH
+    real(wp),                intent(in)    :: lj6_HH
+    real(wp),                intent(in)    :: lj12_OO
+    real(wp),                intent(in)    :: lj12_OH
+    real(wp),                intent(in)    :: lj12_HH
+    real(wp),                intent(in)    :: cc_OO
+    real(wp),                intent(in)    :: cc_OH
+    real(wp),                intent(in)    :: cc_HH
+    real(wp),                intent(inout) :: table_ene_WW(:,:)
+    real(wp),                intent(inout) :: table_de_WW(:,:)
+
+    ! local variables
+    integer                  :: i, n_table_grid
+    real(wp)                 :: term_lj12_OO, term_lj12_OH, term_lj12_HH
+    real(wp)                 :: term_lj6_OO, term_lj6_OH, term_lj6_HH
+    real(wp)                 :: term_lj4_OO, term_lj4_OH, term_lj4_HH
+    real(wp)                 :: term_lj_OO, term_lj_OH, term_lj_HH
+    real(wp)                 :: inv_r12, inv_r6, inv_r4, coul
+    real(wp)                 :: inv_de_r12, inv_de_r6, inv_de_r4, coul_de
+
+
+    n_table_grid = size(table_ene)/6
+
+    do i = 1, n_table_grid-1
+      inv_r12  = table_ene(3*i-2)
+      inv_r6   = table_ene(3*i-1)
+      inv_r4   = tblj4_ene(i)
+      coul     = table_ene(3*i)
+
+      term_lj12_OO  = lj12_OO * inv_r12
+      term_lj12_OH  = lj12_OH * inv_r12
+      term_lj12_HH  = lj12_HH * inv_r12
+      term_lj6_OO   = lj6_OO * inv_r6
+      term_lj6_OH   = lj6_OH * inv_r6
+      term_lj6_HH   = lj6_HH * inv_r6
+      term_lj4_OO   = lj4_OO * inv_r4
+      term_lj4_OH   = lj4_OH * inv_r4
+      term_lj4_HH   = lj4_HH * inv_r4
+
+      table_ene_WW(6*i-5,1) = term_lj12_OO - term_lj6_OO - term_lj4_OO
+      table_ene_WW(6*i-5,2) = term_lj12_OH - term_lj6_OH - term_lj4_OH
+      table_ene_WW(6*i-5,3) = term_lj12_HH - term_lj6_HH - term_lj4_HH
+
+      table_ene_WW(6*i-4,1) = cc_OO*coul
+      table_ene_WW(6*i-4,2) = cc_OH*coul
+      table_ene_WW(6*i-4,3) = cc_HH*coul
+
+      inv_de_r12  = table_grad(3*i-2)
+      inv_de_r6   = table_grad(3*i-1)
+      inv_de_r4   = tblj4_grad(i)
+      coul_de     = table_grad(3*i)
+
+      term_lj12_OO  = lj12_OO * inv_de_r12
+      term_lj12_OH  = lj12_OH * inv_de_r12
+      term_lj12_HH  = lj12_HH * inv_de_r12
+      term_lj6_OO   = lj6_OO * inv_de_r6
+      term_lj6_OH   = lj6_OH * inv_de_r6
+      term_lj6_HH   = lj6_HH * inv_de_r6
+      term_lj4_OO   = lj4_OO * inv_de_r4
+      term_lj4_OH   = lj4_OH * inv_de_r4
+      term_lj4_HH   = lj4_HH * inv_de_r4
+
+      table_de_WW(i,1) = term_lj12_OO - term_lj6_OO - term_lj4_OO
+      table_de_WW(i,2) = term_lj12_OH - term_lj6_OH - term_lj4_OH
+      table_de_WW(i,3) = term_lj12_HH - term_lj6_HH - term_lj4_HH
+
+      table_de_WW(i,1) = table_de_WW(i,1) + cc_OO*coul_de
+      table_de_WW(i,2) = table_de_WW(i,2) + cc_OH*coul_de
+      table_de_WW(i,3) = table_de_WW(i,3) + cc_HH*coul_de
+
+      table_ene_WW(6*i-3,1:3) = table_de_WW(i,1:3)
+
+    end do
+
+    do i = 1, n_table_grid-1
+      table_ene_WW(6*i-2,1:3) = table_ene_WW(6*(i+1)-5,1:3) - &
+                                table_ene_WW(6* i   -5,1:3)
+      table_ene_WW(6*i-1,1:3) = table_ene_WW(6*(i+1)-4,1:3) - &
+                                table_ene_WW(6* i   -4,1:3)
+      table_ene_WW(6*i,1:3)   = table_ene_WW(6*(i+1)-3,1:3) - &
+                                table_ene_WW(6* i   -3,1:3)
+    end do
+
+    return
+
+  end subroutine table_water_pme_linear_user_defined_lj1264
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    table_cutoff_cubic_noswitch
   !> @brief        table for pme and cubic  without switch
   !! @authors      CK, JJ
@@ -2490,5 +2735,51 @@ contains
     return
 
   end subroutine table_cutoff_cubic_grodoubleshift
+
+  subroutine table_flexibleangle(atype, t123, theta, efunc, d2func,  &
+                                 energy, gradient)
+
+    ! formal arguments
+    integer,                 intent(in)    :: atype
+    real(wp),                intent(in)    :: t123
+    real(wp),                intent(in)    :: theta(:,:)
+    real(wp),                intent(in)    :: efunc(:,:)
+    real(wp),                intent(in)    :: d2func(:,:)
+    real(wp),                intent(out)   :: energy
+    real(wp),                intent(out)   :: gradient
+
+    ! local variables
+    integer                  :: i, k
+    integer                  :: khi, klo
+    real(wp)                 :: etmp, a, b, h, invh
+
+    klo = 1
+    khi = size(theta(:,atype))
+
+    do while (khi - klo > 1) 
+      k = int((khi+klo)/2)
+      if (theta(k, atype) > t123) then
+        khi = k
+      else
+        klo = k
+      endif
+    end do
+    
+    h    = theta(khi, atype) - theta(klo, atype)
+    invh = 1.0_wp/h
+    
+    a = (theta(khi, atype) - t123)*invh
+    b = (t123-theta(klo, atype))*invh
+    
+    energy =  a*efunc(klo, atype) + b*efunc(khi, atype) &
+            + ( (a*a*a-a)*d2func(klo, atype)                   &
+            +   (b*b*b-b)*d2func(khi, atype)) * h * h /6.0_wp
+
+    gradient = (efunc(khi,  atype)-efunc(klo,  atype))*invh         &
+          + ( ( 3.0_wp*b*b-1.0_wp) *d2func(khi, atype)                   &
+          -   ( 3.0_wp*a*a-1.0_wp) *d2func(klo, atype) ) * h /6.0_wp
+
+    return
+  end subroutine table_flexibleangle
 
 end module table_libs_mod

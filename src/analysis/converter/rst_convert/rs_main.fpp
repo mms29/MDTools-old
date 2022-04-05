@@ -28,12 +28,12 @@ program rs_main
   implicit none
 
   ! local variables
-  character(Maxline) :: ctrl_filename
-  type(s_ctrl_data)  :: ctrl_data
-  type(s_input)      :: input
-  type(s_molecule)   :: molecule
-  type(s_option)     :: option
-  type(s_output)     :: output
+  character(MaxFilename) :: ctrl_filename
+  type(s_ctrl_data)      :: ctrl_data
+  type(s_input)          :: input
+  type(s_molecule)       :: molecule
+  type(s_option)         :: option
+  type(s_output)         :: output
 
 
   my_city_rank = 0

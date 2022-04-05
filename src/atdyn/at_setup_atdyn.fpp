@@ -19,6 +19,7 @@ module at_setup_atdyn_mod
   use at_input_mod
   use at_remd_mod
   use at_rpath_mod
+  use at_morph_mod
   use at_minimize_mod
   use at_vibration_mod
   use at_dynamics_mod
@@ -39,6 +40,7 @@ module at_setup_atdyn_mod
   use at_ensemble_str_mod
   use at_remd_str_mod
   use at_rpath_str_mod
+  use at_morph_str_mod
   use at_restraints_str_mod
   use at_constraints_str_mod
   use at_boundary_str_mod
@@ -47,9 +49,13 @@ module at_setup_atdyn_mod
   use at_energy_str_mod
   use at_qmmm_mod
   use at_experiments_mod
+  use select_mod
+  use fitting_mod
+  use fitting_str_mod
   use at_gamd_mod
   use molecules_mod
   use molecules_str_mod
+  use fileio_morph_mod
   use fileio_grocrd_mod
   use fileio_grotop_mod
   use fileio_ambcrd_mod
@@ -64,7 +70,9 @@ module at_setup_atdyn_mod
   use fileio_mode_mod
   use fileio_rstmep_mod
   use fileio_eef1_mod
+  use fileio_table_mod
   use fileio_spot_mod
+  use structure_check_mod
   use messages_mod
   use mpi_parallel_mod
  
@@ -77,6 +85,7 @@ module at_setup_atdyn_mod
   public  :: setup_atdyn_remd
   public  :: setup_atdyn_rpath
   public  :: setup_atdyn_vib
+  public  :: setup_atdyn_morph
 
 contains
 
@@ -132,6 +141,8 @@ contains
     type(s_grocrd)           :: groref
     type(s_mode)             :: mode
     type(s_eef1)             :: eef1
+    type(s_table)            :: table
+    type(s_morph_in)         :: morph_in
     type(s_spot)             :: spot
 
 
@@ -139,7 +150,7 @@ contains
     !
     call input_md(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
                   pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
-                  mode, eef1, spot)
+                  mode, eef1, table, morph_in, spot)
 
     ! define molecules
     !
@@ -170,11 +181,23 @@ contains
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
 
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
+
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars, dynamics,                &
                        ctrl_data%ens_info%tpcontrol)
-    call dealloc_rst_all(rst)
 
     ! setup restraints
     !
@@ -183,20 +206,23 @@ contains
 
     ! setup energy
     !
-    call setup_energy(restraints, dynvars%energy)
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
-                    psf, molecule, enefunc%qmmm)
+                    psf, rst, ctrl_data%ene_info%forcefield, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
+    call dealloc_rst_all(rst)
 
     ! define enefunc
     !
-    call define_enefunc(ctrl_data%ene_info,             &
-                        boundary,                       &
-                        par, gpr, prmtop, grotop, eef1, &
+    call define_enefunc(ctrl_data%ene_info,                    &
+                        boundary,                              &
+                        par, gpr, prmtop, grotop, eef1, table, &
                         molecule, restraints, enefunc)
+
+    call setup_enefunc_morph_in(morph_in, enefunc)
 
     call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
                              molecule, enefunc)
@@ -216,12 +242,14 @@ contains
 
     ! setup constraints
     !
-    call setup_constraints(ctrl_data%cons_info, dynamics, boundary, molecule, &
+    call setup_constraints(ctrl_data%cons_info, ctrl_data%sel_info, &
+                           dynamics, boundary, molecule, &
                            enefunc, constraints)
 
     ! setup pairlist
     !
-    call setup_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+    call setup_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
 
     ! setup experiments
     !
@@ -244,10 +272,9 @@ contains
       write(MsgOut,'(A)') 
     endif
 
-    ! stop if QM/MM is on
-    if (enefunc%qmmm%do_qmmm) then
-      call error_msg('Setup_Atdyn_Md> QM/MM-MD is not available')
-    end if
+    ! setup ESP/MM-MD
+    if (dynamics%esp_mm) &
+      call setup_dynamics_espmm(molecule, dynamics, dynvars, enefunc%qmmm)
 
     return
 
@@ -301,14 +328,16 @@ contains
     type(s_grocrd)           :: groref
     type(s_mode)             :: mode
     type(s_eef1)             :: eef1
+    type(s_table)            :: table
+    type(s_morph_in)         :: morph_in
     type(s_spot)             :: spot
 
 
-    ! input md
+    ! input min
     !
     call input_min(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
                    pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
-                   mode, eef1, spot)
+                   mode, eef1, table, morph_in, spot)
 
     ! define molecules
     !
@@ -332,33 +361,60 @@ contains
                         ctrl_data%sel_info,                             &
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
+    
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
 
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars)
-    call dealloc_rst_all(rst)    
+    
+
+    ! setup structure_check
+    !
+    call setup_structure_check(molecule,                                &
+                     ctrl_data%ene_info%forcefield_char, dynvars%coord, &
+                     ctrl_data%min_info%check_structure,                &
+                     ctrl_data%min_info%fix_ring_error,                 &
+                     ctrl_data%min_info%fix_chirality_error,            &
+                     ctrl_data%min_info%exclude_ring_grpid,             &
+                     ctrl_data%min_info%exclude_chiral_grpid)
 
     ! setup restraints
     !
     call setup_restraints(ctrl_data%res_info, ctrl_data%sel_info,       &
                           molecule, restraints)
 
+
     ! setup energy
     !
-    call setup_energy(restraints, dynvars%energy)
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
-                    psf, molecule, enefunc%qmmm)
+                    psf, rst, ctrl_data%ene_info%forcefield, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
+    call dealloc_rst_all(rst)    
 
     ! define enefunc
     !
-    call define_enefunc(ctrl_data%ene_info,             &
-                        boundary,                       &
-                        par, gpr, prmtop, grotop, eef1, &
+    call define_enefunc(ctrl_data%ene_info,                    &
+                        boundary,                              &
+                        par, gpr, prmtop, grotop, eef1, table, &
                         molecule, restraints, enefunc)
+
+    call setup_enefunc_morph_in(morph_in, enefunc)
 
     call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
                              molecule, enefunc)
@@ -376,7 +432,8 @@ contains
 
     ! setup pairlist
     !
-    call setup_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+    call setup_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
 
     ! setup experiments
     !
@@ -458,6 +515,8 @@ contains
     type(s_rst)                 :: rst
     type(s_mode)                :: mode
     type(s_eef1)                :: eef1
+    type(s_table)               :: table
+    type(s_morph_in)            :: morph_in
     type(s_spot)                :: spot
 
 
@@ -465,7 +524,7 @@ contains
     !
     call input_remd(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
                     pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
-                    mode, eef1, spot)
+                    mode, eef1, table, morph_in, spot)
 
     ! define molecule
     !
@@ -493,12 +552,25 @@ contains
                         ctrl_data%sel_info,                             &
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
+    
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
 
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars, dynamics,                   &
                        ctrl_data%ens_info%tpcontrol)
-
+    
     ! setup restraints
     !
     call setup_restraints(ctrl_data%res_info, ctrl_data%sel_info,          &
@@ -511,20 +583,22 @@ contains
 
     ! setup energy
     !
-    call setup_energy(restraints, dynvars%energy)
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
-                    psf, molecule, enefunc%qmmm)
+                    psf, rst, ctrl_data%ene_info%forcefield, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
 
     ! define enefunc
     !
-    call define_enefunc(ctrl_data%ene_info,             &
-                        boundary,                       &
-                        par, gpr, prmtop, grotop, eef1, &
+    call define_enefunc(ctrl_data%ene_info,                    &
+                        boundary,                              &
+                        par, gpr, prmtop, grotop, eef1, table, &
                         molecule, restraints, enefunc)
+
+    call setup_enefunc_morph_in(morph_in, enefunc)
 
     call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
                              molecule, enefunc)
@@ -535,13 +609,15 @@ contains
     call dealloc_grotop_all(grotop)
     call dealloc_eef1(eef1)
 
+
     ! setup ensemble
     !
     call setup_ensemble(ctrl_data%ens_info, boundary, enefunc, ensemble)
 
     ! setup constraints
     !
-    call setup_constraints(ctrl_data%cons_info, dynamics, boundary, molecule, &
+    call setup_constraints(ctrl_data%cons_info, ctrl_data%sel_info, &
+                           dynamics, boundary, molecule, &
                            enefunc, constraints)
 
     ! setup remd
@@ -552,7 +628,8 @@ contains
 
     ! setup pairlist
     !
-    call setup_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+    call setup_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
 
     ! setup experiments
     !
@@ -575,10 +652,9 @@ contains
       write(MsgOut,'(A)') 
     endif
 
-    ! stop if QM/MM is on
-    if (enefunc%qmmm%do_qmmm) then
-      call error_msg('Setup_Atdyn_Md> QM/MM-MD is not available')
-    end if
+    ! ESP/MM-MD is not available for REMD
+    if (dynamics%esp_mm .and. main_rank) &
+      call error_msg('Setup_Atdyn_Remd> ESP/MM is not available for REMD.')
 
     return
 
@@ -644,18 +720,21 @@ contains
     type(s_mode)                :: mode
     type(s_rstmep)              :: rstmep
     type(s_eef1)                :: eef1
+    type(s_table)               :: table
+    type(s_morph_in)            :: morph_in
     type(s_spot)                :: spot
 
 
     ! define replica
     !
     call define_nreplica(ctrl_data%rpath_info, rpath)
+    my_replica_no = nrep_per_proc*(my_country_no) + 1
 
     ! input rpath
     !
     call input_rpath(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop,&
                     pdb, crd, ambcrd, grocrd, rst, ref, fit, ambref,        &
-                    groref, mode, rstmep, eef1, spot)
+                    groref, mode, rstmep, eef1, table, morph_in, spot)
 
     ! define molecule
     !
@@ -689,11 +768,25 @@ contains
                         ctrl_data%sel_info,                             &
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
+    
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
 
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars, dynamics,               &
                        ctrl_data%ens_info%tpcontrol)
+
 
     ! setup restraints
     !
@@ -702,20 +795,22 @@ contains
 
     ! setup energy
     !
-    call setup_energy(restraints, dynvars%energy)
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
-                    psf, molecule, enefunc%qmmm)
+                    psf, rst, ctrl_data%ene_info%forcefield, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
 
     ! define enefunc
     !
-    call define_enefunc(ctrl_data%ene_info,             &
-                        boundary,                       &
-                        par, gpr, prmtop, grotop, eef1, &
+    call define_enefunc(ctrl_data%ene_info,                    &
+                        boundary,                              &
+                        par, gpr, prmtop, grotop, eef1, table, &
                         molecule, restraints, enefunc)
+
+    call setup_enefunc_morph_in(morph_in, enefunc)
 
     if (ctrl_data%rpath_info%rpathmode == RpathmodeMFEP) then
       call setup_fitting_atdyn(.true., ctrl_data%fit_info, ctrl_data%sel_info, &
@@ -747,7 +842,8 @@ contains
 
     ! setup constraints
     !
-    call setup_constraints(ctrl_data%cons_info, dynamics, boundary, molecule, &
+    call setup_constraints(ctrl_data%cons_info, ctrl_data%sel_info, &
+                           dynamics, boundary, molecule, &
                            enefunc, constraints)
 
     ! setup rpath
@@ -762,7 +858,8 @@ contains
 
     ! setup pairlist
     !
-    call setup_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+    call setup_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
 
     call dealloc_restraints_all(restraints)
 
@@ -776,6 +873,12 @@ contains
           sqrt(enefunc%minimum_contact)
       write(MsgOut,'(A)') 
     endif
+
+    ! setup ESP/MM-MD
+    if (dynamics%esp_mm) &
+      call setup_dynamics_espmm(molecule, dynamics, dynvars, enefunc%qmmm)
+
+    return
 
   end subroutine setup_atdyn_rpath
 
@@ -827,6 +930,8 @@ contains
     type(s_grocrd)           :: groref
     type(s_mode)             :: mode
     type(s_eef1)             :: eef1
+    type(s_table)            :: table
+    type(s_morph_in)         :: morph_in
     type(s_spot)             :: spot
 
 
@@ -834,7 +939,7 @@ contains
     !
     call input_min(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
                    pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
-                   mode, eef1, spot)
+                   mode, eef1, table, morph_in, spot)
 
     ! define molecules
     !
@@ -858,11 +963,23 @@ contains
                         ctrl_data%sel_info,                             &
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
+    
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
 
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars)
-    call dealloc_rst_all(rst)    
 
     ! setup restraints
     !
@@ -871,20 +988,23 @@ contains
 
     ! setup energy
     !
-    call setup_energy(restraints, dynvars%energy)
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
-                    psf, molecule, enefunc%qmmm)
+                    psf, rst, ctrl_data%ene_info%forcefield, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
+    call dealloc_rst_all(rst)    
 
     ! define enefunc
     !
     call define_enefunc(ctrl_data%ene_info,             &
                         boundary,                       &
-                        par, gpr, prmtop, grotop, eef1, &
+                        par, gpr, prmtop, grotop, eef1, table, &
                         molecule, restraints, enefunc)
+
+    call setup_enefunc_morph_in(morph_in, enefunc)
 
     call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
                              molecule, enefunc)
@@ -898,12 +1018,14 @@ contains
 
     ! setup vibration
     !
-    call setup_vibration(ctrl_data%vib_info, ctrl_data%sel_info, &
-                         molecule, enefunc%qmmm, vibration)
+    call setup_vibration(ctrl_data%inp_info, ctrl_data%vib_info, &
+                         ctrl_data%sel_info, molecule, dynvars%coord, &
+                         enefunc%qmmm, vibration)
 
     ! setup pairlist
     !
-    call setup_pairlist(enefunc, boundary, dynvars%coord, pairlist)
+    call setup_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
 
     ! set output
     !
@@ -919,5 +1041,166 @@ contains
     return
 
   end subroutine setup_atdyn_vib
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_atdyn_morph
+  !> @brief        setup variables and structures in morphing
+  !! @authors      CK
+  !! @param[in]    ctrl_data : information of control parameters
+  !! @param[out]   output    : information of output
+  !! @param[out]   molecule  : information of molecules
+  !! @param[out]   enefunc   : information of energy function
+  !! @param[out]   pairlist  : information of nonbonded pairlist
+  !! @param[out]   dynvars   : information of dynamic variables
+  !! @param[out]   morph     : information of morph
+  !! @param[out]   boundary  : information of boundary condition
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_atdyn_morph(ctrl_data, output, molecule, enefunc, pairlist, &
+                             dynvars, morph, boundary)
+
+    ! formal arguments
+    type(s_ctrl_data),       intent(in)    :: ctrl_data
+    type(s_output),          intent(inout) :: output
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_morph),           intent(inout) :: morph
+    type(s_boundary),        intent(inout) :: boundary
+
+    ! local variables
+    type(s_restraints)       :: restraints
+    type(s_top)              :: top
+    type(s_par)              :: par
+    type(s_gpr)              :: gpr
+    type(s_psf)              :: psf
+    type(s_prmtop)           :: prmtop
+    type(s_grotop)           :: grotop
+    type(s_pdb)              :: pdb
+    type(s_crd)              :: crd
+    type(s_ambcrd)           :: ambcrd
+    type(s_grocrd)           :: grocrd
+    type(s_rst)              :: rst
+    type(s_pdb)              :: ref
+    type(s_pdb)              :: fit
+    type(s_ambcrd)           :: ambref
+    type(s_grocrd)           :: groref
+    type(s_mode)             :: mode
+    type(s_eef1)             :: eef1
+    type(s_table)            :: table
+    type(s_morph_in)         :: morph_in
+    type(s_spot)             :: spot
+
+    ! input morph
+    !
+    call input_morph(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
+                   pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref, mode, &
+                   eef1, table, morph_in)
+
+    ! define molecules
+    !
+    call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
+                          mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
+    call dealloc_top_all(top)
+    call dealloc_pdb_all(pdb)
+    call dealloc_crd_all(crd)
+    call dealloc_pdb_all(ref)
+    call dealloc_pdb_all(fit)
+    call dealloc_ambcrd_all(ambcrd)
+    call dealloc_ambcrd_all(ambref)
+    call dealloc_grocrd_all(grocrd)
+    call dealloc_grocrd_all(groref)
+    call dealloc_mode(mode)
+
+    ! setup boundary conditions
+    !
+    call setup_boundary(ctrl_data%bound_info, ctrl_data%ene_info%table, &
+                        ctrl_data%ene_info%pairlistdist,                &
+                        ctrl_data%sel_info,                             &
+                        molecule, rst, spot, boundary)
+    
+    if (ctrl_data%ene_info%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(ctrl_data%ene_info%cg_pairlistdist_ele, &
+          ctrl_data%ene_info%cg_pairlistdist_126,                     &
+          ctrl_data%ene_info%cg_pairlistdist_PWMcos,                  &
+          ctrl_data%ene_info%cg_pairlistdist_DNAbp,                   &
+          ctrl_data%ene_info%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(ctrl_data%ene_info%table,                     &
+          ctrl_data%ene_info%pairlistdist,                               &
+          boundary)
+    end if
+
+    ! setup dynamic variables
+    !
+    call setup_dynvars(molecule, rst, dynvars)
+    call dealloc_rst_all(rst)    
+
+    ! setup restraints
+    !
+    call setup_restraints(ctrl_data%res_info, ctrl_data%sel_info,       &
+                          molecule, restraints)
+
+    ! setup energy
+    !
+    call setup_energy(restraints, ctrl_data%ene_info, dynvars%energy)
+
+    ! do not qmmm in MORPH
+    if (ctrl_data%qmmm_info%do_qmmm) &
+      call error_msg('Setup_Atdyn_Moprh> QM/MM is not allowed in Moprh')
+    enefunc%qmmm%do_qmmm=.false.
+
+    call dealloc_psf_all(psf)
+
+    ! define enefunc
+    !
+    enefunc%morph_flag=.true.
+    call define_enefunc(ctrl_data%ene_info, boundary,    &
+                        par, gpr, prmtop, grotop, eef1, table, &
+                        molecule, restraints, enefunc)
+    call dealloc_par_all(par)
+    call dealloc_gpr_all(gpr)
+    call dealloc_prmtop_all(prmtop)
+    call dealloc_grotop_all(grotop)
+
+    ! set parameters for fitting
+    !
+    call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
+                             molecule, enefunc)
+
+    ! setup morph
+    !
+    call setup_morph(ctrl_data%morph_info, morph_in, morph, dynvars, &
+    molecule, enefunc, restraints)
+
+    call dealloc_morph_in(morph_in)
+
+    call dealloc_restraints_all(restraints)
+
+    if (enefunc%num_morph_bb+enefunc%num_morph_sc <= 0) then
+      call error_msg('Setup_Atdyn_Morph> no morphing distance')
+    endif
+
+    ! setup pairlist
+    !
+    call setup_pairlist(enefunc, boundary, molecule%atom_coord, dynvars%trans, &
+                        dynvars%coord_pbc, pairlist)
+
+    ! set output
+    !
+    call setup_output_morph(ctrl_data%out_info, morph, output)
+
+    dynvars%verbose = morph%verbose
+
+    if (enefunc%contact_check) &
+      call error_msg('Setup_atdyn_morph> contact_check is not allowed')
+
+    return
+
+  end subroutine setup_atdyn_morph
 
 end module at_setup_atdyn_mod

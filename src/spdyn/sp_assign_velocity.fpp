@@ -19,17 +19,26 @@ module sp_assign_velocity_mod
   use mpi_parallel_mod
   use constants_mod
   use sp_dynvars_mod
-#ifdef MPI
+  use sp_domain_str_mod
+  use sp_fep_utils_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! subroutines
   public  :: initial_velocity
   public  :: stop_trans_rotation
   private :: reduce_com
+  ! FEP
+  public  :: stop_trans_rotation_fep
 
 contains
 
@@ -174,7 +183,7 @@ contains
       end do
     end do
  
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(mpi_in_place, l_angular, 3, mpi_real8, &
                        mpi_sum, mpi_comm_country, ierror)
 #endif
@@ -210,7 +219,7 @@ contains
     inertia(3,2) = - yz
     inertia(3,3) =   xx + yy
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(mpi_in_place, inertia, 9, mpi_real8, &
                        mpi_sum, mpi_comm_country, ierror)
 #endif
@@ -276,7 +285,7 @@ contains
     before_reduce(4:6) = val2(1:3)
     before_reduce(7)   = val3
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(before_reduce, after_reduce, 7, mpi_real8, &
                        mpi_sum, mpi_comm_city, ierror)
 #else
@@ -361,5 +370,174 @@ contains
     return
 
   end subroutine compute_inverse_matrix
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    stop_trans_rotation_fep
+  !> @brief        remove trans and rotational motion about the center of mass
+  !>               for FEP
+  !! @authors      HO
+  !! @param[in]    ncell      : number of cell
+  !! @param[in]    natom      : number of atom in each cell
+  !! @param[in]    stop_trans : flag for stop translational motion
+  !! @param[in]    stop_rot   : flag for stop rotational motion
+  !! @param[in]    mass       : mass in each domain
+  !! @param[in]    coord      : coordinates in each domain
+  !! @param[inout] velocity   : velocities in each domain
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine stop_trans_rotation_fep(ncell, natom, stop_trans, stop_rot, &
+      mass, coord, velocity, domain)
+
+    ! formal arguments
+    integer,                 intent(in)    :: ncell
+    integer,                 intent(in)    :: natom(:)
+    logical,                 intent(in)    :: stop_trans
+    logical,                 intent(in)    :: stop_rot
+    real(dp),                intent(in)    :: mass(:,:)
+    real(dp),                intent(in)    :: coord(:,:,:)
+    real(dp),                intent(inout) :: velocity(:,:,:)
+    type(s_domain),          intent(in)    :: domain
+
+    ! local variables
+    real(dp)                 :: inertia(3,3), inv_inertia(3,3)
+    real(dp)                 :: total_mass, ccom(3), vcom(3)
+    real(dp)                 :: l_angular(1:3)
+    real(dp)                 :: c(3), v(3), omega(3)
+    real(dp)                 :: xx, xy, xz, yy, yz, zz, x, y, z
+    integer                  :: i, j, k, ix
+
+    ! calculate the center of mass of coordinates and velocities
+    !
+    ccom(1:3)  = 0.0_dp
+    vcom(1:3)  = 0.0_dp
+    total_mass = 0.0_dp
+    do i = 1, ncell
+      do ix = 1, natom(i)
+        ! FEP: skip singleB to avoid duplication
+        if (domain%fep_use) then
+          if (domain%fepgrp(ix,i) == 2) cycle
+        end if
+
+        ccom(1:3)  = ccom(1:3) + coord(1:3,ix,i)   *mass(ix,i)
+        vcom(1:3)  = vcom(1:3) + velocity(1:3,ix,i)*mass(ix,i)
+        total_mass = total_mass + mass(ix,i)
+      end do
+    end do
+
+    call reduce_com(ccom, vcom, total_mass)
+    
+    ccom(1:3) = ccom(1:3) / total_mass
+    vcom(1:3) = vcom(1:3) / total_mass
+
+    ! calculate the angular momentum
+    !
+    l_angular(1:3) = 0.0_dp
+    do i = 1, ncell
+      do ix = 1, natom(i)
+        ! FEP: skip singleB to avoid duplication
+        if (domain%fep_use) then
+          if (domain%fepgrp(ix,i) == 2) cycle
+        end if
+
+        c(1:3) = coord   (1:3,ix,i) - ccom(1:3)
+        v(1:3) = velocity(1:3,ix,i) - vcom(1:3)
+        l_angular(1) = l_angular(1) + (c(2)*v(3) - c(3)*v(2))*mass(ix,i)
+        l_angular(2) = l_angular(2) + (c(3)*v(1) - c(1)*v(3))*mass(ix,i)
+        l_angular(3) = l_angular(3) + (c(1)*v(2) - c(2)*v(1))*mass(ix,i)
+      end do
+    end do
+ 
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(mpi_in_place, l_angular, 3, mpi_real8, &
+                       mpi_sum, mpi_comm_country, ierror)
+#endif
+
+    ! calculate the inertia tensor (I)
+    !
+    xx = 0.0_dp
+    xy = 0.0_dp
+    xz = 0.0_dp
+    yy = 0.0_dp
+    yz = 0.0_dp
+    zz = 0.0_dp
+
+    do i = 1, ncell
+      do ix = 1, natom(i)
+        ! FEP: skip singleB to avoid duplication
+        if (domain%fep_use) then
+          if (domain%fepgrp(ix,i) == 2) cycle
+        end if
+
+        c(1:3) = coord(1:3,ix,i) - ccom(1:3)
+        xx = xx + c(1)*c(1)*mass(ix,i)
+        xy = xy + c(1)*c(2)*mass(ix,i)
+        xz = xz + c(1)*c(3)*mass(ix,i)
+        yy = yy + c(2)*c(2)*mass(ix,i)
+        yz = yz + c(2)*c(3)*mass(ix,i)
+        zz = zz + c(3)*c(3)*mass(ix,i)
+      end do
+    end do
+
+    inertia(1,1) =   yy + zz
+    inertia(1,2) = - xy
+    inertia(1,3) = - xz
+    inertia(2,1) = - xy
+    inertia(2,2) =   xx + zz
+    inertia(2,3) = - yz
+    inertia(3,1) = - xz
+    inertia(3,2) = - yz
+    inertia(3,3) =   xx + yy
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(mpi_in_place, inertia, 9, mpi_real8, &
+                       mpi_sum, mpi_comm_country, ierror)
+#endif
+
+    ! calculate the inverse matrix of the inertia tensor
+    !
+    call compute_inverse_matrix(3, inertia, inv_inertia)
+ 
+    ! calculate the angular velocity (OMG)
+    !
+    omega(1) = inv_inertia(1,1)*l_angular(1) + inv_inertia(1,2)*l_angular(2) &
+             + inv_inertia(1,3)*l_angular(3)
+    omega(2) = inv_inertia(2,1)*l_angular(1) + inv_inertia(2,2)*l_angular(2) &
+             + inv_inertia(2,3)*l_angular(3)
+    omega(3) = inv_inertia(3,1)*l_angular(1) + inv_inertia(3,2)*l_angular(2) &
+             + inv_inertia(3,3)*l_angular(3)
+
+    ! remove translational motion
+    !
+    if (stop_trans) then
+      do i = 1, ncell
+        do ix = 1, natom(i)
+          velocity(1:3,ix,i) = velocity(1:3,ix,i) - vcom(1:3)
+        end do
+      end do
+    end if
+
+    ! remove rotational motion
+    !
+    if (stop_rot) then
+      do i = 1, ncell
+        do ix = 1, natom(i)
+          c(1:3) = coord(1:3,ix,i) - ccom(1:3)
+          velocity(1,ix,i) = velocity(1,ix,i) - (omega(2)*c(3) - omega(3)*c(2))
+          velocity(2,ix,i) = velocity(2,ix,i) - (omega(3)*c(1) - omega(1)*c(3))
+          velocity(3,ix,i) = velocity(3,ix,i) - (omega(1)*c(2) - omega(2)*c(1))
+        end do
+      end do
+    end if
+
+    ! FEP: synchronize single B with single A
+    if (domain%fep_use) then
+      call sync_single_fep(domain, velocity)
+    end if
+
+    return
+
+  end subroutine stop_trans_rotation_fep
 
 end module sp_assign_velocity_mod

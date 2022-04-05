@@ -27,6 +27,7 @@ module sp_constraints_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
+  use sp_fep_utils_mod
 
   implicit none
   private
@@ -293,7 +294,7 @@ contains
 
       ! setup SETTLE
       !
-      if (constraints%fast_water) then
+      if (constraints%fast_water .and. enefunc%table%num_water > 0) then
 
         if (constraints%tip4) then
 
@@ -337,12 +338,14 @@ contains
 
       end if
 
-    else if (constraints%fast_water .and. .not.enefunc%table%tip4) then
+    else if (constraints%fast_water .and. .not.enefunc%table%tip4 &
+             .and. enefunc%table%num_water > 0) then
 
       call setup_fast_water(par, prmtop, grotop, &
                             molecule, enefunc, constraints)
 
-    else if (enefunc%table%tip4) then
+    else if (enefunc%table%tip4 .and. &
+             enefunc%table%num_water > 0) then
 
       call setup_fast_water_tip4(par, prmtop, grotop, &
                                  molecule, enefunc, constraints)
@@ -491,6 +494,11 @@ contains
 
     end select
 
+    ! FEP: synchronize single B with single A
+    if (domain%fep_use) then
+      call sync_single_fep(domain, coord)
+      call sync_single_fep(domain, vel)
+    end if
 
     call timer(TimerConstraint, TimerOff)
 
@@ -1567,6 +1575,8 @@ contains
     integer                      :: icel, i, j, k, ih, connect, id
     integer                      :: atm1, atm2, iatm(1:8)
     integer                      :: iteration, omp_get_thread_num
+    ! FEP
+    real(dp)                     :: lambbond
 
     real(dp),            pointer :: HGr_bond_dist(:,:,:,:)
     real(dp),            pointer :: HGr_bond_vector(:,:,:,:,:)
@@ -1595,7 +1605,7 @@ contains
     !$omp private(icel, i, j, k, ih, atm1, atm2, shake_end, r, x12, y12, z12,  &
     !$omp         dist2, imass1, imass2, x12_old, y12_old, z12_old,            &
     !$omp         factor, g12, g12m1, g12m2, v12m1, v12m2, fx, fy, fz,         &
-    !$omp         viri, id, coord_dtmp, vel_dtmp, iatm)
+    !$omp         viri, id, coord_dtmp, vel_dtmp, iatm, lambbond)
 
 #ifdef OMP
     id = omp_get_thread_num()
@@ -1734,6 +1744,38 @@ contains
         end do
       end do
     end do
+
+    ! FEP: virials for atoms in single topology are scaled by lambbond
+    if (domain%fep_use) then
+      do icel = id+1, ncell, nthread
+        do j = 1, connect
+          do k = 1, HGr_local(j,icel)
+            iatm(1:j+1) = HGr_bond_list(1:j+1,k,j,icel)
+            do ih = 1, j
+              if ((domain%fepgrp(iatm(ih+1),icel) == 1) .and. &
+                  (domain%fepgrp(iatm(1),icel) == 1)) then
+                lambbond = real(domain%lambbondA,dp)
+              else if ((domain%fepgrp(iatm(ih+1),icel) == 2) .and. &
+                       (domain%fepgrp(iatm(1),icel) == 2)) then
+                lambbond = real(domain%lambbondB,dp)
+              else
+                lambbond = 1.0_dp
+              end if
+              x12_old = HGr_bond_vector(1,ih,k,j,icel)
+              y12_old = HGr_bond_vector(2,ih,k,j,icel)
+              z12_old = HGr_bond_vector(3,ih,k,j,icel)
+              g12 = real(HGr_shake_force(ih,k,j,icel),dp) * (lambbond - 1.0_dp)
+              fx  = g12 * x12_old
+              fy  = g12 * y12_old
+              fz  = g12 * z12_old
+              viri(1) = viri(1) + x12_old * fx
+              viri(2) = viri(2) + y12_old * fy
+              viri(3) = viri(3) + z12_old * fz
+            end do
+          end do
+        end do
+      end do
+    end if
 
     virial_omp(1,1,id+1) = virial_omp(1,1,id+1) - viri(1)
     virial_omp(2,2,id+1) = virial_omp(2,2,id+1) - viri(2)

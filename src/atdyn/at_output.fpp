@@ -19,6 +19,7 @@ module at_output_mod
   use at_dynvars_mod
   use at_boundary_mod
   use at_energy_mod
+  use at_qmmm_mod
   use at_output_str_mod
   use at_minimize_str_mod
   use at_vibration_str_mod
@@ -27,6 +28,7 @@ module at_output_mod
   use at_ensemble_str_mod
   use at_remd_str_mod
   use at_rpath_str_mod
+  use at_morph_str_mod
   use at_boundary_str_mod
   use at_enefunc_str_mod
   use molecules_str_mod
@@ -55,6 +57,7 @@ module at_output_mod
     character(MaxFilename) :: rstmepfile = ''
     character(MaxFilename) :: minfofile  = ''
     character(MaxFilename) :: gamdfile   = ''
+    character(MaxFilename) :: rpathlogfile  = ''
   end type s_out_info
 
   ! subroutines
@@ -65,6 +68,7 @@ module at_output_mod
   public  :: setup_output_remd
   public  :: setup_output_rpath
   public  :: setup_output_vib
+  public  :: setup_output_morph
   public  :: open_output
   public  :: close_output
   public  :: output_md
@@ -72,14 +76,16 @@ module at_output_mod
   public  :: output_remd
   public  :: output_rpath
   public  :: output_vib
+  public  :: output_morph
   public  :: output_gamd
-  public  :: write_restart_pdb
 
   private :: output_restart_md
   private :: output_restart_min
   private :: output_restart_remd
   private :: output_restart_rpath
+  private :: output_restart_morph
   private :: output_restart_pdb
+  private :: write_restart_pdb
   private :: write_trajectory_dcd
   private :: write_trajectory_dcdvel
   private :: include_id_to_filename
@@ -151,8 +157,10 @@ contains
         write(MsgOut,'(A)') '# rstfile    = sample{}.rst # restart file'
         write(MsgOut,'(A)') '# pdbfile    = sample{}.pdb # PDB file'
         write(MsgOut,'(A)') '# rpathfile  = sample{}.rpath # replica path ID file'
-        write(MsgOut,'(A)') '# rstmepfile = sample{}.rstmep # restart file for MEP/FEP'
+        write(MsgOut,'(A)') '# rpathlogfile = sample.rpathlog # rpathlog file'
+        !write(MsgOut,'(A)') '# rstmepfile = sample{}.rstmep # restart file for MEP/FEP'
         write(MsgOut,'(A)') ' '
+
 
       end select
 
@@ -214,6 +222,7 @@ contains
     call read_ctrlfile_string(handle, Section, 'rstmepfile',out_info%rstmepfile)
     call read_ctrlfile_string(handle, Section, 'minfofile' ,out_info%minfofile)
     call read_ctrlfile_string(handle, Section, 'gamdfile',  out_info%gamdfile)
+    call read_ctrlfile_string(handle, Section, 'rpathlogfile',  out_info%rpathlogfile)
 
     call end_ctrlfile_section(handle)
 
@@ -242,6 +251,8 @@ contains
         write(MsgOut,*) ' minfofile  = ', trim(out_info%minfofile)
       if (out_info%gamdfile /= '') &
         write(MsgOut,*) ' gamdfile   = ', trim(out_info%gamdfile)
+      if (out_info%rpathfile /= '') &
+        write(MsgOut,*) ' rpathlogfile  = ', trim(out_info%rpathlogfile)
       write(MsgOut,'(A)') ' '
     end if
 
@@ -509,7 +520,7 @@ contains
       end if
     end if
 
-    if (dynamics%crdout_period .gt. 0) then
+    if (dynamics%crdout_period > 0 .or. rpath%crdout_period > 0) then
       if (out_info%rpathfile .ne. '') then
         output%rpathfile = out_info%rpathfile
         call include_id_to_filename(output%rpathfile)
@@ -517,14 +528,18 @@ contains
       end if
     end if
 
-    ! MEP/FEP restart
-    if (rpath%rpathmode == RpathmodeMEP .or. &
-        rpath%rpathmode == RpathmodeFEP) then
+    if (rpath%rpathmode == RpathmodeFEP) then
       if (out_info%rstmepfile .eq. '') &
         call error_msg('Setup_Output_Rpath> rstmep filename is blank')
       output%rstmepfile = out_info%rstmepfile
       call include_id_to_filename(output%rstmepfile)
       output%rstmepout  = .true.
+    end if
+    if (dynamics%crdout_period .gt. 0) then
+      if (out_info%rpathlogfile .ne. '') then
+        output%rpathlogfile = out_info%rpathlogfile
+        output%rpathlogout  = .true.
+      end if
     end if
 
     output%rpath = .true.
@@ -595,12 +610,12 @@ contains
       ! Check whether datafile already exist, and stop with error
       ! to avoid overwrite.
       !
-      inquire(file=trim(vibration%datafile), exist=ex)
-      if(ex) then
-        call error_msg('Setup_Output_Vib> Error: data file [ '// &
-                 trim(vibration%datafile)// &
-                 ' ] already exists. ')
-      end if
+      !inquire(file=trim(vibration%datafile), exist=ex)
+      !if(ex) then
+      !  call error_msg('Setup_Output_Vib> Error: data file [ '// &
+      !           trim(vibration%datafile)// &
+      !           ' ] already exists. ')
+      !end if
 
     end if
 
@@ -610,9 +625,62 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_output_morph
+  !> @brief        setup output information for minimization
+  !! @authors      CK
+  !! @param[in]    out_info : OUTPUT section control parameters information
+  !! @param[in]    morph    : morph information
+  !! @param[out]   output   : output information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_output_morph(out_info, morph, output)
+
+    ! formal arguments
+    type(s_out_info),        intent(in)    :: out_info
+    type(s_morph),           intent(in)    :: morph
+    type(s_output),          intent(inout) :: output
+
+
+    output%replica    = .false.
+    output%rpath    = .false.
+    output%logout     = .false.
+    output%dcdvelout  = .false.
+
+    if (morph%crdout_period > 0) then
+      if (out_info%dcdfile == '') then
+        call error_msg('Setup_Output_Morph> Error: dcdfile name is not specified in [OUTPUT] (crdout_period > 0 in [MORPH])')
+      else
+        output%dcdout  = .true.
+        output%dcdfile = out_info%dcdfile
+      end if
+    end if
+
+    if (morph%rstout_period > 0) then
+      if (out_info%rstfile == '') then
+        call error_msg('Setup_Output_Morph> Error: rstfile name is not specified in [OUTPUT] (rstout_period > 0 in [MORPH])')
+      else
+        output%rstout  = .true.
+        output%rstfile = out_info%rstfile
+      end if
+
+      if (out_info%pdbfile == '') then
+        output%pdbout  = .false.
+      else
+        output%pdbout  = .true.
+        output%pdbfile = out_info%pdbfile
+      end if
+    end if
+
+    return
+
+  end subroutine setup_output_morph
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    open_output
   !> @brief        open output file
-  !! @authors      TM
+  !! @authors      TM, SI
   !! @param[inout] outout : information of output
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -624,13 +692,17 @@ contains
 
     ! local variables
     integer                  :: file
-
+    integer                  :: access
 
     ! open logfile 
     !
     if (output%logout) then
       if (replica_main_rank) then
-        call open_file(file, output%logfile, IOFileOutputNew)
+        if(access(output%logfile, 'rw' ) .eq. 0) then
+          call open_file(file, output%logfile, IOFileOutputAppend)
+        else
+          call open_file(file, output%logfile, IOFileOutputNew)
+        end if
         output%logunit = file
         DynvarsOut = output%logunit
       end if
@@ -640,7 +712,11 @@ contains
     !
     if (output%dcdout) then
       if (main_rank .or. replica_main_rank) then
-        call open_binary_file(file, output%dcdfile, IOFileOutputNew)
+        if(access(output%dcdfile, 'rw' ) .eq. 0) then
+          call open_binary_file(file, output%dcdfile, IOFileOutputAppend)        
+        else
+          call open_binary_file(file, output%dcdfile, IOFileOutputNew)               
+        end if
         output%dcdunit = file
       end if
     end if
@@ -648,29 +724,35 @@ contains
     ! open dcdvelfile
     !
     if (output%dcdvelout) then
-      if (main_rank .or. replica_main_rank) then
-        call open_binary_file(file, output%dcdvelfile, IOFileOutputNew)
+      if (main_rank .or. replica_main_rank) then            
+        if(access(output%dcdvelfile, 'rw' ) .eq. 0) then      
+          call open_binary_file(file, output%dcdvelfile, IOFileOutputAppend)
+        else
+          call open_binary_file(file, output%dcdvelfile, IOFileOutputNew)
+        end if
         output%dcdvelunit = file
       end if
     end if
 
-    ! open rstfile
-    !   Just check whether rstfile is already existing.
-    !
-    if (output%rstout) then
-      if (main_rank .or. replica_main_rank) then
-        call open_file (file, output%rstfile, IOFileOutputNew)
-        call close_file(file)
+    if (nrep_per_proc == 1) then
+      ! open rstfile
+      !   Just check whether rstfile is already existing.
+      !
+      if (output%rstout) then
+        if (main_rank .or. replica_main_rank) then
+          call open_file (file, output%rstfile, IOFileOutputNew)
+          call close_file(file)
+        end if
       end if
-    end if
 
-    ! open pdbfile
-    !   Just check whether pdbfile is already existing.
-    !
-    if (output%pdbout) then
-      if (main_rank .or. replica_main_rank) then
-        call open_file (file, output%pdbfile, IOFileOutputNew)
-        call close_file(file)
+      ! open pdbfile
+      !   Just check whether pdbfile is already existing.
+      !
+      if (output%pdbout) then
+        if (main_rank .or. replica_main_rank) then
+          call open_file (file, output%pdbfile, IOFileOutputNew)
+          call close_file(file)
+        end if
       end if
     end if
 
@@ -687,8 +769,12 @@ contains
     !
     if (output%rpathout) then
       if (main_rank .or. replica_main_rank) then
-        call open_file(file, output%rpathfile, IOFileOutputNew)
-        output%rpathunit = file
+        if(access(output%rpathfile, 'rw' ) .eq. 0) then    
+          call open_file(file, output%rpathfile, IOFileOutputAppend)
+        else
+          call open_file(file, output%rpathfile, IOFileOutputNew)
+        end if 
+      output%rpathunit = file
       end if
     end if
 
@@ -710,6 +796,16 @@ contains
         output%gamdunit = file
       end if
     end if
+
+    ! open rpathlogfile (only main_rank)
+    !
+    if (output%rpathlogout) then
+      if (main_rank) then
+        call open_file(file, output%rpathlogfile, IOFileOutputNew)
+        output%rpathlogunit = file
+      end if
+    end if
+
 
     return
 
@@ -754,6 +850,11 @@ contains
     !
     if (output%logout) &
       call close_file(output%logunit)
+
+    ! close rpathlogfile
+    !
+    if (output%rpathlogout) &
+      call close_file(output%rpathlogunit)
 
     return
 
@@ -880,8 +981,20 @@ contains
     if (dynamics%rstout_period > 0) then
       if (mod(istep,dynamics%rstout_period) == 0) then
 
-        call output_restart_md(output, molecule, dynamics, boundary, dynvars)
+        call output_restart_md(output, molecule, dynamics, boundary, dynvars, &
+                               enefunc%qmmm)
 
+      end if
+    end if
+
+    ! output QM charge
+    !
+    if (dynamics%esp_mm) then
+      if (istep == 1) then
+          call output_qm_charge(molecule, enefunc%qmmm, output)
+      else if (dynamics%calc_qm_period /= 0) then
+        if (mod(istep,dynamics%calc_qm_period) == 0) &
+          call output_qm_charge(molecule, enefunc%qmmm, output)
       end if
     end if
 
@@ -893,7 +1006,7 @@ contains
   !
   !  Subroutine    output_min
   !> @brief        output trajectory and restart data for miniization
-  !! @authors      TM, NT
+  !! @authors      TM, NT, KY
   !! @param[inout] output   : output information
   !! @param[in]    molecule : molecule information
   !! @param[in]    enefunc  : potential energy functions information
@@ -905,7 +1018,7 @@ contains
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine output_min(output, molecule, enefunc, minimize, boundary, &
-                        delta_r, dynvars)
+                        delta_r, maxg_id, dynvars)
 
     ! formal arguments
     type(s_output),          intent(inout) :: output
@@ -914,24 +1027,49 @@ contains
     type(s_minimize),        intent(in)    :: minimize
     type(s_boundary),        intent(in)    :: boundary
     real(wp),                intent(in)    :: delta_r
+    integer,                 intent(in)    :: maxg_id
     type(s_dynvars), target, intent(inout) :: dynvars
 
     ! local variables
-    integer                  :: natom, istep, j
+    integer                  :: natom, istep, j, outunit
 
 
     natom = molecule%num_atoms
     istep = dynvars%step
 
-    if (minimize%eneout_period > 0) then
-      if (mod(istep,minimize%eneout_period) == 0 .or. &
-          minimize%eneout) then
+    if (minimize%eneout_period > 0 .and. replica_main_rank) then
+      if (mod(istep,minimize%eneout_period) == 0 .or. minimize%eneout) then
 
-        dynvars%total_pene = dynvars%energy%total
-        call output_dynvars(output, enefunc, dynvars)
+        if (output%logout) then
+          outunit = output%logunit
+        else
+          outunit = MsgOut
+        end if
+
+        if (.not. minimize%eneout_short) then
+          call output_dynvars(output, enefunc, dynvars)
+          write(outunit, &
+            '("  maxg = ",f10.4," at ",i10,x,a4,x,i6,x,a4,x,a6,x,a6,/)') &
+            dynvars%max_gradient, maxg_id,  &
+            molecule%segment_name(maxg_id), &
+            molecule%residue_no(maxg_id),   &
+            molecule%residue_name(maxg_id), &
+            molecule%atom_name(maxg_id),    &
+            molecule%atom_cls_name(maxg_id)
+
+        else
+          write(outunit, '(5X, "STEP ", i8, " POTENTIAL_ENE = ", F20.8, &
+                           "  RMSG = ", F12.4, "  MAXG = ", F12.4)')    &
+            istep, dynvars%energy%total, dynvars%rms_gradient,          &
+            dynvars%max_gradient
+
+        end if
 
       end if
     end if
+
+    ! Do Not print the initial structure
+    if (istep == 0) return
 
     if (minimize%crdout_period > 0) then
       if (mod(istep,minimize%crdout_period) == 0 .or. &
@@ -957,7 +1095,7 @@ contains
           minimize%rstout) then
 
         call output_restart_min(output, molecule, minimize, boundary, dynvars, &
-                                delta_r)
+                                enefunc%qmmm, delta_r)
 
       end if
     end if
@@ -1022,37 +1160,43 @@ contains
   !! @authors      NT, YA, KY
   !! @param[inout] output   : output information
   !! @param[in]    molecule : molecule information
+  !! @param[in]    enefunc  : potential energy functions information
   !! @param[in]    dynamics : dynamics information
   !! @param[in]    dynvars  : dynamic variables information
   !! @param[in]    rpath     : RPATH information
-  !! @param[in]    qmmm      : qmmm  information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine output_rpath(output, molecule, dynamics, dynvars, boundary, &
-                          rpath, qmmm)
+  subroutine output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                          boundary, rpath)
 
     ! formal arguments
     type(s_output),          intent(inout) :: output
     type(s_molecule),        intent(in)    :: molecule
+    type(s_enefunc),         intent(in)    :: enefunc
     type(s_dynamics),        intent(in)    :: dynamics
     type(s_dynvars),         intent(inout) :: dynvars
     type(s_boundary),        intent(in)    :: boundary
     type(s_rpath),   target, intent(inout) :: rpath
-    type(s_qmmm),  optional, intent(in)    :: qmmm
 
     ! local variables
     type(s_rstmep)     :: rstmep
     integer            :: repid_i, i, ii, j, k
 
+    ! wrire log (main rank only)
+    !
+    if (main_rank .and. output%rpathlogout) then
+      write(output%rpathlogunit, '(I10,3F15.8)') dynvars%step, rpath%sum_distance, &
+                                 rpath%distance_init,rpath%distance_prev
+    endif
 
     repid_i = my_country_no + 1
+    if (nrep_per_proc > 1) repid_i = my_replica_no 
 
     if (rpath%rpathmode == RpathmodeMFEP) then
 
-      ! wrire collective variables per replica
+      ! write collective variables per replica
       !
-
       if (replica_main_rank .and. output%rpathout) then
         write(output%rpathunit, '(I10,$)') dynvars%step
         do k = 1, rpath%dimension
@@ -1066,52 +1210,57 @@ contains
       if (dynamics%rstout_period > 0) then
         if (mod(dynvars%step,dynamics%rstout_period) == 0) then
           call output_restart_rpath(output, molecule, dynamics, &
-                                    dynvars, boundary, rpath)
+                                    dynvars, boundary, enefunc%qmmm, rpath)
         end if
       end if
 
     else if (rpath%rpathmode == RpathmodeMEP) then
 
-      ! output rstmep information
+      ! write collective variables per replica
       !
-      if (replica_main_rank .and. output%rstmepout) then
-        rstmep%mep_natoms = rpath%mep_natoms
-        allocate(rstmep%mep_coord(3*rpath%mep_natoms))
-        rstmep%mep_coord  = rpath%mep_coord(:,repid_i)
-        if (rpath%opt_micro) then
-          rstmep%qm_natoms = qmmm%qm_natoms
-          allocate(rstmep%qm_charge(rstmep%qm_natoms))
-          rstmep%qm_charge = qmmm%qm_charge
-          rstmep%qm_energy = rpath%qm_energy(repid_i)
+      if (replica_main_rank .and. output%rpathout .and. &
+          rpath%neb_output) then
+        write(output%rpathunit, '(I10,$)') dynvars%step
+        do k = 1, rpath%dimension
+          write(output%rpathunit, '(E15.5,$)') rpath%mep_coord(k,repid_i)
+        end do
+        write(output%rpathunit, *)
+      end if
+
+      ! output energy
+      !
+      if (rpath%neb_output .and. rpath%eneout_period > 0) then
+        if (mod(dynvars%step,rpath%eneout_period) == 0 .or. &
+            rpath%eneout) then
+          dynvars%total_pene = dynvars%energy%total
+          call output_dynvars(output, enefunc, dynvars)
         end if
-
-        call output_rstmep(output%rstmepfile, rstmep)
-
-        deallocate(rstmep%mep_coord)
-        if (rpath%opt_micro) deallocate(rstmep%qm_charge)
-        
       end if
 
       ! output restart
       !
-      if (rpath%rstout_period > 0 .and. &
-          mod(dynvars%step,rpath%rstout_period) == 0) then
-        call output_restart_rpath(output, molecule, dynamics, &
-                                  dynvars, boundary, rpath)
+      if (rpath%rstout_period > 0) then
+        if (mod(dynvars%step,rpath%rstout_period) == 0 .or. &
+            rpath%rstout) then
+          call output_restart_rpath(output, molecule, dynamics, &
+                                    dynvars, boundary, enefunc%qmmm, rpath)
+        end if
       end if
 
       ! output coordinates
       !
-      if (output%dcdout .and. mod(dynvars%step,rpath%crdout_period) == 0) then
-        do j = 1, molecule%num_atoms
-          dynvars%temporary(1,j) = dynvars%coord(1,j)
-          dynvars%temporary(2,j) = dynvars%coord(2,j)
-          dynvars%temporary(3,j) = dynvars%coord(3,j)
-        end do
-
-        call wrap_molecules(molecule, boundary, dynvars%temporary)
-        call write_trajectory_dcd(output, molecule, boundary, dynvars%step, &
-               rpath%ncycle, rpath%crdout_period, 0.0_wp, dynvars%temporary)
+      if (rpath%neb_output .and. rpath%crdout_period > 0) then
+        if ((mod(dynvars%step,rpath%crdout_period) == 0 .or. rpath%crdout) &
+            .and. (.not. rpath%first_iter)) then
+          do j = 1, molecule%num_atoms
+            dynvars%temporary(1,j) = dynvars%coord(1,j)
+            dynvars%temporary(2,j) = dynvars%coord(2,j)
+            dynvars%temporary(3,j) = dynvars%coord(3,j)
+          end do
+          call wrap_molecules(molecule, boundary, dynvars%temporary)
+          call write_trajectory_dcd(output, molecule, boundary, dynvars%step, &
+                 rpath%ncycle, rpath%crdout_period, 0.0_wp, dynvars%temporary)
+        end if
       end if
 
     else if (rpath%rpathmode == RpathmodeFEP) then
@@ -1123,7 +1272,7 @@ contains
         allocate(rstmep%mep_coord(3*rpath%mep_natoms))
         rstmep%mep_coord  = rpath%mep_coord(:,repid_i)
         if (rpath%esp_energy .or. rpath%esp_md) then
-          rstmep%qm_natoms = qmmm%qm_natoms
+          rstmep%qm_natoms = enefunc%qmmm%qm_natoms
           allocate(rstmep%qm_charge(rstmep%qm_natoms))
           rstmep%qm_charge = rpath%qm_charge(:,repid_i)
           rstmep%qm_energy = rpath%qm_energy(repid_i)
@@ -1145,7 +1294,7 @@ contains
       if (dynamics%rstout_period > 0 .and. &
           mod(dynvars%step,dynamics%rstout_period) == 0) then
         call output_restart_rpath(output, molecule, dynamics, &
-                                  dynvars, boundary, rpath)
+                                  dynvars, boundary, enefunc%qmmm, rpath)
       end if
 
     else
@@ -1190,6 +1339,85 @@ contains
     return
 
   end subroutine output_vib
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    output_morph
+  !> @brief        output restart data for MOPRH
+  !! @authors      CK
+  !! @param[inout] output   : output information
+  !! @param[in]    molecule : molecule information
+  !! @param[in]    dynamics : dynamics information
+  !! @param[in]    dynvars  : dynamic variables information
+  !! @param[in]    morph     : RPATH information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine output_morph(output, molecule, morph, boundary, enefunc, dynvars)
+
+    ! formal arguments
+    type(s_output),          intent(inout) :: output
+    type(s_molecule),        intent(in)    :: molecule
+    type(s_morph),           intent(inout) :: morph
+    type(s_boundary),        intent(in)    :: boundary
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_dynvars),         intent(inout) :: dynvars
+
+    ! local variables
+    integer     :: j, natom
+    type(s_rst) :: rst
+
+
+    if (.not. main_rank) return
+
+
+    ! use pointers
+    !
+    natom = molecule%num_atoms
+
+    ! output energy
+    !
+
+    if (dynvars%step > 0) then
+      dynvars%total_pene = dynvars%energy%total
+      call output_dynvars(output, enefunc, dynvars)
+    endif
+
+
+    ! output coordinates
+    !
+    if (morph%crdout_period > 0) then
+      if (mod(morph%ncycles,morph%crdout_period) == 0) then
+
+        do j = 1, natom
+          dynvars%temporary(1,j) = dynvars%coord_ref(1,j)
+          dynvars%temporary(2,j) = dynvars%coord_ref(2,j)
+          dynvars%temporary(3,j) = dynvars%coord_ref(3,j)
+        end do
+
+        call wrap_molecules(molecule, boundary, dynvars%temporary)
+        call write_trajectory_dcd(output, molecule, boundary, dynvars%step, &
+                                  morph%ncycles, &
+                                  morph%crdout_period, &
+                                  morph%delta_r, &
+                                  dynvars%temporary)
+      end if
+    end if
+
+
+    ! output restart data
+    !
+    if (morph%rstout_period > 0) then
+      if (mod(dynvars%step,morph%rstout_period) == 0) then
+
+        call output_restart_morph(output, molecule, morph, dynvars, boundary)
+
+      end if
+    end if
+
+    return
+
+  end subroutine output_morph
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1330,6 +1558,7 @@ contains
 
   end subroutine output_gamd
 
+
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine    output_restart_md
@@ -1340,10 +1569,12 @@ contains
   !! @param[in]    dynamics : dynamics information
   !! @param[in]    boundary : boundary condition information
   !! @param[in]    dynvars  : dynamic variables information
+  !! @param[in]    qmmm     : QMMM variables information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine output_restart_md(output, molecule, dynamics, boundary, dynvars)
+  subroutine output_restart_md(output, molecule, dynamics, boundary, dynvars, &
+                               qmmm)
 
     ! formal arguments
     type(s_output),          intent(in)    :: output
@@ -1351,6 +1582,7 @@ contains
     type(s_dynamics),        intent(in)    :: dynamics
     type(s_boundary),        intent(in)    :: boundary
     type(s_dynvars),         intent(in)    :: dynvars
+    type(s_qmmm),            intent(in)    :: qmmm
 
     ! local variables
     type(s_rst)              :: rst
@@ -1400,6 +1632,11 @@ contains
       rst%fixatm     = boundary%fixatm
     end if
 
+    if (qmmm%do_qmmm .and. qmmm%is_qm_charge) then
+      call alloc_rst(rst, RestartQMMM, qmmm%qm_natoms)
+      rst%qm_charge = qmmm%qm_charge
+    end if
+
     call output_rst(output%rstfile, rst)
 
     if (dynvars%step == dynamics%nsteps) &
@@ -1424,12 +1661,13 @@ contains
   !! @param[in]    minimize : minimization information
   !! @param[in]    boundary : boundary condition information
   !! @param[in]    dynvars  : dynamic variables information
+  !! @param[in]    qmmm     : QMMM variables information
   !! @param[in]    delta_r  : delta-r
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine output_restart_min(output, molecule, minimize, boundary, dynvars, &
-                                delta_r)
+                                qmmm, delta_r)
 
     ! formal arguments
     type(s_output),          intent(in)    :: output
@@ -1437,6 +1675,7 @@ contains
     type(s_minimize),        intent(in)    :: minimize
     type(s_boundary),        intent(in)    :: boundary
     type(s_dynvars),         intent(in)    :: dynvars
+    type(s_qmmm),            intent(in)    :: qmmm
     real(wp),                intent(in)    :: delta_r
 
     ! local variables
@@ -1478,6 +1717,11 @@ contains
       rst%fix_layer  = boundary%fix_layer
       rst%num_fixatm = boundary%num_fixatm
       rst%fixatm     = boundary%fixatm
+    end if
+
+    if (qmmm%do_qmmm .and. qmmm%is_qm_charge) then
+      call alloc_rst(rst, RestartQMMM, qmmm%qm_natoms)
+      rst%qm_charge = qmmm%qm_charge
     end if
 
     call output_rst(output%rstfile, rst)
@@ -1602,11 +1846,13 @@ contains
   !! @param[in]    molecule : molecule information
   !! @param[in]    dynamics : dynamics information
   !! @param[in]    dynvars  : dynamic variables information
-  !! @param[inout] rpath     : RPATH information
+  !! @param[in]    qmmm     : QMMM variables information
+  !! @param[inout] rpath    : RPATH information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine output_restart_rpath(output, molecule, dynamics, dynvars, boundary, rpath)
+  subroutine output_restart_rpath(output, molecule, dynamics, dynvars, &
+                                  boundary, qmmm, rpath)
 
     ! formal arguments
     type(s_output),          intent(in)    :: output
@@ -1614,6 +1860,7 @@ contains
     type(s_dynamics),        intent(in)    :: dynamics
     type(s_dynvars),         intent(in)    :: dynvars
     type(s_boundary),        intent(in)    :: boundary
+    type(s_qmmm),            intent(in)    :: qmmm
     type(s_rpath),           intent(inout) :: rpath
 
     ! local variables
@@ -1697,6 +1944,11 @@ contains
       rst%fixatm     = boundary%fixatm
     end if
 
+    if (qmmm%do_qmmm .and. qmmm%is_qm_charge) then
+      call alloc_rst(rst, RestartQMMM, qmmm%qm_natoms)
+      rst%qm_charge = qmmm%qm_charge
+    end if
+
     call output_rst(output%rstfile, rst)
 
     ! Output Restart PDB file
@@ -1710,6 +1962,59 @@ contains
 
   end subroutine output_restart_rpath
 
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    output_restart_morph
+  !> @brief        output restart data for MOPRH
+  !! @authors      CK
+  !! @param[in]    output   : output information
+  !! @param[in]    molecule : molecule information
+  !! @param[in]    morph : morph information
+  !! @param[in]    dynvars  : dynamic variables information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine output_restart_morph(output, molecule, morph, dynvars, boundary)
+
+    ! formal arguments
+    type(s_output),          intent(in)    :: output
+    type(s_molecule),        intent(in)    :: molecule
+    type(s_morph),           intent(in)    :: morph
+    type(s_dynvars),         intent(in)    :: dynvars
+    type(s_boundary),        intent(in)    :: boundary
+
+    ! local variables
+    type(s_rst)              :: rst
+    integer                  :: k, natom
+
+
+    natom = molecule%num_atoms
+
+    call alloc_rst(rst, RestartAtom, natom)
+
+    rst%rstfile_type       = RstfileTypeMin
+    rst%num_atoms          = molecule%num_atoms
+    rst%box_size_x         = boundary%box_size_x
+    rst%box_size_y         = boundary%box_size_y
+    rst%box_size_z         = boundary%box_size_z
+    rst%energy             = dynvars%energy%total
+    rst%delta_r            = morph%delta_r
+    rst%coord(1:3,1:natom) = dynvars%coord_ref(1:3,1:natom)
+
+    call output_rst(output%rstfile, rst)
+
+    if (dynvars%step == morph%ncycles) &
+      call dealloc_rst_all(rst)
+
+    ! Output Restart PDB file
+    !
+    if (output%pdbout) &
+      call output_restart_pdb(output%pdbfile, molecule, dynvars%coord)
+
+    return
+
+  end subroutine output_restart_morph
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1781,13 +2086,13 @@ contains
     res_col5  = .false.
     atom_col7 = .false.
 
-    if (molecule%num_residues >= 100000) then
+    if (molecule%residue_no(molecule%num_atoms) >= 100000) then
       res_col6 = .true.
-    else if (molecule%num_residues >= 10000) then
+    else if (molecule%residue_no(molecule%num_atoms) >= 10000) then
       res_col5 = .true.
     end if
 
-    if (molecule%num_atoms >= 1000000) then
+    if (molecule%atom_no(molecule%num_atoms) >= 1000000) then
       atom_col7 = .true.
     end if
 
@@ -2121,6 +2426,7 @@ contains
     ! get replica id
     !
     id = my_country_no + 1
+    if (nrep_per_proc > 1) id = my_replica_no
     do i = 1, 100
       comp = 10**i
       if (id < comp) then

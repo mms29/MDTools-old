@@ -27,7 +27,7 @@ module mf_option_str_mod
     logical                       :: check_only
     type(s_selatoms)              :: cv_atom
     integer                       :: nimage
-    integer                       :: force_constant
+    real(wp)                      :: force_constant
 
   end type s_option
 

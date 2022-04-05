@@ -31,15 +31,25 @@ module sp_minimize_mod
   use sp_constraints_str_mod
   use sp_constraints_mod
   use fileio_control_mod
+  use structure_check_mod
   use timers_mod
+  use string_mod
   use messages_mod
   use constants_mod
+  use string_mod
   use mpi_parallel_mod
-#ifdef MPI
+  use sp_alchemy_str_mod
+  use sp_fep_utils_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! structures
@@ -53,6 +63,13 @@ module sp_minimize_mod
     logical          :: verbose          = .false.
     real(wp)         :: force_scale_init = 0.00005_wp
     real(wp)         :: force_scale_max  = 0.0001_wp
+
+    ! structure check
+    logical            :: check_structure      = .false.
+    logical            :: fix_ring_error       = .false.
+    logical            :: fix_chirality_error  = .false.
+    character(MaxLine) :: exclude_ring_grpid   = ''
+    character(MaxLine) :: exclude_chiral_grpid = ''
   end type s_min_info
 
   ! subroutines
@@ -61,6 +78,10 @@ module sp_minimize_mod
   public  :: setup_minimize
   public  :: run_min
   public  :: steepest_descent
+  private :: reduce_coordinates
+  ! FEP
+  public  :: run_min_fep
+  public  :: steepest_descent_fep
 
 contains
 
@@ -96,7 +117,13 @@ contains
         write(MsgOut,'(A)') '# nbupdate_period = 10      # nonbond update period'
         write(MsgOut,'(A)') '# verbose       = NO        # output verbosly'
         write(MsgOut,'(A)') ' '
-
+        write(MsgOut,'(A)') '# for structure check'
+        write(MsgOut,'(A)') '# check_structure      = NO  # check structure'
+        write(MsgOut,'(A)') '# fix_ring_error       = NO  # fix ring penetration'
+        write(MsgOut,'(A)') '# fix_chirality_error  = NO  # fix chirality error'
+        write(MsgOut,'(A)') '# exclude_ring_grpid   =     # exclusion list for ring error fix'
+        write(MsgOut,'(A)') '# exclude_chiral_grpid =     # exclusion list for chirality error fix'
+        write(MsgOut,'(A)') ' '
 
       end select
 
@@ -162,7 +189,16 @@ contains
                                min_info%force_scale_init)
     call read_ctrlfile_logical(handle, Section, 'verbose',        &
                                min_info%verbose)
-
+    call read_ctrlfile_logical(handle, Section, 'check_structure',     &
+                               min_info%check_structure)
+    call read_ctrlfile_logical(handle, Section, 'fix_ring_error',      &
+                               min_info%fix_ring_error)
+    call read_ctrlfile_logical(handle, Section, 'fix_chirality_error', &
+                               min_info%fix_chirality_error)
+    call read_ctrlfile_string (handle, Section, 'exclude_ring_grpid',  &
+                               min_info%exclude_ring_grpid)
+    call read_ctrlfile_string (handle, Section, 'exclude_chiral_grpid',&
+                               min_info%exclude_chiral_grpid)
     call end_ctrlfile_section(handle)
 
 
@@ -190,39 +226,60 @@ contains
         write(MsgOut,'(A)') '  verbose         =         no'
       end if
 
+      if (min_info%check_structure) then
+        write(MsgOut,'(A,$)') '  check_structure            =        yes'
+      else
+        write(MsgOut,'(A,$)') '  check_structure            =         no'
+      end if
+      if (min_info%fix_ring_error) then
+        write(MsgOut,'(A)')   '  fix_ring_error             =        yes'
+      else
+        write(MsgOut,'(A)')   '  fix_ring_error             =         no'
+      end if
+      if (min_info%fix_chirality_error) then
+        write(MsgOut,'(A)')   '  fix_chirality_error        =        yes'
+      else
+        write(MsgOut,'(A)')   '  fix_chirality_error        =         no'
+      end if
+
       write(MsgOut,'(A)') ' '
+
     end if
 
 
     ! error check
     !
     if (main_rank) then
-      if (min_info%eneout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%eneout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in eneout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, eneout_period) is not ZERO'
-        call error_msg
+      if (min_info%eneout_period > 0) then
+        if (mod(min_info%nsteps, min_info%eneout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in eneout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, eneout_period) is not ZERO'
+          call error_msg
+        end if
       end if
 
-      if (min_info%crdout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%crdout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in crdout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, crdout_period) is not ZERO'
-        call error_msg
+      if (min_info%crdout_period > 0) then
+        if (mod(min_info%nsteps, min_info%crdout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in crdout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, crdout_period) is not ZERO'
+          call error_msg
+        end if
       end if
 
-      if (min_info%rstout_period > 0 .and.                        &
-          mod(min_info%nsteps, min_info%rstout_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in rstout_period'
-        write(MsgOut,'(A)') '  mod(nsteps, rstout_period) is not ZERO'
-        call error_msg
+      if (min_info%rstout_period > 0) then
+        if(mod(min_info%nsteps, min_info%rstout_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in rstout_period'
+          write(MsgOut,'(A)') '  mod(nsteps, rstout_period) is not ZERO'
+          call error_msg
+        end if
       end if
 
-      if (min_info%nbupdate_period > 0 .and.                      &
-          mod(min_info%nsteps, min_info%nbupdate_period) /= 0) then
-        write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in nbupdate_period'
-        write(MsgOut,'(A)') '  mod(nsteps, nbupdate_period) is not ZERO'
-        call error_msg
+      if (min_info%nbupdate_period > 0) then
+        if(mod(min_info%nsteps, min_info%nbupdate_period) /= 0) then
+          write(MsgOut,'(A)') 'Read_Ctrl_Minimize> Error in nbupdate_period'
+          write(MsgOut,'(A)') '  mod(nsteps, nbupdate_period) is not ZERO'
+          call error_msg
+        end if
       end if
 
     end if
@@ -265,6 +322,7 @@ contains
     minimize%verbose          = min_info%verbose
     minimize%force_scale_init = min_info%force_scale_init
     minimize%force_scale_max  = min_info%force_scale_max
+    minimize%check_structure  = min_info%check_structure
 
     return
 
@@ -274,7 +332,7 @@ contains
   !
   !  Subroutine    run_min
   !> @brief        perform energy minimization
-  !! @authors      CK
+  !! @authors      CK, TM
   !! @param[inout] output      : output information
   !! @param[inout] domain      : domain information
   !! @param[inout] enefunc     : potential energy functions
@@ -300,6 +358,10 @@ contains
     type(s_constraints),      intent(inout) :: constraints
     type(s_comm),             intent(inout) :: comm
 
+    ! local variables
+    real(wp), pointer :: coord0(:,:)
+
+
     ! Open output files
     !
     call open_output(output)
@@ -320,10 +382,15 @@ contains
     call close_output(output)
 
 
+    ! check structure
+    !
+    call reduce_coordinates(domain,coord0)
+    call perform_structure_check(coord0, minimize%check_structure, &
+                                 .false., .false., .true.)
+
     return
 
   end subroutine run_min
-
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -412,16 +479,21 @@ contains
     if (enefunc%table%tip4) &
       call water_force_redistribution(constraints, domain, force, virial)
 
-    dynvars%total_pene = dynvars%energy%bond          &
-                       + dynvars%energy%angle         &
-                       + dynvars%energy%urey_bradley  &
-                       + dynvars%energy%dihedral      &
-                       + dynvars%energy%improper      &
-                       + dynvars%energy%cmap          &
-                       + dynvars%energy%electrostatic &
-                       + dynvars%energy%van_der_waals &
-                       + dynvars%energy%restraint_position
-    dynvars%energy%total = dynvars%total_pene
+    dynvars%total_pene = &
+               dynvars%energy%bond               + &
+               dynvars%energy%angle              + &
+               dynvars%energy%urey_bradley       + &
+               dynvars%energy%dihedral           + &
+               dynvars%energy%improper           + &
+               dynvars%energy%cmap               + &
+               dynvars%energy%electrostatic      + &
+               dynvars%energy%van_der_waals      + &
+               dynvars%energy%restraint_distance + &
+               dynvars%energy%restraint_position + &
+               dynvars%energy%restraint_rmsd     + &
+               dynvars%energy%restraint_emfit    + &
+               dynvars%energy%contact            + &
+               dynvars%energy%noncontact
 
     rmsg = 0.0_dp
     do j = 1, ncell
@@ -441,7 +513,7 @@ contains
     end do
     rmsg = rmsg / real(3*domain%num_atom_all,dp)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(mpi_in_place, rmsg, 1, mpi_real8, mpi_sum, &
                        mpi_comm_city, ierror)
 #endif
@@ -507,20 +579,26 @@ contains
 
       ! Broad cast total energy
       !
-      dynvars%total_pene = dynvars%energy%bond          &
-                         + dynvars%energy%angle         &
-                         + dynvars%energy%urey_bradley  &
-                         + dynvars%energy%dihedral      &
-                         + dynvars%energy%improper      &
-                         + dynvars%energy%cmap          &
-                         + dynvars%energy%electrostatic &
-                         + dynvars%energy%van_der_waals &
-                         + dynvars%energy%restraint_position
+      dynvars%total_pene = &
+                 dynvars%energy%bond               + &
+                 dynvars%energy%angle              + &
+                 dynvars%energy%urey_bradley       + &
+                 dynvars%energy%dihedral           + &
+                 dynvars%energy%improper           + &
+                 dynvars%energy%cmap               + &
+                 dynvars%energy%electrostatic      + &
+                 dynvars%energy%van_der_waals      + &
+                 dynvars%energy%restraint_distance + &
+                 dynvars%energy%restraint_position + &
+                 dynvars%energy%restraint_rmsd     + &
+                 dynvars%energy%restraint_emfit    + &
+                 dynvars%energy%contact            + &
+                 dynvars%energy%noncontact
 
       dynvars%energy%total = dynvars%total_pene
 
       if (my_country_rank == 0) delta_energy = dynvars%energy%total - energy_ref
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_bcast(delta_energy, 1, mpi_real8, 0, mpi_comm_country, ierror)
 #endif
       if (delta_energy > 0.0_dp) then
@@ -548,7 +626,7 @@ contains
 
       rmsg = rmsg / real(3*domain%num_atom_all,dp)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_allreduce(mpi_in_place, rmsg, 1, mpi_real8, mpi_sum, &
                          mpi_comm_city, ierror)
 #endif
@@ -606,5 +684,448 @@ contains
     return
 
   end subroutine steepest_descent
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    reduce_coordinates
+  !> @brief        reduce coordinates
+  !! @authors      TM
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine reduce_coordinates(domain, coord0)
+
+    ! formal arguments
+    type(s_domain), target,  intent(inout) :: domain
+    real(wp),       pointer, intent(out)   :: coord0(:,:)
+
+#ifdef HAVE_MPI_GENESIS
+
+    ! local variables
+    integer               :: i, j, ix
+    integer               :: ncycle, icycle, nlen, ixx
+    real(dp), pointer     :: coord(:,:,:)
+    integer,  pointer     :: ncell, natom_all, natom(:), id_l2g(:,:)
+    real(wp), allocatable :: coord_tmp(:,:)
+
+    ncell     => domain%num_cell_local
+    natom_all => domain%num_atom_all
+    natom     => domain%num_atom
+    id_l2g    => domain%id_l2g
+    coord     => domain%coord
+
+    allocate(coord_tmp(3,natom_all), coord0(3,natom_all))
+
+    ! Reduce coordinates
+    !
+    coord_tmp(1:3,1:natom_all) = 0.0_wp
+    do i = 1, ncell
+      do ix = 1, natom(i)
+        coord_tmp(1:3,id_l2g(ix,i)) = coord(1:3,ix,i)
+      end do
+    end do
+
+    coord0(1:3,1:natom_all) = 0.0_wp
+    do j = 1, natom_all
+      coord0(1,j) = coord_tmp(1,j)
+      coord0(2,j) = coord_tmp(2,j)
+      coord0(3,j) = coord_tmp(3,j)
+    end do
+
+    ncycle = (natom_all - 1) / mpi_drain + 1
+    nlen = mpi_drain
+    ixx  = 1
+
+    do icycle = 1, ncycle
+      if (icycle == ncycle) nlen = natom_all - (ncycle-1) * mpi_drain
+      call mpi_reduce(coord_tmp(1,ixx), coord0(1,ixx), 3*nlen, &
+                      mpi_wp_real, mpi_sum, 0, mpi_comm_country, &
+                      ierror)
+      ixx = ixx + nlen
+    end do
+
+    deallocate(coord_tmp)
+
+#endif
+
+    return
+
+  end subroutine reduce_coordinates
+
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    run_min_fep
+  !> @brief        perform energy minimization for FEP
+  !! @authors      NK, HO
+  !! @param[inout] output      : output information
+  !! @param[inout] domain      : domain information
+  !! @param[inout] enefunc     : potential energy functions
+  !! @param[inout] dynvars     : dynamic variables
+  !! @param[inout] minimize    : minimize information
+  !! @param[inout] pairlist    : non-bond pair list
+  !! @param[inout] boundary    : boundary condition
+  !! @param[inout] comm        : information of communication
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine run_min_fep(output, domain, enefunc, dynvars, minimize, &
+                     pairlist, boundary, constraints, comm)
+
+    ! formal arguments
+    type(s_output),           intent(inout) :: output
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_enefunc),          intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_minimize),         intent(inout) :: minimize
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_constraints),      intent(inout) :: constraints
+    type(s_comm),             intent(inout) :: comm
+
+    ! local variables
+    real(wp), pointer :: coord0(:,:)
+
+
+    ! Open output files
+    !
+    call open_output(output)
+
+    ! MIN main loop
+    !
+    select case (minimize%method)
+
+    case (MinimizeMethodSD)
+      ! FEP
+      call steepest_descent_fep(output, domain, enefunc, dynvars, minimize, &
+                             pairlist, boundary, constraints, comm)
+
+    end select
+
+    ! close output files
+    !
+    call close_output(output)
+
+
+    ! check structure
+    !
+    call reduce_coordinates(domain,coord0)
+    call perform_structure_check(coord0, minimize%check_structure, &
+                                 .false., .false., .true.)
+
+    return
+
+  end subroutine run_min_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    steepest_descent_fep
+  !> @brief        steepest descent integrator for FEP
+  !> @authors      NK, HO
+  !! @param[inout] output   : output information
+  !! @param[inout] domain   : domain information
+  !! @param[inout] enefunc  : potential energy functions information
+  !! @param[inout] dynvars  : dynamic variables information
+  !! @param[inout] minimize : minimize information
+  !! @param[inout] pairlist : non-bond pair list information
+  !! @param[inout] boundary : boundary conditions information
+  !! @param[inout] comm     : information of communication
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine steepest_descent_fep(output, domain, enefunc, dynvars, minimize, &
+                              pairlist, boundary, constraints, comm)
+
+    ! formal arguments
+    type(s_output),          intent(inout) :: output
+    type(s_domain),  target, intent(inout) :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_dynvars), target, intent(inout) :: dynvars
+    type(s_minimize),        intent(inout) :: minimize
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_constraints),     intent(inout) :: constraints
+    type(s_comm),            intent(inout) :: comm
+
+    ! local variables
+    real(dp)                 :: energy, energy_ref, delta_energy
+    real(dp)                 :: delta_r, delta_rini, delta_rmax
+    real(dp)                 :: rmsg, ene_total
+    integer                  :: nsteps, ncell, nb, i, j, jx, k, l
+
+    real(dp),        pointer :: coord(:,:,:), coord_ref(:,:,:)
+    real(dp),        pointer :: force(:,:,:)
+    real(wp),        pointer :: coord_pbc(:,:,:), force_omp(:,:,:,:)
+    real(dp),        pointer :: force_long(:,:,:)
+    real(wp),        pointer :: force_pbc(:,:,:,:)
+    real(dp),        pointer :: virial_cell(:,:), virial(:,:)
+    integer,         pointer :: natom(:), nsolute(:), nwater(:) 
+    integer,         pointer :: water_list(:,:,:)
+
+
+    natom       => domain%num_atom
+    nsolute     => domain%num_solute
+    nwater      => domain%num_water
+    nwater      => domain%num_water 
+    water_list  => domain%water_list
+    coord       => domain%coord
+    coord_ref   => domain%coord_ref
+    coord_pbc   => domain%translated
+    force       => domain%force
+    force_long  => domain%force_long
+    force_omp   => domain%force_omp
+    force_pbc   => domain%force_pbc
+    virial_cell => domain%virial_cellpair
+    virial      => dynvars%virial
+
+    ncell       =  domain%num_cell_local
+    nb          =  domain%num_cell_boundary
+    nsteps      =  minimize%nsteps
+
+    delta_rini = real(minimize%force_scale_init,dp)
+    delta_rmax = real(minimize%force_scale_max,dp)
+    delta_r    = delta_rini
+
+
+    ! Setup for FEP
+    !
+    ! Copy lambda of enefunc to domain, because they are needed for 
+    ! calculation of virial in SHAKE.
+    domain%lambljA   = enefunc%lambljA
+    domain%lambljB   = enefunc%lambljB
+    domain%lambelA   = enefunc%lambelA
+    domain%lambelB   = enefunc%lambelB
+    domain%lambbondA = enefunc%lambbondA
+    domain%lambbondB = enefunc%lambbondB
+    call sync_single_fep(domain, coord)
+
+    ! Make table of lambda and softcore in FEP
+    call set_lambda_table_fep(enefunc)
+
+    ! Compute energy of the initial structure
+    !
+    ! FEP
+    if (enefunc%table%tip4) call decide_dummy(domain, constraints, coord)
+    call compute_energy_fep(domain, enefunc, pairlist, boundary, coord, &
+                        .true., .true., .true., .true.,      &
+                        enefunc%nonb_limiter,                &
+                        dynvars%energy, coord_pbc, force,    &
+                        force_long, force_omp,               &
+                        force_pbc, virial_cell,              &
+                        dynvars%virial, dynvars%virial_long, &
+                        dynvars%virial_extern)
+
+    call communicate_force(domain, comm, force)
+
+    if (enefunc%table%tip4) &
+      call water_force_redistribution(constraints, domain, force, virial)
+
+    ! FEP
+    call add_single_fep(domain, force)
+
+    dynvars%total_pene = dynvars%energy%bond          &
+                       + dynvars%energy%angle         &
+                       + dynvars%energy%urey_bradley  &
+                       + dynvars%energy%dihedral      &
+                       + dynvars%energy%improper      &
+                       + dynvars%energy%cmap          &
+                       + dynvars%energy%electrostatic &
+                       + dynvars%energy%van_der_waals &
+                       + dynvars%energy%restraint_position
+    dynvars%energy%total = dynvars%total_pene
+
+    rmsg = 0.0_dp
+    do j = 1, ncell
+      do jx = 1, nsolute(j)
+        if(domain%fepgrp(jx,j) == 2) cycle
+        rmsg = rmsg + force(1,jx,j)*force(1,jx,j) &
+                    + force(2,jx,j)*force(2,jx,j) &
+                    + force(3,jx,j)*force(3,jx,j)
+      end do
+      do l = 1, nwater(j)
+        do k = 1, 3
+          jx = water_list(k,l,j)
+          if(domain%fepgrp(jx,j) == 2) cycle
+          rmsg = rmsg + force(1,jx,j)*force(1,jx,j) &
+                      + force(2,jx,j)*force(2,jx,j) &
+                      + force(3,jx,j)*force(3,jx,j)
+        end do
+      end do
+    end do
+    rmsg = rmsg / real(3*(domain%num_atom_all - &
+                          domain%num_atom_single_all),dp)
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allreduce(mpi_in_place, rmsg, 1, mpi_real8, mpi_sum, &
+                       mpi_comm_city, ierror)
+#endif
+    rmsg = sqrt(rmsg)
+
+    do j = 1, ncell
+      do jx = 1, natom(j)
+        coord_ref(1:3,jx,j) = coord(1:3,jx,j)
+      end do
+    end do
+
+    do j = 1, ncell
+      do jx = 1, nsolute(j)
+        coord(1,jx,j) = coord(1,jx,j) + delta_r*force(1,jx,j)/rmsg
+        coord(2,jx,j) = coord(2,jx,j) + delta_r*force(2,jx,j)/rmsg
+        coord(3,jx,j) = coord(3,jx,j) + delta_r*force(3,jx,j)/rmsg
+      end do
+      do l = 1, nwater(j)
+        do k = 1, 3
+          jx = water_list(k,l,j)
+          coord(1,jx,j) = coord(1,jx,j) + delta_r*force(1,jx,j)/rmsg
+          coord(2,jx,j) = coord(2,jx,j) + delta_r*force(2,jx,j)/rmsg
+          coord(3,jx,j) = coord(3,jx,j) + delta_r*force(3,jx,j)/rmsg
+        end do
+      end do
+    end do
+
+    if (constraints%fast_water) &
+      call compute_settle_min(coord_ref, domain, constraints, coord)
+
+    if (enefunc%table%tip4) call decide_dummy(domain, constraints, coord)
+
+    dynvars%rms_gradient = rmsg
+
+    call output_dynvars(output, enefunc, dynvars)
+
+    ! Main loop of the Steepest descent method
+    !
+    do i = 1, nsteps
+
+      dynvars%step = i
+
+      ! save old energy
+      !
+      if (my_country_rank == 0) energy_ref = dynvars%total_pene
+
+      ! Compute energy
+      !
+      ! FEP
+      call communicate_coor(domain, comm)
+      call compute_energy_fep(domain, enefunc, pairlist, boundary, coord, &
+                          .true., .true., .true., .true.,      &
+                           enefunc%nonb_limiter,               &
+                          dynvars%energy, coord_pbc,           &
+                          force, force_long, force_omp,        &
+                          force_pbc, virial_cell,              &
+                          dynvars%virial, dynvars%virial_long, &
+                          dynvars%virial_extern)
+
+      call communicate_force(domain, comm, force)
+      
+      if (enefunc%table%tip4) &
+        call water_force_redistribution(constraints, domain, force, virial)
+
+      ! FEP
+      call add_single_fep(domain, force)
+
+      ! Broad cast total energy
+      !
+      dynvars%total_pene = dynvars%energy%bond          &
+                         + dynvars%energy%angle         &
+                         + dynvars%energy%urey_bradley  &
+                         + dynvars%energy%dihedral      &
+                         + dynvars%energy%improper      &
+                         + dynvars%energy%cmap          &
+                         + dynvars%energy%electrostatic &
+                         + dynvars%energy%van_der_waals &
+                         + dynvars%energy%restraint_position
+
+      dynvars%energy%total = dynvars%total_pene
+
+      if (my_country_rank == 0) delta_energy = dynvars%energy%total - energy_ref
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(delta_energy, 1, mpi_real8, 0, mpi_comm_country, ierror)
+#endif
+      if (delta_energy > 0.0_dp) then
+        delta_r = 0.5_dp*delta_r
+      else
+        delta_r = min(delta_rmax, 1.2_dp*delta_r)
+      end if
+
+      rmsg = 0.0_dp
+      do j = 1, ncell
+        do jx = 1, nsolute(j)
+          if(domain%fepgrp(jx,j) == 2) cycle
+          rmsg = rmsg + force(1,jx,j)*force(1,jx,j) &
+                      + force(2,jx,j)*force(2,jx,j) &
+                      + force(3,jx,j)*force(3,jx,j)
+        end do
+        do l = 1, nwater(j)
+          do k = 1, 3
+            jx = water_list(k,l,j)
+            if(domain%fepgrp(jx,j) == 2) cycle
+            rmsg = rmsg + force(1,jx,j)*force(1,jx,j) &
+                        + force(2,jx,j)*force(2,jx,j) &
+                        + force(3,jx,j)*force(3,jx,j)
+          end do
+        end do
+      end do
+
+      rmsg = rmsg / real(3*(domain%num_atom_all - &
+                            domain%num_atom_single_all),dp)
+
+#ifdef HAVE_MPI_GENESIS
+      call mpi_allreduce(mpi_in_place, rmsg, 1, mpi_real8, mpi_sum, &
+                         mpi_comm_city, ierror)
+#endif
+
+      rmsg = sqrt(rmsg)
+
+      do j = 1, ncell
+        do jx = 1, nsolute(j)
+          coord(1,jx,j) = coord(1,jx,j) + delta_r*force(1,jx,j)/rmsg
+          coord(2,jx,j) = coord(2,jx,j) + delta_r*force(2,jx,j)/rmsg
+          coord(3,jx,j) = coord(3,jx,j) + delta_r*force(3,jx,j)/rmsg
+        end do
+        do l = 1, nwater(j)
+          do k = 1, 3
+            jx = water_list(k,l,j)
+            coord(1,jx,j) = coord(1,jx,j) + delta_r*force(1,jx,j)/rmsg
+            coord(2,jx,j) = coord(2,jx,j) + delta_r*force(2,jx,j)/rmsg
+            coord(3,jx,j) = coord(3,jx,j) + delta_r*force(3,jx,j)/rmsg
+          end do
+        end do
+      end do
+      do j = 1, ncell
+        do jx = 1, natom(j)
+          coord_ref(1:3,jx,j) = coord(1:3,jx,j)
+        end do
+      end do
+      if (constraints%fast_water) &
+        call compute_settle_min(coord_ref, domain, constraints, coord)
+
+      if (enefunc%table%tip4) call decide_dummy(domain, constraints, coord)
+
+      dynvars%rms_gradient = rmsg
+
+      ! output trajectory & restart
+      !
+      call output_min(output, enefunc, minimize, boundary, &
+                                   dynvars, delta_r, domain)
+
+      ! update nonbond pairlist
+      !
+      if (minimize%nbupdate_period > 0) then
+        ! FEP
+        call domain_interaction_update_min_fep(i, minimize, domain, enefunc, &
+                                           pairlist, boundary, comm)
+
+      end if
+
+      ! output parallel I/O restart
+      !
+      call output_prst_min(output, enefunc, minimize, boundary, &
+                                   dynvars, domain)
+    end do
+
+
+    return
+
+  end subroutine steepest_descent_fep
 
 end module sp_minimize_mod

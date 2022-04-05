@@ -56,6 +56,7 @@ module sp_setup_spdyn_mod
   use molecules_str_mod
   use fitting_mod
   use fitting_str_mod
+  use sp_fep_topology_mod
   use fileio_localres_mod
   use fileio_grocrd_mod
   use fileio_grotop_mod
@@ -69,11 +70,14 @@ module sp_setup_spdyn_mod
   use fileio_crd_mod
   use fileio_rst_mod
   use fileio_mode_mod
+  use structure_check_mod
   use messages_mod
   use timers_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+  use sp_alchemy_mod
+  use sp_alchemy_str_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -89,6 +93,10 @@ module sp_setup_spdyn_mod
   public  :: setup_spdyn_min_pio
   private :: read_parallel_io_rst
   private :: save_parallel_io_t0
+  !FEP
+  public  :: setup_spdyn_md_fep
+  public  :: setup_spdyn_min_fep
+  public  :: setup_spdyn_remd_fep
 
 contains
 
@@ -250,7 +258,7 @@ contains
 
     ! set parameters for pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
 
     ! set parameters for PME
@@ -425,6 +433,15 @@ contains
       call setup_restart_pre(rst, molecule)
     end if
 
+    ! setup structure_check
+    !
+    call setup_structure_check(molecule,                                      &
+                     ctrl_data%ene_info%forcefield_char, molecule%atom_coord, &
+                     ctrl_data%min_info%check_structure,                      &
+                     ctrl_data%min_info%fix_ring_error,                       &
+                     ctrl_data%min_info%fix_chirality_error,                  &
+                     ctrl_data%min_info%exclude_ring_grpid,                   &
+                     ctrl_data%min_info%exclude_chiral_grpid)
 
     ! set parameters for boundary condition
     !
@@ -496,7 +513,7 @@ contains
 
     ! set parameters for pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
 
     ! set parameters for PME
@@ -680,7 +697,7 @@ contains
 
     ! set parameters for pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
     ! set parameters for PME
     !
@@ -882,7 +899,7 @@ contains
 
     ! set parameters for pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
     ! set parameters for PME
     !
@@ -1026,7 +1043,7 @@ contains
     !
     enefunc%contact_check=ctrl_data%ene_info%contact_check
     enefunc%minimum_contact=ctrl_data%ene_info%minimum_contact
-    call setup_domain_pio(ctrl_data%cons_info, &
+    call setup_domain_pio(ctrl_data%ene_info, ctrl_data%cons_info, &
                           boundary, enefunc, constraints, domain)
 
 
@@ -1046,7 +1063,7 @@ contains
 
     ! set pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
 
     ! set parameters for PME
@@ -1166,7 +1183,7 @@ contains
     !
     enefunc%contact_check=ctrl_data%ene_info%contact_check
     enefunc%minimum_contact=ctrl_data%ene_info%minimum_contact
-    call setup_domain_pio(ctrl_data%cons_info, &
+    call setup_domain_pio(ctrl_data%ene_info, ctrl_data%cons_info, &
                           boundary, enefunc, constraints, domain)
 
 
@@ -1186,7 +1203,7 @@ contains
 
     ! set pairlist
     !
-    call setup_pairlist(enefunc, domain, pairlist)
+    call setup_pairlist(boundary, enefunc, domain, pairlist)
 
 
     ! set parameters for PME
@@ -1389,5 +1406,762 @@ contains
     return
 
   end subroutine save_parallel_io_t0
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_spdyn_md_fep
+  !> @brief        setup variables and structures in MD simulation for FEP
+  !! @authors      HO
+  !! @param[in]    ctrl_data   : information of control parameters
+  !! @param[out]   output      : information of output
+  !! @param[out]   molecule    : information of molecules
+  !! @param[out]   enefunc     : information of energy function
+  !! @param[out]   pairlist    : information of nonbonded pairlist
+  !! @param[out]   dynvars     : information of dynamic variables
+  !! @param[out]   dynamics    : information of molecular dynamics
+  !! @param[out]   constraints : information of constraints
+  !! @param[out]   ensemble    : information of ensemble
+  !! @param[out]   boundary    : information of boundary condition
+  !! @param[out]   domain      : information of each domain
+  !! @param[out]   comm        : communicator for domain
+  !! @param[out]   alchemy     : information of alchemy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_spdyn_md_fep(ctrl_data, output, molecule, enefunc, pairlist,    &
+                           dynvars, dynamics, constraints, ensemble, boundary, &
+                           domain, comm, alchemy)
+
+    ! formal arguments
+    type(s_ctrl_data),       intent(inout) :: ctrl_data
+    type(s_output),          intent(inout) :: output
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_dynamics),        intent(inout) :: dynamics
+    type(s_constraints),     intent(inout) :: constraints
+    type(s_ensemble),        intent(inout) :: ensemble
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_domain),          intent(inout) :: domain
+    type(s_comm),            intent(inout) :: comm
+    type(s_alchemy),         intent(inout) :: alchemy
+
+    ! local variables
+    type(s_restraints)       :: restraints
+    type(s_top)              :: top
+    type(s_par)              :: par
+    type(s_gpr)              :: gpr
+    type(s_psf)              :: psf
+    type(s_prmtop)           :: prmtop
+    type(s_grotop)           :: grotop
+    type(s_pdb)              :: pdb
+    type(s_crd)              :: crd
+    type(s_ambcrd)           :: ambcrd
+    type(s_grocrd)           :: grocrd
+    type(s_rst)              :: rst
+    type(s_pdb)              :: ref
+    type(s_pdb)              :: fit
+    type(s_ambcrd)           :: ambref
+    type(s_grocrd)           :: groref
+    type(s_mode)             :: mode
+    type(s_localres)         :: localres
+
+    ! setup parallel I/O
+    !
+
+    if (pio_check_ranked_file(ctrl_data%inp_info%rstfile)) then
+
+      call setup_spdyn_md_pio(ctrl_data, output, enefunc, pairlist,     &
+                              dynvars, dynamics, constraints, ensemble, &
+                              boundary, domain, comm)
+      return
+
+    end if
+
+
+    ! read input files
+    !
+    call input_md(ctrl_data%inp_info, top, par, psf, prmtop, grotop,  &
+                  pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref, &
+                  localres, mode)
+
+
+    ! define molecules
+    !
+    call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
+                          mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
+
+    ! FEP: define singleA, singleB, dualA, dualB, and preserved regions
+    call define_fep_topology(molecule, par, prmtop, ctrl_data%sel_info, &
+                                ctrl_data%alch_info)
+
+    call dealloc_pdb_all(pdb)
+    call dealloc_crd_all(crd)
+    call dealloc_top_all(top)
+    call dealloc_gpr_all(gpr)
+    call dealloc_psf_all(psf)
+    call dealloc_pdb_all(ref)
+    call dealloc_pdb_all(fit)
+    call dealloc_ambcrd_all(ambcrd)
+    call dealloc_ambcrd_all(ambref)
+    call dealloc_grocrd_all(grocrd)
+    call dealloc_grocrd_all(groref)
+
+
+    ! restart coordinates, velocity and boundary
+    !
+    if (rst%rstfile_type /= RstfileTypeUndef) then
+      call setup_restart_pre(rst, molecule)
+    end if
+
+
+    ! set parameters for boundary condition
+    !
+    call setup_boundary(ctrl_data%bound_info,            &
+                        ctrl_data%ene_info%table,        &
+                        ctrl_data%ene_info%pairlistdist, &
+                        ctrl_data%ene_info%water_model,  &
+                        ctrl_data%ens_info%ensemble,     &
+                        ctrl_data%cons_info%rigid_bond,  &
+                        ctrl_data%ene_info%dsize_cg,     &
+                        ctrl_data%ene_info%dmin_size_cg, &
+                        molecule, rst, boundary)
+
+
+    ! set parameters for domain 
+    ! FEP
+    call setup_domain_fep(ctrl_data%ene_info,  &
+                      ctrl_data%cons_info, &
+                      boundary, molecule, enefunc, constraints, domain)
+
+
+    ! set parameters for communication
+    !
+    call setup_communicate(boundary, domain, comm)
+    call setup_communicate_size(domain, comm)
+
+
+    ! set parameters for restraints
+    !
+    call setup_restraints(ctrl_data%res_info, &
+                          ctrl_data%sel_info, &
+                          molecule, restraints)
+
+
+    ! setup enefunc in each domain
+    !
+    call define_enefunc(ctrl_data%ene_info,  &
+                        par, prmtop, grotop, &
+                        localres, molecule, constraints, restraints, &
+                        domain, enefunc)
+
+    call setup_fitting_spdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
+                             domain, molecule, enefunc)
+
+    ! setup experiments
+    !
+    call setup_experiments(ctrl_data%exp_info, molecule, restraints, &
+                           enefunc)
+
+    call dealloc_restraints_all(restraints)
+    call dealloc_localres(localres, LocalRestraint)
+
+
+    ! setup alchemy
+    ! FEP
+    call setup_alchemy_md(ctrl_data%alch_info, enefunc, alchemy)
+
+
+    ! set parameters for pairlist
+    ! FEP
+    call setup_pairlist_fep(enefunc, domain, pairlist)
+
+
+    ! set parameters for PME
+    !
+    if (ctrl_data%ene_info%electrostatic == ElectrostaticPME) then
+      call setup_pme(domain, boundary, enefunc)
+      ! FEP
+      call pme_pre_fep(domain, boundary)
+    end if
+
+
+    ! set parameters for dynamics
+    ! FEP
+    call setup_dynamics_fep(ctrl_data%dyn_info,   &
+                        ctrl_data%bound_info, &
+                        ctrl_data%res_info,   &
+                        ctrl_data%alch_info,   &
+                        molecule, dynamics)
+
+
+    ! set parameters for dynamic variables
+    !
+    call setup_dynvars(dynvars, dynamics)
+
+
+    ! set parameters for ensemble
+    !
+    call setup_ensemble(ctrl_data%ens_info, dynamics, ensemble)
+
+    ! FEP: Some thermostat and barostat are not available in FEP
+    if (ensemble%tpcontrol  == TpcontrolBerendsen) then
+      call error_msg('Setup_Ensemble> Berendsen is not allowed in FEP')
+    end if
+    if (ensemble%tpcontrol  == TpcontrolNoseHoover) then
+      call error_msg('Setup_Ensemble> NoseHoover is not allowed in FEP')
+    end if
+    if (ensemble%tpcontrol  == TpcontrolMTK) then
+      call error_msg('Setup_Ensemble> MTK is not allowed in FEP')
+    end if
+
+    ! set parameters for constraints
+    !
+    call setup_constraints(ctrl_data%cons_info, &
+                           par, prmtop, grotop, molecule, enefunc, constraints)
+
+    ! FEP: count hbonds in single topology
+    call count_hbonds_single_fep(molecule)
+
+    ! FEP: remove degree of freedom of singleB
+    if (constraints%rigid_bond) then
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2) + molecule%num_hbonds_singleB, &
+        molecule%num_deg_freedom)
+    else
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2), &
+        molecule%num_deg_freedom)
+    end if
+
+    call dealloc_molecules_all(molecule)
+    call dealloc_par_all(par)
+    call dealloc_prmtop_all(prmtop)
+    call dealloc_grotop_all(grotop)
+
+
+    ! set gamd
+    !
+    call setup_gamd(ctrl_data%gamd_info, dynamics, domain, enefunc)
+
+
+    ! set output
+    !
+    call setup_output_md(ctrl_data%out_info, dynamics, output)
+
+
+    ! restart other variables
+    !
+    if (rst%rstfile_type /= RstfileTypeUndef) then
+      call setup_restart_post(rst, dynamics, dynvars)
+      call dealloc_rst_all(rst)
+    end if
+
+
+    ! save t0 information ( case of normal start and parallel restart out )
+    !
+    if (pio_check_ranked_file(output%rstfile)) then
+      call save_parallel_io_t0(ctrl_data, boundary, .true.)
+    end if
+
+    if (enefunc%nonb_limiter .and. main_rank) then
+      write(MsgOut,'(A,F12.8)')  &
+        'Setup_Spdyn_Md> nonb_limiter : minimim distance= ', &
+          sqrt(enefunc%minimum_contact)
+      write(MsgOut,'(A)') 
+    endif
+
+    domain%num_deg_freedom = molecule%num_deg_freedom
+
+    return
+
+  end subroutine setup_spdyn_md_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_spdyn_min_fep
+  !> @brief        setup variables and structures in minimization for FEP
+  !! @authors      HO
+  !! @param[in]    ctrl_data   : information of control parameters
+  !! @param[out]   output      : information of output
+  !! @param[out]   molecule    : information of molecules
+  !! @param[out]   enefunc     : information of energy function
+  !! @param[out]   pairlist    : information of nonbonded pairlist
+  !! @param[out]   dynvars     : information of dynamic variables
+  !! @param[out]   minimize    : information of minimize
+  !! @param[out]   constraints : information of constraints
+  !! @param[out]   boundary    : information of boundary condition
+  !! @param[out]   domain      : information of each domain
+  !! @param[out]   comm        : communicator for domain
+  !! @param[out]   alchemy     : information of alchemy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_spdyn_min_fep(ctrl_data, output, molecule, enefunc, pairlist, &
+                             dynvars, minimize, constraints, boundary,       &
+                             domain, comm, alchemy)
+
+    ! formal arguments
+    type(s_ctrl_data),       intent(inout) :: ctrl_data
+    type(s_output),          intent(inout) :: output
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_minimize),        intent(inout) :: minimize
+    type(s_constraints),     intent(inout) :: constraints
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_domain),          intent(inout) :: domain
+    type(s_comm),            intent(inout) :: comm
+    type(s_alchemy),         intent(inout) :: alchemy
+
+    ! local variables
+    type(s_restraints)       :: restraints
+    type(s_top)              :: top
+    type(s_par)              :: par
+    type(s_gpr)              :: gpr
+    type(s_psf)              :: psf
+    type(s_prmtop)           :: prmtop
+    type(s_grotop)           :: grotop
+    type(s_pdb)              :: pdb
+    type(s_crd)              :: crd
+    type(s_ambcrd)           :: ambcrd
+    type(s_grocrd)           :: grocrd
+    type(s_rst)              :: rst
+    type(s_pdb)              :: ref
+    type(s_pdb)              :: fit
+    type(s_ambcrd)           :: ambref
+    type(s_grocrd)           :: groref
+    type(s_mode)             :: mode
+    type(s_localres)         :: localres
+
+
+    ! setup parallel I/O
+    !
+
+    if (pio_check_ranked_file(ctrl_data%inp_info%rstfile)) then
+
+      call setup_spdyn_min_pio(ctrl_data, output, enefunc, pairlist,     &
+                               dynvars, minimize, constraints, boundary, &
+                               domain, comm)
+      return
+
+    end if
+
+
+    ! read input files
+    !
+    call input_min(ctrl_data%inp_info, top, par, psf, prmtop, grotop,  &
+                   pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref, &
+                   localres, mode)
+
+    ! define molecules
+    !
+    call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
+                          mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
+
+    ! FEP
+    call define_fep_topology(molecule, par, prmtop, ctrl_data%sel_info, &
+                                ctrl_data%alch_info)
+
+    call dealloc_pdb_all(pdb)
+    call dealloc_crd_all(crd)
+    call dealloc_top_all(top)
+    call dealloc_psf_all(psf)
+    call dealloc_pdb_all(ref)
+    call dealloc_pdb_all(fit)
+    call dealloc_ambcrd_all(ambcrd)
+    call dealloc_ambcrd_all(ambref)
+    call dealloc_grocrd_all(grocrd)
+    call dealloc_grocrd_all(groref)
+
+
+    ! restart coordinates, velocity and boundary
+    !
+    if (rst%rstfile_type /= RstfileTypeUndef) then
+      call setup_restart_pre(rst, molecule)
+    end if
+
+
+    ! set parameters for boundary condition
+    !
+    call setup_boundary(ctrl_data%bound_info,            &
+                        ctrl_data%ene_info%table,        &
+                        ctrl_data%ene_info%pairlistdist, &
+                        ctrl_data%ene_info%water_model,  &
+                        ctrl_data%ens_info%ensemble,     &
+                        ctrl_data%cons_info%rigid_bond,  &
+                        ctrl_data%ene_info%dsize_cg,     &
+                        ctrl_data%ene_info%dmin_size_cg, &
+                        molecule, rst, boundary)
+
+
+    ! set parameters for domain
+    !
+    if (ctrl_data%cons_info%rigid_bond) then
+      ctrl_data%cons_info%rigid_bond = .false.
+      if (main_rank) then
+        write(Msgout, '(A)') 'Setup_Constraints> WARNING : &
+                            & constraints are applied only for water'
+        write(Msgout, '(A)') 
+      end if
+    end if
+      
+    ! FEP
+    call setup_domain_fep(ctrl_data%ene_info,  &
+                      ctrl_data%cons_info, &
+                      boundary, molecule, enefunc, constraints, domain)
+
+
+    ! set parameters for communication
+    !
+    call setup_communicate(boundary, domain, comm)
+    call setup_communicate_size(domain, comm)
+
+
+    ! set parameters for restraints
+    !
+    call setup_restraints(ctrl_data%res_info, &
+                          ctrl_data%sel_info, &
+                          molecule, restraints)
+
+
+    ! setup enefunc in each domain
+    !
+    call define_enefunc(ctrl_data%ene_info, par, prmtop, grotop,     &
+                        localres, molecule, constraints, restraints, &
+                        domain, enefunc)
+
+    call setup_fitting_spdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
+                             domain, molecule, enefunc)
+
+    call setup_constraints(ctrl_data%cons_info, par, prmtop, &
+                           grotop, molecule, enefunc, constraints)
+
+    ! setup experiments
+    !
+    call setup_experiments(ctrl_data%exp_info, molecule, restraints, &
+                           enefunc)
+
+    ! FEP: count hbonds in single topology
+    call count_hbonds_single_fep(molecule)
+
+    ! FEP: remove degree of freedom of singleB
+    if (constraints%rigid_bond) then
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2) + molecule%num_hbonds_singleB, &
+        molecule%num_deg_freedom)
+    else
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2), &
+        molecule%num_deg_freedom)
+    end if
+
+    call dealloc_restraints_all(restraints)
+    call dealloc_molecules_all(molecule)
+    call dealloc_par_all(par)
+    call dealloc_prmtop_all(prmtop)
+    call dealloc_grotop_all(grotop)
+    call dealloc_localres(localres, LocalRestraint)
+    
+    ! setup alchemy
+    ! FEP
+    call setup_alchemy_min(ctrl_data%alch_info, enefunc, alchemy)
+
+    ! set parameters for pairlist
+    ! FEP
+    call setup_pairlist_fep(enefunc, domain, pairlist)
+
+    ! set parameters for PME
+    !
+    if (ctrl_data%ene_info%electrostatic == ElectrostaticPME) then
+      call setup_pme(domain, boundary, enefunc)
+      ! FEP
+      call pme_pre_fep(domain, boundary)
+    end if
+
+    ! set parameters for minimize
+    !
+    call setup_minimize(ctrl_data%min_info, minimize)
+
+    ! set parameters for dynamic variables
+    !
+    call setup_dynvars(dynvars)
+
+    ! set output
+    !
+    call setup_output_min(ctrl_data%out_info, minimize, output)
+
+
+    ! save t0 information ( case of normal start and parallel restart out )
+    !
+    if (pio_check_ranked_file(output%rstfile)) then
+      call save_parallel_io_t0(ctrl_data, boundary, .false.)
+    end if
+
+    domain%num_deg_freedom = molecule%num_deg_freedom
+
+    if (enefunc%nonb_limiter .and. main_rank) then
+      write(MsgOut,'(A,F12.8)')  &
+        'Setup_Spdyn_Min> nonb_limiter : minimim distance= ', &
+          sqrt(enefunc%minimum_contact)
+      write(MsgOut,'(A)') 
+    endif
+
+    return
+
+  end subroutine setup_spdyn_min_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_spdyn_remd_fep
+  !> @brief        setup variables and structures in FEP simulation
+  !! @authors      NK, HO
+  !! @param[in]    ctrl_data   : information of control parameters
+  !! @param[out]   output      : information of output
+  !! @param[out]   molecule    : information of molecules
+  !! @param[out]   enefunc     : information of energy function
+  !! @param[out]   pairlist    : information of nonbonded pairlist
+  !! @param[out]   dynvars     : information of dynamic variables
+  !! @param[out]   dynamics    : information of molecular dynamics
+  !! @param[out]   constraints : information of constraints
+  !! @param[out]   ensemble    : information of ensemble
+  !! @param[out]   boundary    : information of boundary condition
+  !! @param[out]   domain      : information of each domain
+  !! @param[out]   comm        : communicator for domain
+  !! @param[out]   remd        : information of remd
+  !! @param[out]   alchemy     : information of alchemy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_spdyn_remd_fep(ctrl_data, output, molecule, enefunc, &
+                           pairlist, dynvars, dynamics, constraints, ensemble, &
+                           boundary, domain, comm, remd, alchemy)
+
+    ! formal arguments
+    type(s_ctrl_data),       intent(inout) :: ctrl_data
+    type(s_output),          intent(inout) :: output
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_dynamics),        intent(inout) :: dynamics
+    type(s_constraints),     intent(inout) :: constraints
+    type(s_ensemble),        intent(inout) :: ensemble
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_domain),          intent(inout) :: domain
+    type(s_comm),            intent(inout) :: comm
+    type(s_remd),            intent(inout) :: remd
+    type(s_alchemy),         intent(inout) :: alchemy
+
+    ! local variables
+    type(s_restraints)       :: restraints
+    type(s_top)              :: top
+    type(s_par)              :: par
+    type(s_prmtop)           :: prmtop
+    type(s_grotop)           :: grotop
+    type(s_gpr)              :: gpr
+    type(s_psf)              :: psf
+    type(s_pdb)              :: pdb
+    type(s_crd)              :: crd
+    type(s_ambcrd)           :: ambcrd
+    type(s_grocrd)           :: grocrd
+    type(s_rst)              :: rst
+    type(s_pdb)              :: ref
+    type(s_pdb)              :: fit
+    type(s_ambcrd)           :: ambref
+    type(s_grocrd)           :: groref
+    type(s_mode)             :: mode
+    type(s_localres)         :: localres
+
+
+    ! read input files
+    !
+    call input_remd(ctrl_data%inp_info, top, par, psf, prmtop, grotop, &
+                    pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,&
+                    localres, mode)
+
+    ! define molecules
+    !
+    call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
+                          mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
+
+    ! FEP
+    call define_fep_topology(molecule, par, prmtop, ctrl_data%sel_info, &
+                                ctrl_data%alch_info)
+
+    call dealloc_pdb_all(pdb)
+    call dealloc_crd_all(crd)
+    call dealloc_top_all(top)
+    call dealloc_gpr_all(gpr)
+    call dealloc_psf_all(psf)
+    call dealloc_pdb_all(ref)
+    call dealloc_pdb_all(fit)
+    call dealloc_ambcrd_all(ambcrd)
+    call dealloc_ambcrd_all(ambref)
+    call dealloc_grocrd_all(grocrd)
+    call dealloc_grocrd_all(groref)
+
+    ! restart coordinates, velocity and boundary
+    !
+    if (rst%rstfile_type /= RstfileTypeUndef) then
+      call setup_restart_pre(rst, molecule)
+    end if
+
+    ! set parameters for boundary condition
+    !
+    call setup_boundary(ctrl_data%bound_info,            &
+                        ctrl_data%ene_info%table,        &
+                        ctrl_data%ene_info%pairlistdist, &
+                        ctrl_data%ene_info%water_model,  &
+                        ctrl_data%ens_info%ensemble,     &
+                        ctrl_data%cons_info%rigid_bond,  &
+                        ctrl_data%ene_info%dsize_cg,     &
+                        ctrl_data%ene_info%dmin_size_cg, &
+                        molecule, rst, boundary)
+
+    ! set parameters for restraints
+    !
+    call setup_restraints(ctrl_data%res_info, &
+                          ctrl_data%sel_info, &
+                          molecule, restraints)
+
+    call setup_solute_tempering(ctrl_data%rep_info, &
+                                molecule, restraints, ctrl_data%cons_info)
+
+    ! set parameters for domain 
+    ! FEP
+    call setup_domain_fep(ctrl_data%ene_info,  &
+                      ctrl_data%cons_info, &
+                      boundary, molecule, enefunc, constraints, domain)
+
+    ! set parameters for communication
+    !
+    call setup_communicate(boundary, domain, comm)
+    call setup_communicate_size(domain, comm)
+
+    ! setup enefunc in each domain
+    !
+    call define_enefunc(ctrl_data%ene_info, par, prmtop, grotop,     &
+                        localres, molecule, constraints, restraints, &
+                        domain, enefunc)
+
+    call setup_fitting_spdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
+                             domain, molecule, enefunc)
+
+    ! setup experiments
+    !
+    call setup_experiments(ctrl_data%exp_info, molecule, restraints, &
+                           enefunc)
+
+    call dealloc_localres(localres, LocalRestraint)
+
+    ! setup alchemy
+    ! FEP
+    call setup_alchemy_remd(ctrl_data%alch_info, enefunc, alchemy)
+
+    ! set parameters for pairlist
+    ! FEP
+    call setup_pairlist_fep(enefunc, domain, pairlist)
+
+    ! set parameters for PME
+    !
+    if (ctrl_data%ene_info%electrostatic == ElectrostaticPME) then
+      call setup_pme(domain, boundary, enefunc)
+      ! FEP
+      call pme_pre_fep(domain, boundary)
+    end if
+
+    ! set parameters for dynamics
+    ! FEP
+    call setup_dynamics_fep(ctrl_data%dyn_info,   &
+                        ctrl_data%bound_info, &
+                        ctrl_data%res_info,   &
+                        ctrl_data%alch_info,   &
+                        molecule, dynamics)
+
+    ! set parameters for dynamic variables
+    !
+    call setup_dynvars(dynvars, dynamics)
+
+    ! set parameters for ensemble
+    !
+    call setup_ensemble(ctrl_data%ens_info, dynamics, ensemble)
+
+    ! FEP: Some thermostat and barostat are not available in FEP
+    if (ensemble%tpcontrol  == TpcontrolBerendsen) then
+      call error_msg('Setup_Ensemble> Berendsen is not allowed in FEP')
+    end if
+    if (ensemble%tpcontrol  == TpcontrolNoseHoover) then
+      call error_msg('Setup_Ensemble> NoseHoover is not allowed in FEP')
+    end if
+    if (ensemble%tpcontrol  == TpcontrolMTK) then
+      call error_msg('Setup_Ensemble> MTK is not allowed in FEP')
+    end if
+
+    ! set parameters for constraints
+    !
+    call setup_constraints(ctrl_data%cons_info, &
+                           par, prmtop, grotop, molecule, enefunc, constraints)
+    call dealloc_par_all(par)
+    call dealloc_prmtop_all(prmtop)
+    call dealloc_grotop_all(grotop)
+
+    ! setup remd
+    !
+    call setup_remd(ctrl_data%rep_info, rst, boundary, dynamics, molecule, &
+                    domain, restraints, ensemble, enefunc, remd, alchemy)
+
+    ! FEP: count hbonds in single topology
+    call count_hbonds_single_fep(molecule)
+
+    ! FEP:remove degree of freedom of singleB
+    if (constraints%rigid_bond) then
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2) + molecule%num_hbonds_singleB, &
+        molecule%num_deg_freedom)
+    else
+      call update_num_deg_freedom('After removing degrees of freedom &
+        &of singleB in FEP',    &
+        -3*molecule%num_atoms_fep(2), &
+        molecule%num_deg_freedom)
+    end if
+
+    call dealloc_restraints_all(restraints)
+    call dealloc_molecules_all(molecule)
+
+    ! set gamd
+    !
+    call setup_gamd(ctrl_data%gamd_info, dynamics, domain, enefunc, remd)
+
+    ! set output
+    !
+    call setup_output_remd(ctrl_data%out_info, dynamics, remd, output)
+
+    ! restart other variables
+    !
+    if (rst%rstfile_type /= RstfileTypeUndef) then
+      call setup_restart_post(rst, dynamics, dynvars)
+      call dealloc_rst_all(rst)
+    end if
+
+    domain%num_deg_freedom = molecule%num_deg_freedom
+
+    if (enefunc%nonb_limiter .and. main_rank) then
+      write(MsgOut,'(A,F12.8)')  &
+        'Setup_Spdyn_Remd> nonb_limiter : minimim distance= ', &
+          sqrt(enefunc%minimum_contact)
+      write(MsgOut,'(A)') 
+    endif
+
+    return
+
+  end subroutine setup_spdyn_remd_fep
 
 end module sp_setup_spdyn_mod

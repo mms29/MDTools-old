@@ -2,7 +2,7 @@
 !
 !  Module   ca_analyze_mod
 !> @brief   run analyzing trajectories
-!! @authors Takaharu Mori (TM)
+!! @authors Takaharu Mori (TM), Kiyoshi Yagi (KY)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -283,7 +283,7 @@ contains
   !
   !  Subroutine    analyze_com_by_molecule
   !> @brief        analyze com of each molecule
-  !! @authors      TM
+  !! @authors      TM, KY
   !! @param[in]    molecule   : molecule information
   !! @param[inout] trajectory : trajectory information
   !
@@ -301,6 +301,8 @@ contains
     ! local variables
     real(wp)             :: com(3), mol_mass
     integer              :: i, k, atom_index, natoms, nmols, imol
+    integer              :: j, jst, close_index, kk
+    real(wp)             :: dd, dj
     integer              :: current_mol_id, next_mol_id
     real(wp), pointer    :: coord(:,:)
     character            :: frmt1*10, frmt2*8
@@ -317,9 +319,8 @@ contains
 
     write(trj_out,'(I10,$)') nstru
 
-    com(1:k) = 0.0_wp
-
     imol = 0
+    jst  = 1
     do i = 1, natoms
 
       atom_index = option%analysis_atom%idx(i)
@@ -327,12 +328,34 @@ contains
 
       if (stop_accumulation(i)) then
         imol = imol + 1
-        if (i /= natoms) then
-          write(trj_out,frmt1) com(1:k)/molecule_mass(imol)
-          com(1:k) = 0.0_wp
-        else
-          write(trj_out,frmt2) com(1:k)/molecule_mass(imol)
+        com(1:k) = com(1:k)/molecule_mass(imol)
+        write(trj_out,frmt1) com(1:k)
+
+        if (option%output_atomno) then
+          dd = 100.0_wp
+          close_index = 0
+          do j = jst, i
+
+            atom_index = option%analysis_atom%idx(j)
+            dj = 0.0_wp
+            do kk = 1, k
+              dj = dj + (com(kk) - coord(kk,atom_index))**2
+            end do
+            dj = sqrt(dj)
+
+            if (dj < dd) then
+              dd = dj
+              close_index = j
+            end if
+
+          end do
+          write(trj_out,'(2x,i8,$)') close_index
+
         end if
+
+        com(1:k) = 0.0_wp
+        if (i == natoms) write(trj_out,*)
+
       end if
 
     end do

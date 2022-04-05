@@ -96,19 +96,21 @@ contains
 
     ! define molecules
     !
-    call define_molecules(molecule, pdb=ref,       &
-                                    psf=psf,       &
-                                    prmtop=prmtop, &
-                                    ambcrd=ambcrd, &
-                                    grotop=grotop, &
-                                    grocrd=grocrd)
-
-    call dealloc_psf_all(psf)
-    call dealloc_pdb_all(ref)
-    call dealloc_prmtop_all(prmtop)
-    call dealloc_ambcrd_all(ambcrd)
-    call dealloc_grotop_all(grotop)
-    call dealloc_grocrd_all(grocrd)
+    if (ctrl_data%inp_info%dcdfile /= '' .or. &
+        ctrl_data%out_info%trjfile /= '') then
+      call define_molecules(molecule, pdb=ref,       &
+                                      psf=psf,       &
+                                      prmtop=prmtop, &
+                                      ambcrd=ambcrd, &
+                                      grotop=grotop, &
+                                      grocrd=grocrd)
+      call dealloc_psf_all(psf)
+      call dealloc_pdb_all(ref)
+      call dealloc_prmtop_all(prmtop)
+      call dealloc_ambcrd_all(ambcrd)
+      call dealloc_grotop_all(grotop)
+      call dealloc_grocrd_all(grocrd)
+    end if
 
 
     call alloc_trajectory(trajectory, molecule%num_atoms)
@@ -135,7 +137,7 @@ contains
     ! setup option
     !
     call setup_option(ctrl_data%opt_info, ctrl_data%sel_info, &
-                      molecule, option)
+                      ctrl_data%out_info, molecule, option)
 
 
     ! setup output 

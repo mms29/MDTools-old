@@ -21,6 +21,7 @@ module at_enefunc_gbsa_mod
   use at_enefunc_str_mod
   use molecules_mod
   use molecules_str_mod
+  use fileio_prmtop_mod
   use fileio_par_mod
   use fileio_eef1_mod
   use messages_mod
@@ -31,31 +32,31 @@ module at_enefunc_gbsa_mod
   private
 
   ! P1, P2, P3, P4 in LCPO (SASA)
-  real(wp), parameter :: param1 (1:4) = (/7.7887e-01, -2.8063e-01, -1.2968e-03,  3.9328e-04/)
-  real(wp), parameter :: param2 (1:4) = (/5.6482e-01, -1.9608e-01, -1.0219e-03,  2.6580e-04/)
-  real(wp), parameter :: param3 (1:4) = (/2.3348e-01, -7.2627e-02, -2.0079e-04,  7.9670e-05/)
-  real(wp), parameter :: param4 (1:4) = (/0.0000e+00,  0.0000e+00,  0.0000e+00,  0.0000e+00/)
-  real(wp), parameter :: param5 (1:4) = (/5.1245e-01, -1.5966e-01, -1.9781e-04,  1.6392e-04/)
-  real(wp), parameter :: param6 (1:4) = (/7.0344e-02, -1.9015e-02, -2.2009e-05,  1.6875e-05/)
-  real(wp), parameter :: param7 (1:4) = (/7.7914e-01, -2.5262e-01, -1.6056e-03,  3.5071e-04/)
-  real(wp), parameter :: param8 (1:4) = (/4.9392e-01, -1.6038e-01, -1.5512e-04,  1.6453e-04/)
-  real(wp), parameter :: param9 (1:4) = (/6.8563e-01, -1.8680e-01, -1.3557e-03,  2.3743e-04/)
-  real(wp), parameter :: param10(1:4) = (/8.8857e-01, -3.3421e-01, -1.8683e-03,  4.9372e-04/)
-! real(wp), parameter :: param11(1:4) = (/7.8602e-02, -2.9198e-01, -6.5370e-04,  3.6247e-04/)
-  real(wp), parameter :: param11(1:4) = (/7.8602e-01, -2.9198e-01, -6.5370e-04,  3.6247e-04/)
-  real(wp), parameter :: param12(1:4) = (/2.2599e-01, -3.6648e-02, -1.2297e-03,  8.0038e-05/)
-  real(wp), parameter :: param13(1:4) = (/5.1481e-02, -1.2603e-02, -3.2006e-04,  2.4774e-05/)
-  real(wp), parameter :: param14(1:4) = (/7.3511e-01, -2.2116e-01, -8.9148e-04,  2.5230e-04/)
-  real(wp), parameter :: param15(1:4) = (/4.1102e-01, -1.2254e-01, -7.5448e-05,  1.1804e-04/)
-  real(wp), parameter :: param16(1:4) = (/6.2577e-02, -1.7874e-02, -8.3120e-05,  1.9849e-05/)
-  real(wp), parameter :: param17(1:4) = (/7.7220e-01, -2.6393e-01,  1.0629e-03,  2.1790e-04/)
-  real(wp), parameter :: param18(1:4) = (/5.4581e-01, -1.9477e-01, -1.2873e-03,  2.9247e-04/)
-  real(wp), parameter :: param19(1:4) = (/3.8650e-01, -1.8249e-01, -3.6598e-03,  4.2640e-04/)
-  real(wp), parameter :: param20(1:4) = (/3.8730e-02, -8.9339e-03,  8.3582e-06,  3.0381e-06/)
-  real(wp), parameter :: param21(1:4) = (/9.8318e-01, -4.0437e-01,  1.1249e-04,  4.9901e-04/)
+  real(wp), parameter :: param1 (1:4) = (/7.7887e-01_wp, -2.8063e-01_wp, -1.2968e-03_wp,  3.9328e-04_wp/)
+  real(wp), parameter :: param2 (1:4) = (/5.6482e-01_wp, -1.9608e-01_wp, -1.0219e-03_wp,  2.6580e-04_wp/)
+  real(wp), parameter :: param3 (1:4) = (/2.3348e-01_wp, -7.2627e-02_wp, -2.0079e-04_wp,  7.9670e-05_wp/)
+  real(wp), parameter :: param4 (1:4) = (/0.0000e+00_wp,  0.0000e+00_wp,  0.0000e+00_wp,  0.0000e+00_wp/)
+  real(wp), parameter :: param5 (1:4) = (/5.1245e-01_wp, -1.5966e-01_wp, -1.9781e-04_wp,  1.6392e-04_wp/)
+  real(wp), parameter :: param6 (1:4) = (/7.0344e-02_wp, -1.9015e-02_wp, -2.2009e-05_wp,  1.6875e-05_wp/)
+  real(wp), parameter :: param7 (1:4) = (/7.7914e-01_wp, -2.5262e-01_wp, -1.6056e-03_wp,  3.5071e-04_wp/)
+  real(wp), parameter :: param8 (1:4) = (/4.9392e-01_wp, -1.6038e-01_wp, -1.5512e-04_wp,  1.6453e-04_wp/)
+  real(wp), parameter :: param9 (1:4) = (/6.8563e-01_wp, -1.8680e-01_wp, -1.3557e-03_wp,  2.3743e-04_wp/) ! P3 modified by Mori
+  real(wp), parameter :: param10(1:4) = (/8.8857e-01_wp, -3.3421e-01_wp, -1.8683e-03_wp,  4.9372e-04_wp/)
+  real(wp), parameter :: param11(1:4) = (/7.8602e-01_wp, -2.9198e-01_wp, -6.5370e-04_wp,  3.6247e-04_wp/) ! P1 modified by Mori
+  real(wp), parameter :: param12(1:4) = (/2.2599e-01_wp, -3.6648e-02_wp, -1.2297e-03_wp,  8.0038e-05_wp/)
+  real(wp), parameter :: param13(1:4) = (/5.1481e-02_wp, -1.2603e-02_wp, -3.2006e-04_wp,  2.4774e-05_wp/)
+  real(wp), parameter :: param14(1:4) = (/7.3511e-01_wp, -2.2116e-01_wp, -8.9148e-04_wp,  2.5230e-04_wp/)
+  real(wp), parameter :: param15(1:4) = (/4.1102e-01_wp, -1.2254e-01_wp, -7.5448e-05_wp,  1.1804e-04_wp/)
+  real(wp), parameter :: param16(1:4) = (/6.2577e-02_wp, -1.7874e-02_wp, -8.3120e-05_wp,  1.9849e-05_wp/)
+  real(wp), parameter :: param17(1:4) = (/7.7220e-01_wp, -2.6393e-01_wp,  1.0629e-03_wp,  2.1790e-04_wp/)
+  real(wp), parameter :: param18(1:4) = (/5.4581e-01_wp, -1.9477e-01_wp, -1.2873e-03_wp,  2.9247e-04_wp/)
+  real(wp), parameter :: param19(1:4) = (/3.8650e-01_wp, -1.8249e-01_wp, -3.6598e-03_wp,  4.2640e-04_wp/)
+  real(wp), parameter :: param20(1:4) = (/3.8730e-02_wp, -8.9339e-03_wp,  8.3582e-06_wp,  3.0381e-06_wp/)
+  real(wp), parameter :: param21(1:4) = (/9.8318e-01_wp, -4.0437e-01_wp,  1.1249e-04_wp,  4.9901e-04_wp/)
 
   ! subroutines
-  public  :: setup_enefunc_implicit_solvent
+  public  :: setup_enefunc_implicit_solvent_charmm
+  public  :: setup_enefunc_implicit_solvent_amber
   private :: setup_enefunc_gbsa
   private :: setup_enefunc_eef1
   public  :: setup_eef1_temperature
@@ -64,8 +65,8 @@ module at_enefunc_gbsa_mod
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    setup_enefunc_implicit_solvent
-  !> @brief        define implicit solvent model
+  !  Subroutine    setup_enefunc_implicit_solvent_charmm
+  !> @brief        define implicit solvent model with charmm
   !! @authors      TM
   !! @param[in]    ene_info : ENERGY section control parameters information
   !! @param[in]    par      : PAR information
@@ -75,16 +76,16 @@ module at_enefunc_gbsa_mod
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_implicit_solvent(ene_info, boundary, par, eef1, &
-                                            molecule, enefunc)
+  subroutine setup_enefunc_implicit_solvent_charmm(ene_info, boundary, molecule, &
+                                                   par, eef1, enefunc)
 
     ! formal arguments
-    type(s_ene_info),        intent(in)    :: ene_info
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_par),             intent(in)    :: par
-    type(s_eef1),            intent(in)    :: eef1
-    type(s_molecule),        intent(in)    :: molecule
-    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_ene_info), intent(in)    :: ene_info
+    type(s_boundary), intent(in)    :: boundary
+    type(s_molecule), intent(in)    :: molecule
+    type(s_par),      intent(in)    :: par
+    type(s_eef1),     intent(in)    :: eef1
+    type(s_enefunc),  intent(inout) :: enefunc
 
     ! local variables
     integer                :: natoms, i, j, ano
@@ -127,7 +128,56 @@ module at_enefunc_gbsa_mod
 
     return
 
-  end subroutine setup_enefunc_implicit_solvent
+  end subroutine setup_enefunc_implicit_solvent_charmm
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_implicit_solvent_amber
+  !> @brief        define implicit solvent model with amber
+  !! @authors      TM
+  !! @param[in]    ene_info : ENERGY section control parameters information
+  !! @param[in]    par      : PAR information
+  !! @param[in]    eef1     : EEF1 information
+  !! @param[in]    molecule : molecule information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_implicit_solvent_amber(ene_info, boundary, molecule, &
+                                                  prmtop, enefunc)
+
+    ! formal arguments
+    type(s_ene_info), intent(in)    :: ene_info
+    type(s_boundary), intent(in)    :: boundary
+    type(s_molecule), intent(in)    :: molecule
+    type(s_prmtop),   intent(in)    :: prmtop
+    type(s_enefunc),  intent(inout) :: enefunc
+
+    ! local variables
+    integer                :: natoms, i, j, ano
+    logical                :: found, setuperr
+
+    if (ene_info%implicit_solvent == ImplicitSolventNONE) then
+      enefunc%eef1_use = .false.
+      enefunc%imm1_use = .false.
+      enefunc%imic_use = .false.
+      enefunc%gbsa_use = .false.
+    else if (ene_info%implicit_solvent == ImplicitSolventGBSA) then
+      enefunc%eef1_use = .false.
+      enefunc%imm1_use = .false.
+      enefunc%imic_use = .false.
+      enefunc%gbsa_use = .true.
+    else
+      call error_msg('Setup_Enefunc_Implicit_Solvent_Amber> The specified implicit solvent model is not available in the AMBER force field')
+    end if
+
+    if (enefunc%gbsa_use) then
+      call setup_enefunc_gbsa(ene_info, boundary, molecule, enefunc, prmtop)
+    end if
+
+    return
+
+  end subroutine setup_enefunc_implicit_solvent_amber
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -143,13 +193,14 @@ module at_enefunc_gbsa_mod
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_gbsa(ene_info, boundary, molecule, enefunc)
+  subroutine setup_enefunc_gbsa(ene_info, boundary, molecule, enefunc, prmtop)
 
     ! formal arguments
-    type(s_ene_info),        intent(in)    :: ene_info
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_molecule),        intent(in)    :: molecule
-    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_ene_info),         intent(in)    :: ene_info
+    type(s_boundary),         intent(in)    :: boundary
+    type(s_molecule),         intent(in)    :: molecule
+    type(s_enefunc),          intent(inout) :: enefunc
+    type(s_prmtop), optional, intent(in)    :: prmtop
 
     ! local variables
     integer                :: natoms, i, j, k, m, n
@@ -200,46 +251,56 @@ module at_enefunc_gbsa_mod
 
     ! setup GB term
     !
-    do i = 1, molecule%num_atoms
-      z = atomno(i)
-      if      (z == 1)  then                  ! H
-        enefunc%gbsa%vdw_radius  (i) = 1.20_wp
-        enefunc%gbsa%scale_factor(i) = 0.85_wp
-      else if (z == 6)  then                  ! C
-        enefunc%gbsa%vdw_radius  (i) = 1.70_wp
-        enefunc%gbsa%scale_factor(i) = 0.72_wp
-      else if (z == 7)  then                  ! N
-        enefunc%gbsa%vdw_radius  (i) = 1.55_wp
-        enefunc%gbsa%scale_factor(i) = 0.79_wp
-      else if (z == 8)  then                  ! O
-        enefunc%gbsa%vdw_radius  (i) = 1.50_wp
-        enefunc%gbsa%scale_factor(i) = 0.85_wp
-      else if (z == 11)  then                 ! Na
-        enefunc%gbsa%vdw_radius  (i) = 2.27_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      else if (z == 12)  then                 ! Mg
-        enefunc%gbsa%vdw_radius  (i) = 1.73_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      else if (z == 15)  then                 ! P
-        enefunc%gbsa%vdw_radius  (i) = 1.85_wp
-        enefunc%gbsa%scale_factor(i) = 0.86_wp
-      else if (z == 16)  then                 ! S
-        enefunc%gbsa%vdw_radius  (i) = 1.80_wp
-        enefunc%gbsa%scale_factor(i) = 0.96_wp
-      else if (z == 17)  then                 ! Cl
-        enefunc%gbsa%vdw_radius  (i) = 1.75_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      else if (z == 19)  then                 ! K
-        enefunc%gbsa%vdw_radius  (i) = 2.75_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      else if (z == 30)  then                 ! Zn
-        enefunc%gbsa%vdw_radius  (i) = 1.39_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      else                                    ! others
-        enefunc%gbsa%vdw_radius  (i) = 1.50_wp
-        enefunc%gbsa%scale_factor(i) = 0.80_wp
-      end if
-    end do
+    if (present(prmtop)) then ! AMBER
+      do i = 1, molecule%num_atoms
+        enefunc%gbsa%vdw_radius  (i) = prmtop%radi_born(i)
+        enefunc%gbsa%scale_factor(i) = prmtop%fs_born(i)
+      end do
+    else                      ! CHARMM
+      do i = 1, molecule%num_atoms
+        z = atomno(i)
+        if      (z == 1)  then                  ! H
+          enefunc%gbsa%vdw_radius  (i) = 1.20_wp
+          enefunc%gbsa%scale_factor(i) = 0.85_wp
+        else if (z == 6)  then                  ! C
+          enefunc%gbsa%vdw_radius  (i) = 1.70_wp
+          enefunc%gbsa%scale_factor(i) = 0.72_wp
+        else if (z == 7)  then                  ! N
+          enefunc%gbsa%vdw_radius  (i) = 1.55_wp
+          enefunc%gbsa%scale_factor(i) = 0.79_wp
+        else if (z == 8)  then                  ! O
+          enefunc%gbsa%vdw_radius  (i) = 1.50_wp
+          enefunc%gbsa%scale_factor(i) = 0.85_wp
+        else if (z == 11)  then                 ! Na
+          enefunc%gbsa%vdw_radius  (i) = 2.27_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        else if (z == 12)  then                 ! Mg
+          enefunc%gbsa%vdw_radius  (i) = 1.73_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        else if (z == 15)  then                 ! P
+          enefunc%gbsa%vdw_radius  (i) = 1.85_wp
+          enefunc%gbsa%scale_factor(i) = 0.86_wp
+        else if (z == 16)  then                 ! S
+          enefunc%gbsa%vdw_radius  (i) = 1.80_wp
+          enefunc%gbsa%scale_factor(i) = 0.96_wp
+        else if (z == 17)  then                 ! Cl
+          enefunc%gbsa%vdw_radius  (i) = 1.75_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        else if (z == 19)  then                 ! K
+          enefunc%gbsa%vdw_radius  (i) = 2.75_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        else if (z == 30)  then                 ! Zn
+          enefunc%gbsa%vdw_radius  (i) = 1.39_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        else                                    ! others
+          write(MsgOut,'(a,a4)') 'Setup_Enefunc_Gbsa> WARNING in GB parameter setting! unknown atom:', molecule%atom_name(i)
+          write(MsgOut,'(a)')    '                    General parameters were applied'
+          write(MsgOut,'(a)')    ' '
+          enefunc%gbsa%vdw_radius  (i) = 1.50_wp
+          enefunc%gbsa%scale_factor(i) = 0.80_wp
+        end if
+      end do
+    end if
 
 
     ! setup SA term
@@ -321,6 +382,8 @@ module at_enefunc_gbsa_mod
 
       ! check atom type
       !
+      enefunc%gbsa%sasa_atom_type(i) = 0
+
       if (z == 6) then  ! C
         if (z4 == NO_CONNECTED_ATOM) then
           ! sp2
@@ -338,15 +401,18 @@ module at_enefunc_gbsa_mod
       else if (z == 8) then ! O
         if (z2 == NO_CONNECTED_ATOM) then
           ! sp2
-          if ((molecule%residue_name(i) == 'ASP' .and. &
-               molecule%atom_name   (i) == 'OD2') .or. &
-              (molecule%residue_name(i) == 'GLU' .and. &
-               molecule%atom_name   (i) == 'OE2') .or. &
-              (molecule%atom_name   (i) == 'OT2'))  then
-            ! O- carboxylate
-            enefunc%gbsa%sasa_atom_type(i) = 10
-          else
-            enefunc%gbsa%sasa_atom_type(i) = 9
+          if (present(prmtop)) then ! AMBER
+            if (prmtop%atom_cls_name(i) == 'O') then
+              enefunc%gbsa%sasa_atom_type(i) = 9
+            else
+              enefunc%gbsa%sasa_atom_type(i) = 10
+            end if
+          else                      ! CHARMM
+            if (molecule%atom_name(i) == 'O') then
+              enefunc%gbsa%sasa_atom_type(i) = 9
+            else
+              enefunc%gbsa%sasa_atom_type(i) = 10
+            end if
           end if
         else
           ! sp3 (hb = 2 for TIP3)
@@ -384,15 +450,25 @@ module at_enefunc_gbsa_mod
         enefunc%gbsa%sasa_vdw_radius(i) = 1.80_wp
 
       else ! others
-        enefunc%gbsa%sasa_atom_type (i) = 8
         if      (z == 12) then  ! MG
+          enefunc%gbsa%sasa_atom_type (i) = 8
           enefunc%gbsa%sasa_vdw_radius(i) = 1.185_wp
         else if (z == 30) then  ! ZN
+          enefunc%gbsa%sasa_atom_type (i) = 8
           enefunc%gbsa%sasa_vdw_radius(i) = 1.09_wp
         else                    ! others
+          write(MsgOut,'(a,a4)') 'Setup_Enefunc_Gbsa> WARNING in SA parameter setting! unknown atom:', molecule%atom_name(i)
+          write(MsgOut,'(a)')    '                    General parameters were applied'
+          write(MsgOut,'(a)')    ' '
+          enefunc%gbsa%sasa_atom_type (i) = 8
           enefunc%gbsa%sasa_vdw_radius(i) = 1.2_wp
         end if
 
+      end if
+
+      if (enefunc%gbsa%sasa_atom_type(i) == 0) then
+        write(MsgOut,'(a,a4)') 'Setup_Enefunc_Gbsa> Could not define the LCPO parameters for atom:', molecule%atom_name(i)
+        call error_msg('Setup_Enefunc_Gbsa> Could not define the LCPO parameters for some atoms.')
       end if
 
     end do

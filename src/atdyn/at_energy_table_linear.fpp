@@ -75,7 +75,7 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_enefunc),  target, intent(in)    :: enefunc
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -152,7 +152,7 @@ contains
     type(s_pairlist),        intent(in)    :: pairlist
     type(s_boundary),        intent(in)    :: boundary
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eelec
     real(wp),                intent(inout) :: evdw
@@ -202,7 +202,7 @@ contains
     type(s_pairlist),        intent(in)    :: pairlist
     type(s_boundary),        intent(in)    :: boundary
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eelec
     real(wp),                intent(inout) :: evdw
@@ -249,7 +249,7 @@ contains
     type(s_pairlist),        intent(in)    :: pairlist
     type(s_boundary),        intent(in)    :: boundary
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
 
 
@@ -292,7 +292,7 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_enefunc),  target, intent(in)    :: enefunc
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -432,17 +432,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 
@@ -474,7 +474,7 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_enefunc),  target, intent(in)    :: enefunc
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -627,17 +627,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 
@@ -670,7 +670,7 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_enefunc),  target, intent(in)    :: enefunc
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -814,17 +814,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 
@@ -856,7 +856,7 @@ contains
     type(s_molecule), target, intent(in)    :: molecule
     type(s_enefunc),  target, intent(in)    :: enefunc
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -1013,17 +1013,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 
@@ -1059,7 +1059,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -1116,8 +1116,7 @@ contains
     !$omp         rij2, R, L, L1, work, grad_coef, rtmp, qtmp,        &
     !$omp         term_lj12, term_lj6, term_elec, lj12, lj6,          &
     !$omp         force_local)                                        &
-    !$omp reduction(+:force) reduction(+:virial) reduction(+:eelec)   &
-    !$omp reduction(+:evdw)
+    !$omp reduction(+:virial) reduction(+:eelec) reduction(+:evdw)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -1178,7 +1177,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -1189,7 +1188,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -1246,7 +1245,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -1257,7 +1256,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -1295,7 +1294,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -1352,8 +1351,7 @@ contains
     !$omp private(id, my_id, ini_nb15, fin_nb15, i, k, j, i1, j1, ia, ja, m,   &
     !$omp         ii, jj, dij, rij2, R, L, L1, term_lj, grad_coef, term_elec,  &
     !$omp         rtmp,  force_local, viri_local, work, Delta_pbc, water_type) &
-    !$omp reduction(+:force) reduction(+:virial) reduction(+:eelec)            &
-    !$omp reduction(+:evdw)
+    !$omp reduction(+:virial) reduction(+:eelec) reduction(+:evdw)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -1426,7 +1424,7 @@ contains
 
               force_local(1:3,ii) = force_local(1:3,ii) - work(1:3,ii,jj)
               ja = j1(jj)
-              force(1:3,ja) = force(1:3,ja) + work(1:3,ii,jj)
+              force(1:3,ja,id+1) = force(1:3,ja,id+1) + work(1:3,ii,jj)
 
               do m = 1, 3
                 viri_local(1:3,m) = viri_local(1:3,m)  &
@@ -1448,7 +1446,7 @@ contains
 
       do ii = 1, 3
         ia = i1(ii)
-        force(1:3,ia) = force(1:3,ia) + force_local(1:3,ii)
+        force(1:3,ia,id+1) = force(1:3,ia,id+1) + force_local(1:3,ii)
       end do
 
     end do
@@ -1486,7 +1484,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -1545,8 +1543,7 @@ contains
     !$omp         rij2, R, L, L1, work, grad_coef, rtmp, qtmp,        &
     !$omp         term_lj12, term_lj6, term_elec, lj12, lj6,          &
     !$omp         force_local)                                        &
-    !$omp reduction(+:force) reduction(+:virial) reduction(+:eelec)   &
-    !$omp reduction(+:evdw)
+    !$omp reduction(+:virial) reduction(+:eelec) reduction(+:evdw)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -1608,7 +1605,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -1619,7 +1616,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -1677,7 +1674,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -1688,7 +1685,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -1726,7 +1723,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
     real(wp),                 intent(inout) :: evdw
@@ -1785,8 +1782,7 @@ contains
     !$omp private(id, my_id, ini_nb15, fin_nb15, i, k, j, i1, j1, ia, ja, m,   &
     !$omp         ii, jj, dij, rij2, R, L, L1, term_lj, grad_coef, term_elec,  &
     !$omp         rtmp,  force_local, viri_local, work, Delta_pbc, water_type) &
-    !$omp reduction(+:force) reduction(+:virial) reduction(+:eelec)            &
-    !$omp reduction(+:evdw)
+    !$omp reduction(+:virial) reduction(+:eelec)  reduction(+:evdw)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -1860,7 +1856,7 @@ contains
 
               force_local(1:3,ii) = force_local(1:3,ii) - work(1:3,ii,jj)
               ja = j1(jj)
-              force(1:3,ja) = force(1:3,ja) + work(1:3,ii,jj)
+              force(1:3,ja,id+1) = force(1:3,ja,id+1) + work(1:3,ii,jj)
 
               do m = 1, 3
                 viri_local(1:3,m) = viri_local(1:3,m)  &
@@ -1882,7 +1878,7 @@ contains
 
       do ii = 1, 3
         ia = i1(ii)
-        force(1:3,ia) = force(1:3,ia) + force_local(1:3,ii)
+        force(1:3,ia,id+1) = force(1:3,ia,id+1) + force_local(1:3,ii)
       end do
 
     end do
@@ -1917,7 +1913,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
 
     ! local variables
@@ -1972,7 +1968,7 @@ contains
     !$omp         rij2, R, L, L1, work, grad_coef, rtmp, qtmp,        &
     !$omp         term_lj12, term_lj6, term_elec, lj12, lj6,          &
     !$omp         force_local)                                        &
-    !$omp reduction(+:force) reduction(+:virial)
+    !$omp reduction(+:virial)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -2024,7 +2020,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -2035,7 +2031,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -2083,7 +2079,7 @@ contains
           ! store force
           !
           force_local(1:3) = force_local(1:3) - work(1:3)
-          force(1:3,j) = force(1:3,j) + work(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + work(1:3)
 
           ! virial
           !
@@ -2094,7 +2090,7 @@ contains
         end if
       end do
 
-      force(1:3,i) = force(1:3,i) + force_local(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_local(1:3)
 
     end do
 
@@ -2130,7 +2126,7 @@ contains
     type(s_boundary), target, intent(in)    :: boundary
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
 
     ! local variables
@@ -2185,7 +2181,7 @@ contains
     !$omp private(id, my_id, ini_nb15, fin_nb15, i, k, j, i1, j1, ia, ja, m,   &
     !$omp         ii, jj, dij, rij2, R, L, L1, term_lj, grad_coef, term_elec,  &
     !$omp         rtmp,  force_local, viri_local, work, Delta_pbc, water_type) &
-    !$omp reduction(+:force) reduction(+:virial)
+    !$omp reduction(+:virial)
     !
 #ifdef OMP
     id      = omp_get_thread_num()
@@ -2249,7 +2245,7 @@ contains
 
               force_local(1:3,ii) = force_local(1:3,ii) - work(1:3,ii,jj)
               ja = j1(jj)
-              force(1:3,ja) = force(1:3,ja) + work(1:3,ii,jj)
+              force(1:3,ja,id+1) = force(1:3,ja,id+1) + work(1:3,ii,jj)
 
               do m = 1, 3
                 viri_local(1:3,m) = viri_local(1:3,m)  &
@@ -2271,7 +2267,7 @@ contains
 
       do ii = 1, 3
         ia = i1(ii)
-        force(1:3,ia) = force(1:3,ia) + force_local(1:3,ii)
+        force(1:3,ia,id+1) = force(1:3,ia,id+1) + force_local(1:3,ii)
       end do
 
     end do

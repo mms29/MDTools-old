@@ -60,16 +60,49 @@ contains
     ! local variables
     type(s_trj_file)         :: trj_in
     integer                  :: nstru, ifile, istep, num_trjfiles
-    integer                  :: iatom, rms_out, idx
-    real(wp)                 :: rmsd
+    integer                  :: iatom, rms_out, idx, i
+    real(wp)                 :: rmsd, tot_mass
+
+    real(wp), allocatable    :: mass_fitting(:), mass_analysis(:)
 
 
     if (option%check_only) &
       return
 
-    if (fitting%mass_weight) &
-      call error_msg('Analyze> mass weighted is not allowed')
-     
+!    if (fitting%mass_weight) &
+!      call error_msg('Analyze> mass weighted is not allowed')
+
+    if (fitting%mass_weight .and. .not. option%mass_weight) then
+      write(MsgOut, *) 'Warning: mass-weighted fitting is enable while RMSD is not mass-weighted '
+    else if (.not. fitting%mass_weight .and.  option%mass_weight) then
+      write(MsgOut, *) 'Warning: mass-weighted RMSD is enable while fitting is not mass-weighted '
+    endif
+
+    allocate(mass_fitting(1:size(molecule%mass(:))), &
+             mass_analysis(1:size(option%analysis_atom%idx)))
+
+    if (fitting%mass_weight) then
+      if (abs(molecule%mass(1)) < 1.0e-05_wp) then
+         call error_msg('Analyze> mass is not defined')
+      else
+         mass_fitting(:) = molecule%mass(:)
+      endif
+    else
+      mass_fitting(:)=1.0_wp
+    endif
+
+    if (option%mass_weight) then
+      tot_mass = 0.0_wp
+      do iatom = 1, size(option%analysis_atom%idx)
+        idx = option%analysis_atom%idx(iatom)
+        mass_analysis(iatom) = molecule%mass(idx)
+        tot_mass = tot_mass + mass_analysis(iatom)
+      end do
+    else
+      mass_analysis(:)=1.0_wp
+      tot_mass = real(size(option%analysis_atom%idx),wp)
+    endif
+    
 
     ! open output file
     !
@@ -108,7 +141,8 @@ contains
           call run_fitting(fitting, &
                            molecule%atom_coord, &
                            trajectory%coord, &
-                           trajectory%coord)
+                           trajectory%coord, &
+                           mass_fitting)
 
 
           ! compute RMSD for selected atoms
@@ -117,13 +151,19 @@ contains
           do iatom = 1, size(option%analysis_atom%idx)
 
             idx = option%analysis_atom%idx(iatom)
-            rmsd = rmsd                                                    &
+            if (fitting%fitting_method == FittingMethodXYTR_ZROT) then
+              rmsd = rmsd + mass_analysis(iatom) * (                                    &
+                + (molecule%atom_coord(1,idx) - trajectory%coord(1,idx))**2  &
+                + (molecule%atom_coord(2,idx) - trajectory%coord(2,idx))**2)
+            else
+              rmsd = rmsd + mass_analysis(iatom) * (                                    &
               + (molecule%atom_coord(1,idx) - trajectory%coord(1,idx))**2  &
               + (molecule%atom_coord(2,idx) - trajectory%coord(2,idx))**2  &
-              + (molecule%atom_coord(3,idx) - trajectory%coord(3,idx))**2 
+              + (molecule%atom_coord(3,idx) - trajectory%coord(3,idx))**2)
+            endif
 
           end do
-          rmsd = sqrt(rmsd/size(option%analysis_atom%idx))
+          rmsd = sqrt(rmsd/tot_mass)
 
 
           ! output results

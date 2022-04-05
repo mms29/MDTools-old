@@ -33,7 +33,7 @@ module mf_option_mod
     logical                         :: allow_backup    = .false.
     integer                         :: cv_atom         = 2
     integer                         :: nimage          = 100
-    integer                         :: force_constant  = 100
+    real(wp)                        :: force_constant  = 100
 
   end type s_opt_info
 
@@ -105,7 +105,7 @@ contains
     call read_ctrlfile_integer(handle, SectionMeanforce, &
                                'nimage', opt_info%nimage)
 
-    call read_ctrlfile_integer(handle, SectionMeanforce, &
+    call read_ctrlfile_real(handle, SectionMeanforce, &
                                'force_constant', opt_info%force_constant)
 
     call end_ctrlfile_section(handle)
@@ -128,7 +128,7 @@ contains
     end if
     write(MsgOut,'(A20,I0)')   '  cv atoms        = ', opt_info%cv_atom
     write(MsgOut,'(A20,I0)')   '  # of images     = ', opt_info%nimage
-    write(MsgOut,'(A20,I0)')   '  force constant  = ', opt_info%force_constant
+    write(MsgOut,'(A20,F10.3)')   '  force constant  = ', opt_info%force_constant
     write(MsgOut,'(A)') ''
 
     return

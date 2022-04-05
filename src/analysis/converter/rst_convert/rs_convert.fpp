@@ -491,7 +491,7 @@ contains
                                rst%box_size_y, &
                                rst%box_size_z
 
-    call output_crd(crdfile, charmm_crd)
+    call output_crd(crdfile, charmm_crd, .true.)
 
     call dealloc_crd_all(charmm_crd)
 

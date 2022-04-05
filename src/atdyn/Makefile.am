@@ -7,7 +7,17 @@
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
 
-SUBDIRS := ../lib .
+if INTERNAL_LAPACK
+  INT_LAPACK_LIB=$(LAPACK_LIB1)
+else
+  INT_LAPACK_LIB=
+endif
+
+if QSIMULATE
+  SUBDIRS := ../lib ../lib/qsimulate .
+else
+  SUBDIRS := ../lib .
+endif
 
 bin_PROGRAMS = atdyn
 
@@ -26,14 +36,17 @@ atdyn_SOURCES = \
 	at_vibration_str.fpp \
 	at_output_str.fpp \
 	at_remd_str.fpp \
+	at_morph_str.fpp \
 	at_rpath_str.fpp \
 	at_qmmm.fpp \
 	at_experiments.fpp \
 	at_pairlist.fpp \
 	at_boundary.fpp \
+	at_energy_morph.fpp \
 	at_energy_bonds.fpp \
 	at_energy_angles.fpp \
 	at_energy_dihedrals.fpp \
+	at_energy_cg_nonlocal.fpp \
 	at_energy_table_cubic.fpp \
 	at_energy_table_linear.fpp \
 	at_energy_table_linear_bondcorr.fpp \
@@ -43,6 +56,7 @@ atdyn_SOURCES = \
 	at_energy_nonbonds.fpp \
 	at_energy_restraints.fpp \
 	at_energy_go.fpp \
+	at_energy_soft.fpp \
 	at_energy_gamd.fpp \
 	at_energy.fpp \
 	at_enefunc_restraints.fpp \
@@ -64,12 +78,14 @@ atdyn_SOURCES = \
 	at_md_leapfrog.fpp \
 	at_md_vverlet.fpp \
 	at_nmmd.fpp \
+	at_md_vverlet_cg.fpp \
 	at_minimize.fpp \
 	at_vibration.fpp \
 	at_remd.fpp \
 	at_rpath_mep.fpp \
 	at_rpath_fep.fpp \
 	at_rpath.fpp \
+	at_morph.fpp \
 	at_gamd.fpp \
 	at_dynamics.fpp \
 	at_control.fpp \
@@ -81,7 +97,11 @@ at_energy_linear_object = \
 	at_energy_table_linear.o \
 	at_energy_table_linear_bondcorr.o 
 
-atdyn_ADDLIB = ../lib/lib.a
+if QSIMULATE
+  atdyn_ADDLIB = ../lib/lib.a ../lib/qsimulate/libqs.a $(INT_LAPACK_LIB)
+else
+  atdyn_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
+endif
 
 EXTRA_DIST = \
 	Makefile.depends 
@@ -112,7 +132,7 @@ else
 endif
 
 atdyn$(EXEEXT) : $(atdyn_ADDLIB) $(atdyn_OBJECTS)
-	$(FC) -o $(bin_PROGRAMS) $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(LDFLAGS)
+	$(FC) -o $(bin_PROGRAMS) $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(atdyn_LDADD) $(LDFLAGS)
 
 clean:
 	rm -f $(bin_PROGRAMS) $(atdyn_OBJECTS) *.f90 *~ *.mod

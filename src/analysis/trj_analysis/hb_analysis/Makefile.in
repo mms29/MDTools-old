@@ -14,15 +14,6 @@
 
 @SET_MAKE@
 
-#--------1---------2---------3---------4---------5---------6---------7---------8
-#
-#  File     : Makefile.am
-#  Authors  : NT
-#
-#  (c) Copyright 2014 RIKEN. All rights reserved.
-#
-#--------1---------2---------3---------4---------5---------6---------7---------8
-
 VPATH = @srcdir@
 am__is_gnu_make = test -n '$(MAKEFILE_LIST)' && test -n '$(MAKELEVEL)'
 am__make_running_with_option = \
@@ -198,20 +189,27 @@ CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
+EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 F77 = @F77@
 FC = @FC@
 FCFLAGS = @FCFLAGS@
 FCFLAGS_FFTE_KERNEL_FPP__PGI__SP = @FCFLAGS_FFTE_KERNEL_FPP__PGI__SP@
 FCFLAGS_FPP__PGI_NOOPT = @FCFLAGS_FPP__PGI_NOOPT@
+FCFLAGS_KERNELS_NONBOND = @FCFLAGS_KERNELS_NONBOND@
 FFLAGS = @FFLAGS@
 FPP = @FPP@
+GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -247,6 +245,7 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_F77 = @ac_ct_F77@
 ac_ct_FC = @ac_ct_FC@
 am__include = @am__include@
@@ -287,6 +286,17 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
+@INTERNAL_LAPACK_FALSE@INT_LAPACK_LIB = 
+
+#--------1---------2---------3---------4---------5---------6---------7---------8
+#
+#  File     : Makefile.am
+#  Authors  : NT
+#
+#  (c) Copyright 2014 RIKEN. All rights reserved.
+#
+#--------1---------2---------3---------4---------5---------6---------7---------8
+@INTERNAL_LAPACK_TRUE@INT_LAPACK_LIB = $(LAPACK_LIB3)
 SUBDIRS := ../../libana .
 hb_analysis_SOURCES = \
 	hb_option_str.fpp \
@@ -299,7 +309,7 @@ hb_analysis_SOURCES = \
 EXTRA_DIST = \
 	Makefile.depends 
 
-hb_analysis_ADDLIB = ../../../lib/lib.a
+hb_analysis_ADDLIB = ../../../lib/lib.a $(INT_LAPACK_LIB)
 hb_analysis_ADDLIBANA = ../../libana/libana.a
 SUFFIXES = .fpp
 DEPENDS = Makefile.depends

@@ -15,6 +15,7 @@
 module ma_option_str_mod
 
   use select_atoms_str_mod
+  use string_mod
   use messages_mod
   use constants_mod
 
@@ -46,6 +47,7 @@ module ma_option_str_mod
     integer,          allocatable :: num_grids(:)
     logical,          allocatable :: is_periodic(:)
     real(wp),         allocatable :: box_size(:)
+    character(MaxLine)            :: out_unit
 
     ! selection variables
     integer                       :: num_atoms
@@ -94,15 +96,17 @@ module ma_option_str_mod
 
   integer,      public, parameter :: InputTypeEneAll    = 7
   integer,      public, parameter :: InputTypeREST      = 8
+  integer,      public, parameter :: InputTypeMBGO      = 9
   
-  character(*), public, parameter :: InputType(8) = (/'CV       ', &
+  character(*), public, parameter :: InputType(9) = (/'CV       ', &
                                                       'US       ', &
                                                       'EneSingle', &
                                                       'REMD     ', &
                                                       'EnePair  ', &
                                                       'FEP      ', &
                                                       'EneAll   ', &
-                                                      'REST     '/)
+                                                      'REST     ', &
+                                                      'MBGO     '/)
 
   ! subroutines
   public  :: dealloc_option

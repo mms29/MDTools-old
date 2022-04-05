@@ -26,7 +26,8 @@ module sp_dynvars_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+  use sp_alchemy_str_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
   
@@ -235,6 +236,10 @@ contains
 
     do i = 1, ncell
       do ix = 1, natom(i)
+        ! FEP: skip singleB to avoid duplication
+        if (domain%fep_use) then
+          if (domain%fepgrp(ix,i) == 2) cycle
+        end if
         kex = kex + mass(ix,i)*vel_full(1,ix,i)*vel_full(1,ix,i)
         key = key + mass(ix,i)*vel_full(2,ix,i)*vel_full(2,ix,i)
         kez = kez + mass(ix,i)*vel_full(3,ix,i)*vel_full(3,ix,i)
@@ -254,6 +259,10 @@ contains
       do i = 1, ncell
         do ix = 1, natom(i)
 
+          ! FEP: skip singleB to avoid duplication
+          if (domain%fep_use) then
+            if (domain%fepgrp(ix,i) == 2) cycle
+          end if
           vel_oldx = 2.0_dp*vel_full(1,ix,i)-vel(1,ix,i)
           vel_oldy = 2.0_dp*vel_full(2,ix,i)-vel(2,ix,i)
           vel_oldz = 2.0_dp*vel_full(3,ix,i)-vel(3,ix,i)
@@ -273,6 +282,10 @@ contains
 
       do i = 1, ncell
         do ix = 1, nsolute(i)
+          ! FEP: skip singleB to avoid duplication
+          if (domain%fep_use) then
+            if (domain%fepgrp(ix,i) == 2) cycle
+          end if
           rmsg = rmsg + force(1,ix,i)*force(1,ix,i) &
                       + force(2,ix,i)*force(2,ix,i) &
                       + force(3,ix,i)*force(3,ix,i)
@@ -280,6 +293,10 @@ contains
         do l = 1, nwater(i)
           do k = 1, 3
             ix = water_list(k,l,i)
+            ! FEP: skip singleB to avoid duplication
+            if (domain%fep_use) then
+              if (domain%fepgrp(ix,i) == 2) cycle
+            end if
             rmsg = rmsg + force(1,ix,i)*force(1,ix,i) &
                         + force(2,ix,i)*force(2,ix,i) &
                         + force(3,ix,i)*force(3,ix,i)
@@ -311,7 +328,7 @@ contains
     if (dynamics%integrator == IntegratorVRES) &
       virial_sum(1:3,1:3) = virial_sum(1:3,1:3) + virial_long(1:3,1:3)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call reduce_property(dynvars%energy%bond,               &
                          dynvars%energy%angle,              &
                          dynvars%energy%urey_bradley,       &
@@ -327,6 +344,7 @@ contains
                          virial_sum(1,1), virial_sum(2,2), virial_sum(3,3), &
                          virial_ext(1,1), virial_ext(2,2), virial_ext(3,3), &
                          kex, key, kez, ekin, ekin_old, ekin_new, rmsg)
+
 #endif
 
     dynvars%total_kene  = ekin
@@ -396,7 +414,13 @@ contains
     dynvars%pressure_zz = P_ATMOS*(kez + virial_sum(3,3))/dynvars%volume
 
     dynvars%hfc_kene     = 0.5_dp*(ekin_old + ekin_new)
-    dynvars%rms_gradient = sqrt(rmsg/real(3*domain%num_atom_all,dp))
+    ! FEP: remove degrees of freedom of duplicate atoms
+    if (domain%fep_use) then
+      dynvars%rms_gradient = sqrt(rmsg/real(3*(domain%num_atom_all - &
+        domain%num_atom_single_all),dp))
+    else
+      dynvars%rms_gradient = sqrt(rmsg/real(3*domain%num_atom_all,dp))
+    end if
 
     viri_ke =  virial_sum(1,1) + virial_sum(2,2) + virial_sum(3,3)
 
@@ -514,7 +538,8 @@ contains
       endif
     endif
 
-    if (enefunc%forcefield == ForcefieldAAGO) then
+    if (enefunc%forcefield == ForcefieldAAGO .or.  &
+        enefunc%forcefield == ForcefieldCAGO) then
 
       write(category(ifm),frmt) 'NATIVE_CONTACT'
       values(ifm) = dynvars%energy%contact
@@ -1040,7 +1065,7 @@ contains
     real(dp),                intent(inout) :: val19, val20, val21
     real(dp),                intent(inout) :: val22, val23, val24, val25
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! local variables
     real(dp)                 :: before_reduce(25), after_reduce(25)
 

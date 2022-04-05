@@ -20,7 +20,7 @@ module sp_enefunc_localres_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -167,7 +167,7 @@ contains
         call error_msg('Setup_Enefunc_Localres_Bond> Too many bonds.') 
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_bond_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -284,7 +284,7 @@ contains
         call error_msg('Setup_Enefunc_Localres_Angle> Too many angles.') 
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_angl_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else
@@ -397,7 +397,7 @@ contains
              'Setup_Enefunc_Localres_Dihed> Too many dihedral angles.') 
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(found, enefunc%num_dihe_all, 1, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
 #else

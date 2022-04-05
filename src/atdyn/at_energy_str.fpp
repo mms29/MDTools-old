@@ -40,14 +40,38 @@ module at_energy_str_mod
     ! go model          
     real(wp)              :: contact
     real(wp)              :: noncontact
+    real(wp)              :: morph
+    real(wp)              :: membrane
+
+    ! ~CG~ 3SPN.2C DNA
+    real(wp)              :: base_stacking
+    real(wp)              :: base_pairing
+    real(wp)              :: cg_DNA_exv
+    ! ~CG~ IDR models
+    real(wp)              :: cg_IDR_HPS
+    real(wp)              :: cg_IDR_KH
+    ! ~CG~ protein-protein KH model
+    real(wp)              :: cg_KH_inter_pro
+    ! ~CG~ protein-DNA sequence-specific
+    real(wp)              :: PWMcos
+    ! ~CG~ protein-DNA sequence-nonspecific
+    real(wp)              :: PWMcosns
+    ! ~CG~ general excluded volume
+    real(wp)              :: cg_exv
 
     ! restraint
     real(wp), allocatable :: restraint(:)
     real(wp), allocatable :: restraint_cv(:)
 
+    ! drms for morph
+    real(wp)              :: drms(1:2)
+
     ! dipersion correction
     real(wp)              :: disp_corr_energy
     real(wp)              :: disp_corr_virial
+    ! multi-basin 
+    real(wp), allocatable :: basin_ratio(:)
+    real(wp), allocatable :: basin_energy(:)
 
     ! solvation free energy
     real(wp)              :: solvation
@@ -85,6 +109,7 @@ module at_energy_str_mod
 
   ! parameters for allocatable variables
   integer,      public, parameter :: EneRestraints = 1
+  integer,      public, parameter :: EneMultiBasin = 2
 
   ! subroutines
   public  :: init_energy
@@ -120,6 +145,17 @@ contains
     energy%van_der_waals      = 0.0_wp
     energy%contact            = 0.0_wp
     energy%noncontact         = 0.0_wp
+    energy%morph              = 0.0_wp
+    energy%membrane           = 0.0_wp
+    energy%base_stacking      = 0.0_wp
+    energy%base_pairing       = 0.0_wp
+    energy%cg_DNA_exv         = 0.0_wp
+    energy%cg_IDR_HPS         = 0.0_wp
+    energy%cg_IDR_KH          = 0.0_wp
+    energy%cg_KH_inter_pro    = 0.0_wp
+    energy%PWMcos             = 0.0_wp
+    energy%PWMcosns           = 0.0_wp
+    energy%cg_exv             = 0.0_wp
 
     if (allocated(energy%restraint) .and. size(energy%restraint) > 0) then
       energy%restraint(1:size(energy%restraint)) = 0.0_wp
@@ -187,6 +223,24 @@ contains
        energy%restraint    (1:var_size) = 0.0_wp
        energy%restraint_cv (1:var_size) = 0.0_wp
 
+    case(EneMultiBasin)
+
+       if (var_size <= 0) return
+       if (allocated(energy%basin_ratio)) then
+          if (size(energy%basin_ratio(:)) == var_size) return
+          deallocate(energy%basin_ratio,        &
+                     energy%basin_energy,       &
+                     stat = dealloc_stat)
+       end if
+
+       allocate(energy%basin_ratio(var_size),        &
+                energy%basin_energy(var_size),       &
+                stat = alloc_stat)
+
+       energy%basin_ratio    (1:var_size) = 0.0_wp
+       energy%basin_energy   (1:var_size) = 0.0_wp
+
+
     case default
 
       call error_msg('Alloc_Energy> bad variable')
@@ -234,6 +288,14 @@ contains
                      stat = dealloc_stat)
        end if
 
+    case(EneMultiBasin)
+
+       if (allocated(energy%basin_ratio)) then
+          deallocate(energy%basin_ratio,        &
+                     energy%basin_energy,       &
+                     stat = dealloc_stat)
+       end if
+
     case default
 
       call error_msg('Dealloc_Energy> bad variable')
@@ -262,6 +324,7 @@ contains
 
 
     call dealloc_energy(energy, EneRestraints)
+    call dealloc_energy(energy, EneMultiBasin)
 
     return
 

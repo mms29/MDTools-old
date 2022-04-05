@@ -32,6 +32,7 @@ module trajectory_mod
     integer,                allocatable :: md_steps(:)
     integer,                allocatable :: mdout_periods(:)
     integer,                allocatable :: ana_periods(:)
+    integer,                allocatable :: start_steps(:)
     integer                             :: trj_format = TrjFormatDCD
     integer                             :: trj_type   = TrjTypeCoorBox
     integer                             :: trj_natom  = 0
@@ -138,6 +139,7 @@ contains
 
     integer                  :: i, j, k, ntrj
     integer                  :: md_step, mdout_period, ana_period, repeat
+    integer                  :: start_step
     character(MaxFilename)   :: value
     character(20)            :: trjname
     character(10)            :: numstr
@@ -166,7 +168,8 @@ contains
     allocate(trj_info%trj_files    (ntrj), &
              trj_info%md_steps     (ntrj), &
              trj_info%mdout_periods(ntrj), &
-             trj_info%ana_periods  (ntrj))
+             trj_info%ana_periods  (ntrj), &
+             trj_info%start_steps  (ntrj))
  
     ! read trajectory file name
     do i = 1, ntrj
@@ -203,10 +206,15 @@ contains
 
       ana_period = 1
       repeat     = 1
+      start_step = 1
 
       ! read analysis period
       call read_ctrlfile_integer(handle, Section, &
                                  'ana_period'//numstr, ana_period)
+
+      ! read start steps
+      call read_ctrlfile_integer(handle, Section, &
+                                 'start_step'//numstr, start_step)
 
       ! read repeats
       call read_ctrlfile_integer(handle, Section, &
@@ -226,6 +234,7 @@ contains
         trj_info%md_steps(i)      = md_step
         trj_info%mdout_periods(i) = mdout_period
         trj_info%ana_periods(i)   = ana_period
+        trj_info%start_steps(i)   = start_step
         i = i + 1
 
       end do
@@ -278,6 +287,8 @@ contains
          '     mdout period : ', trj_info%mdout_periods(i)
         write(MsgOut,'(A20,I10)') &
          '       ana period : ', trj_info%ana_periods(i)*trj_info%mdout_periods(i)
+        write(MsgOut,'(A20,I10)') &
+         '     start step   : ', trj_info%start_steps(i)
       end do
 
       write(MsgOut,'(A20,A10)') &
@@ -332,6 +343,7 @@ contains
     trj_list%md_steps(:)      = trj_info%md_steps(:)
     trj_list%mdout_periods(:) = trj_info%mdout_periods(:)
     trj_list%ana_periods(:)   = trj_info%ana_periods(:)
+    trj_list%start_steps(:)   = trj_info%start_steps(:)
     trj_list%trj_format       = trj_info%trj_format
     trj_list%trj_type         = trj_info%trj_type
 

@@ -12,18 +12,19 @@ SUBDIRS := ../../lib .
 noinst_LIBRARIES = libana.a
 
 libana_a_SOURCES = \
-        input_str.fpp \
-        output_str.fpp \
-        trajectory_str.fpp \
-        measure.fpp \
-        fileio_trj.fpp \
-        fileio_atp.fpp \
-        fileio_rtp.fpp \
-        input.fpp \
-        output.fpp \
-        trajectory.fpp \
-        pbc_correct.fpp \
-        analysis_timers.fpp
+	input_str.fpp \
+	output_str.fpp \
+	trajectory_str.fpp \
+	measure.fpp \
+	fileio_trj.fpp \
+	fileio_atp.fpp \
+	fileio_rtp.fpp \
+	fileio_mt.fpp \
+	input.fpp \
+	output.fpp \
+	trajectory.fpp \
+	pbc_correct.fpp \
+	analysis_timers.fpp
 
 EXTRA_DIST = \
 	Makefile.depends 

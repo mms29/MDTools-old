@@ -22,7 +22,7 @@ module sp_setup_mpi_mod
   use math_libs_mod
   use messages_mod
   use mpi_parallel_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -60,7 +60,7 @@ contains
     logical,     allocatable :: nonbreal(:), nonbrecip(:)
 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! Equalize communicators (comm_country & comm_city) between MD
       !
       mpi_comm_country = mpi_comm_world
@@ -80,7 +80,7 @@ contains
 
     case (ElectrostaticPME)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 
@@ -91,7 +91,7 @@ contains
 
     case (ElectrostaticCUTOFF)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 
@@ -102,7 +102,7 @@ contains
 
     end select
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! Write the summary of setup MP
     !
     allocate(globrank (nproc_world), &
@@ -188,7 +188,7 @@ contains
     logical,     allocatable :: repmast(:), nonbreal(:), nonbrecip(:)
 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     nreplicas  = product(rep_info%nreplicas(1:rep_info%dimension))
 
@@ -243,7 +243,7 @@ contains
 
     case (ElectrostaticPME)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 
@@ -254,7 +254,7 @@ contains
 
     case (ElectrostaticCUTOFF)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 
@@ -378,7 +378,7 @@ contains
     logical,     allocatable :: repmast(:), nonbreal(:), nonbrecip(:)
 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     nreplica  = rpath_info%nreplica
 
@@ -433,7 +433,7 @@ contains
 
     case (ElectrostaticPME)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 
@@ -444,7 +444,7 @@ contains
 
     case (ElectrostaticCUTOFF)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       mpi_comm_city = mpi_comm_country
 #endif
 

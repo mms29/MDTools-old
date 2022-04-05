@@ -39,42 +39,55 @@ module at_rpath_mep_mod
   use mpi_parallel_mod
   use constants_mod
   use math_libs_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
   private
 
+  ! local variables
+  logical,                private :: vervose = .true.
+
   ! subroutines
   public  :: setup_rpath_mep
   public  :: setup_mepatoms
   public  :: setup_mepatoms_qmmm
   public  :: run_rpath_mep
-  public  :: run_rpath_string
-  public  :: run_rpath_neb
-  private :: evolve_mep
-  private :: reparametrize_mep
-  private :: interpolation
+  private :: run_rpath_string
+  private :: path_update_string
+  private :: run_rpath_neb_glbfgs
+  private :: calc_neb_force
+  private :: minimize_micro
   private :: energy_and_force
   private :: check_convergence
   private :: check_convergence_neb
+  private :: print_images
   private :: trans_mass_weight_coord
   private :: backtrans_mass_weight_coord
-  private :: neb_energy_and_force
-  private :: neb_force
+  private :: calc_pathlength
 
+  private :: gradient_correction
+
+  private :: printout_mep_replica        
+  private :: energy_and_force_replica    
+  private :: calc_pathlength_replica     
+  private :: run_rpath_string_replica    
+  private :: path_update_string_replica  
+  private :: run_rpath_neb_glbfgs_replica  
+  private :: trans_mass_weight_coord_replica
+  private :: backtrans_mass_weight_coord_replica
+  
 contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine    setup_rpath_mep
   !> @brief        setup RPATH
-  !! @authors      YA, KY
+  !! @authors      YA, KY, SI
   !! @param[in]    mepatm_select_index : index of MEP atoms
   !! @param[in]    sel_info   : selector input information
   !! @param[in]    rst        : restart information
-  !! @param[in]    rstmep     : rstmep data
   !! @param[in]    molecule   : molecule information
   !! @param[in]    qmmm       : qmmm information
   !! @param[inout] minimize   : minimize information
@@ -83,19 +96,19 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_rpath_mep(mepatm_select_index, sel_info, rst, rstmep, &
-                             molecule, qmmm, minimize, dynvars, rpath)
+  subroutine setup_rpath_mep(mepatm_select_index, sel_info, rst, &
+                             molecule, qmmm, minimize, dynvars, rpath, rstmep)
 
     ! formal arguments
-    character(256),          intent(in)    :: mepatm_select_index
-    type(s_sel_info),        intent(in)    :: sel_info
-    type(s_rst),             intent(in)    :: rst
-    type(s_rstmep),          intent(in)    :: rstmep
-    type(s_molecule),        intent(in)    :: molecule
-    type(s_qmmm),            intent(inout) :: qmmm
-    type(s_minimize),        intent(inout) :: minimize
-    type(s_dynvars),         intent(inout) :: dynvars
-    type(s_rpath),           intent(inout) :: rpath
+    character(256),           intent(in)    :: mepatm_select_index
+    type(s_sel_info),         intent(in)    :: sel_info
+    type(s_rst),              intent(in)    :: rst
+    type(s_molecule),         intent(in)    :: molecule
+    type(s_qmmm),             intent(inout) :: qmmm
+    type(s_minimize),         intent(inout) :: minimize
+    type(s_dynvars),          intent(inout) :: dynvars
+    type(s_rpath),            intent(inout) :: rpath
+    type(s_rstmep), optional, intent(in)    :: rstmep
 
     ! local variables
     integer   :: i, ii
@@ -104,6 +117,7 @@ contains
     integer   :: errorcode, ierr
     logical   :: err
 
+    if (nrep_per_proc > 1) replicaid = my_replica_no
 
     ! define atoms
     !
@@ -111,62 +125,57 @@ contains
 
     if (qmmm%do_qmmm) then
       call setup_mepatoms_qmmm(molecule, qmmm, rpath)
+
       if (minimize%macro) then
+        ! Since the QM region is included in the MEP region,
+        ! opt_micro is set to true when miminize%macro is true.
         rpath%opt_micro = .true.
+        qmmm%qm_get_esp = .true.
+        minimize%nsteps_micro = minimize%nsteps
+
       else
         rpath%opt_micro = .false.
+
       end if
+
     else
-      rpath%opt_micro = .false.
+      rpath%opt_micro        = .false.
+      rpath%lbfgs_bnd_qmonly = .false.
+
     end if
     call add_fixatm(rpath%mep_natoms, rpath%mepatom_id, molecule, minimize)
 
     ! allocate memory
     rpath%dimension = rpath%mep_natoms * 3
     if (qmmm%do_qmmm) then
-      call alloc_rpath_mep(rpath, rpath%dimension, rpath%nreplica, qmmm%qm_natoms)
+      call alloc_rpath_mep(rpath, rpath%dimension, rpath%nreplica, &
+                           minimize%num_optatoms_micro, nrep_per_proc, &
+                           qmmm%qm_natoms)
     else
-      call alloc_rpath_mep(rpath, rpath%dimension, rpath%nreplica)
+      call alloc_rpath_mep(rpath, rpath%dimension, rpath%nreplica, &
+                           minimize%num_optatoms_micro, nrep_per_proc)
     end if
-
 
     ! set initial images
     replicaid = my_country_no + 1
 
-    rpath%is_qmcharge = .false.
-    if (rstmep%restart) then
-      if (rstmep%mep_natoms /= rpath%mep_natoms) &
-        call error_msg("Setup_Rpath_MEP> The number of MEP atoms don't match &
-                       &in the ctrlfile and rstmep.")
-      rpath%mep_coord(:,replicaid) = rstmep%mep_coord
-
-      if (qmmm%do_qmmm) then
-        if (rstmep%qm_natoms /= qmmm%qm_natoms) &
-          call error_msg("Setup_Rpath_MEP> The number of QM atoms don't match &
-                         &in the ctrlfile and rstmep.")
-        qmmm%qm_charge = rstmep%qm_charge
-        rpath%is_qmcharge = .true.
-
-      end if 
-
-    else
+    if (nrep_per_proc > 1) replicaid = my_replica_no 
+    if (rpath%first_iter) then
       ii = 0
       do i = 1, rpath%mep_natoms
         iatom = rpath%mepatom_id(i)
         rpath%mep_coord(ii+1:ii+3,replicaid) = dynvars%coord(1:3,iatom)
         ii = ii + 3
       end do
-
     end if
 
-    !dbg call mpi_barrier(mpi_comm_world, ierr)
     !dbg write(MsgOut,'("ID",i4,"> ",100f8.4)') my_country_no, qmmm%qm_charge
     !dbg call mpi_barrier(mpi_comm_world, ierr)
     !dbg call mpi_abort(mpi_comm_world, errorcode, ierr)
 
     ! write the summary of setup
     !
-    if (main_rank) then
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Setup_Rpath_MEP> Rpath information'
       write(MsgOut,'(A)') ''
       write(MsgOut,'(A20,I10)') '  dimension       = ', rpath%dimension
@@ -187,14 +196,32 @@ contains
       end do
       write(MsgOut,'(a,i0)') "  number of atoms in MEP search = ", rpath%mep_natoms
       write(MsgOut, '(a)') ' '
-
-      if (rstmep%restart) then
-        write(MsgOut, '(a)') ' '
-        write(MsgOut,'(a)') '  Restart retrieved from mep files.'
-        write(MsgOut, '(a)') ' '
-      end if
-
+      vervose = .false.
     end if
+
+    ! supress output of minimize
+    minimize%eneout_short = .true.
+    if (rpath%eneout_period == 0) then
+      minimize%eneout_period = 0
+    end if
+
+    if (minimize%crdout_period > 0) then
+      minimize%crdout_period = 0
+      if (main_rank) &
+        write(MsgOut,'(A,/)') &
+          ' (NOTICE) crdout_period of [MINIMIZE] is reset to zero.'
+    end if
+
+    if (minimize%rstout_period > 0) then
+      minimize%rstout_period = 0
+      if (main_rank) &
+        write(MsgOut,'(A,/)') &
+          ' (NOTICE) rstout_period of [MINIMIZE] is reset to zero.'
+    end if
+
+    rpath%eneout = .false.
+    rpath%crdout = .false.
+    rpath%rstout = .false.
 
     return
 
@@ -246,6 +273,7 @@ contains
 
     ! List of atoms
     !
+    if (allocated(rpath%mepatom_id)) deallocate(rpath%mepatom_id)    
     allocate(rpath%mepatom_id(rpath%mep_natoms))
 
     offset = 0
@@ -400,9 +428,76 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    printout_mep_replica
+  !> @brief        print out the data when nrepica > nproc
+  !! @authors      SI
+  !! @param[inout] output      : output information
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] dynamics    : dynamics information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] rpath       : RPATH information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine printout_mep_replica(output, molecule, enefunc, dynvars, &
+                                  dynamics, boundary, rpath, icycle)
+
+    ! formal arguments
+    type(s_output),           intent(inout) :: output
+    type(s_molecule),         intent(inout) :: molecule
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_dynamics),         intent(inout) :: dynamics
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_rpath),            intent(inout) :: rpath
+    integer,                     intent(in) :: icycle
+
+    ! local variables
+    integer                                 :: save_ene, save_crd
+
+    output%rpathout     = .false.
+    rpath%rstout_period = 0
+    save_ene            = rpath%eneout_period
+    save_crd            = rpath%crdout_period
+
+    if (rpath%method == MEPmethod_NEB) then
+      dynvars%step = rpath%neb_cycle - 1
+    else 
+      dynvars%step = icycle - 1
+    end if 
+
+    if (mod(dynvars%step,rpath%eneout_period) == 0) then
+      rpath%eneout = .false.
+      rpath%eneout_period = 0
+    else
+      rpath%eneout = .true.
+    end if  
+
+    if (mod(dynvars%step,rpath%crdout_period) == 0) then
+      rpath%crdout = .false.
+      rpath%crdout_period = 0
+    else
+      rpath%crdout = .true.
+    end if  
+
+    ! output variables
+    !
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)
+    rpath%eneout_period = save_ene
+    rpath%crdout_period = save_crd  
+
+    return
+
+  end subroutine printout_mep_replica
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    run_rpath_mep
   !> @brief        control string method
-  !! @authors      TM, YK, YA, KY
+  !! @authors      TM, YK, YA, KY, SI
   !! @param[inout] output      : output information
   !! @param[inout] molecule    : molecule information
   !! @param[inout] enefunc     : potential energy functions information
@@ -416,7 +511,8 @@ contains
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine run_rpath_mep(output, molecule, enefunc, dynvars, minimize, &
-                           dynamics, pairlist, boundary, rpath)
+                           dynamics, pairlist, boundary, rpath, conv, icycle, &
+                           ireplica)
 
     ! formal arguments
     type(s_output),           intent(inout) :: output
@@ -429,14 +525,118 @@ contains
     type(s_boundary),         intent(inout) :: boundary
     type(s_rpath),            intent(inout) :: rpath
 
+    integer, optional,        intent(in)    :: icycle
+    integer, optional,        intent(in)    :: ireplica
+    logical,                  intent(out)   :: conv   
+
     ! local variables
-    logical                :: conv
     integer                :: niter
     integer                :: replicaid
-    integer                :: i, ii, iatom
 
     real(wp)    , pointer  :: coord(:,:)
 
+    ! Pointers
+    !
+    coord => dynvars%coord
+
+    ! My replica ID
+    !
+    replicaid = my_country_no + 1
+
+    if (nrep_per_proc > 1) then
+      replicaid = my_replica_no
+      niter = icycle
+    end if
+
+    ! Open output files
+    !
+    call open_output(output)
+    DynvarsOut = output%logunit
+    
+    ! Print out mep data if iteration is converged or reach limit
+    ! Only work when nreplica > nproc
+    !
+    if (nrep_per_proc > 1) then
+      if (conv .or. ((.not. rpath%method == MEPmethod_NEB) .and. &
+      	  icycle == rpath%ncycle+1) .or. &
+          (rpath%neb_cycle == rpath%ncycle+1)) then
+        call printout_mep_replica(output, molecule, enefunc, dynvars, &
+                                  dynamics, boundary, rpath, icycle)
+        rpath%mep_exit = .true.
+        call close_output(output)
+        return
+      end if
+    end if
+
+    ! update boundary and pairlist
+    !
+    if (enefunc%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(enefunc%cg_pairlistdist_ele, &
+          enefunc%cg_pairlistdist_126,                     &
+          enefunc%cg_pairlistdist_PWMcos,                  &
+          enefunc%cg_pairlistdist_DNAbp,                   &
+          enefunc%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(enefunc%table%table,               &
+          enefunc%pairlistdist,                               &
+          boundary)
+    end if
+    if (real_calc) then
+      pairlist%allocation = .true.
+      call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+          dynvars%coord_pbc, pairlist)
+
+    end if
+
+    ! start minimum energy path search
+    !
+    if (rpath%method == MEPmethod_String) then
+      if (nrep_per_proc == 1) then
+        call run_rpath_string(output, molecule, enefunc, dynvars, &
+                              minimize, dynamics, pairlist, boundary, &
+                              rpath, conv, niter)
+      else
+        call run_rpath_string_replica(output, molecule, enefunc, dynvars, &
+                                      minimize, dynamics, pairlist, boundary, &
+                                      rpath, conv, niter, ireplica)
+      end if
+    else if (rpath%method == MEPmethod_NEB) then
+      if (nrep_per_proc == 1) then
+        call run_rpath_neb_glbfgs(output, molecule, enefunc, dynvars, &
+                                  minimize, dynamics, pairlist, boundary, &
+                                  rpath, conv, niter)
+      else
+        call run_rpath_neb_glbfgs_replica(output, molecule, enefunc, &
+                                          dynvars, minimize, dynamics, &
+                                          pairlist, boundary, rpath, conv, &
+                                          niter, ireplica)
+      end if
+    end if
+
+    if (conv) then
+      if (main_rank) write(MsgOut, '(A,I0,A)') &
+             'Convergence achieved in ', niter, ' iterations'
+    else 
+      if (nrep_per_proc == 1) then
+        if (main_rank) write(MsgOut, '(A,I0,A)') &
+               'No convergence in ', rpath%ncycle, ' iterations'
+      else if (rpath%method == MEPmethod_NEB) then
+        if (rpath%neb_cycle == rpath%ncycle+1) then
+          if (main_rank) write(MsgOut, '(A,I0,A)') &
+           'No convergence in ', rpath%ncycle, ' iterations'
+        end if           
+      else
+        if (icycle == rpath%ncycle) then
+          if (main_rank) write(MsgOut, '(A,I0,A)') &
+           'No convergence in ', rpath%ncycle, ' iterations'
+        end if   
+      end if 
+    end if 
+
+    ! close output files
+    !
+    call close_output(output)
 
     return
 
@@ -444,258 +644,842 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    evolve_mep
-  !> @brief        evolve path (MEP version)
-  !! @authors      YK, YM, YA, KY
-  !! @param[inout] dynvars  : dynamical variables information
-  !! @param[inout] rpath    : RPATH information
+  !  Subroutine    run_rpath_string
+  !> @brief        string method
+  !! @authors      TM, YK, YA, KY
+  !! @param[inout] output      : output information
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] minimize    : minimize information
+  !! @param[inout] dynamics    : dynamics information
+  !! @param[inout] pairlist    : pairlist information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] rpath       : RPATH information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine evolve_mep(rpath)
+  subroutine run_rpath_string(output, molecule, enefunc, dynvars, minimize, &
+                           dynamics, pairlist, boundary, rpath, conv, niter)
 
     ! formal arguments
-    type(s_rpath), target, intent(in) :: rpath
+    type(s_output),           intent(inout) :: output
+    type(s_molecule),         intent(inout) :: molecule
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_minimize), target, intent(inout) :: minimize
+    type(s_dynamics),         intent(inout) :: dynamics
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_rpath),            intent(inout) :: rpath
+    logical,                    intent(out) :: conv
+    integer,                    intent(out) :: niter
 
     ! local variables
-    integer           :: dimension
-    real(wp)          :: delta
-    real(wp), pointer :: force(:)
-    real(wp), pointer :: image(:,:)
-    integer           :: i, repid
+    integer                :: n
+    integer                :: min_ene_period, save_step
 
-    if(.not. replica_main_rank) return
 
-    dimension =  rpath%dimension
-    delta     =  rpath%delta
-    force     => rpath%force
-    image     => rpath%mep_coord
-
-    repid = my_country_no + 1
-
-    ! Evolve images
+    ! save eneout_period for minimize
     !
-    do i = 1, dimension
-      image(i, repid) = image(i, repid) + delta * force(i)
-    end do
+    min_ene_period = minimize%eneout_period
 
-    return
+    ! initialize
+    !
+    rpath%energy_prev     = 0.0_wp
+    rpath%mep_force       = 0.0_wp
+    rpath%mep_length      = 0.0_wp
+    rpath%pathlength_prev = 0.0_wp
 
-  end subroutine evolve_mep
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    reparametrize_mep
-  !> @brief        reparametrize path
-  !! @authors      YA, KY
-  !! @param[inout] rpath    : RPATH information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine reparametrize_mep(rpath)
-
-    ! formal arguments
-    type(s_rpath),    target, intent(inout) :: rpath
-
-    ! local variables
-    integer                  :: i, j, k
-    integer                  :: dimno, dimno_i, dimno_j
-    integer                  :: repid, repid_i, repid_j
-
-    real(wp),    allocatable :: path(:,:), path_reparm(:,:)
-    real(wp),    allocatable :: path_leng(:), path_equi(:)
-    real(wp),    allocatable :: nonuniform_mesh(:)
-    real(wp),    allocatable :: Vs(:)
-
-    real(dp),        pointer :: before_gather(:), after_gather(:)
-    real(wp),    allocatable :: after(:)
-
-
-    before_gather => rpath%before_gather
-    after_gather  => rpath%after_gather
-
-    repid = my_country_no + 1
-
-    allocate(path(rpath%nreplica, rpath%dimension),&
-             path_reparm(rpath%nreplica, rpath%dimension),&
-             path_leng(rpath%nreplica), nonuniform_mesh(rpath%nreplica))
-
-    do dimno = 1, rpath%dimension
-      before_gather(dimno) = rpath%mep_coord(dimno, repid)
-    end do
-
-    allocate(after(rpath%nreplica))
-
-#ifdef MPI
-    call mpi_gather(before_gather, rpath%dimension, mpi_real8,&
-                    after_gather,  rpath%dimension, mpi_real8,&
-                    0, mpi_comm_airplane, ierror)
-    call mpi_gather(rpath%energy, 1, mpi_wp_real,&
-                    after, 1, mpi_wp_real,&
-                    0, mpi_comm_airplane, ierror)
-
+    ! run rpath
+    !
+    dynvars%step = 0
     if (main_rank) then
-      do repid_i = 1, rpath%nreplica
-        do dimno = 1, rpath%dimension
-          path(repid_i,dimno) = after_gather((repid_i-1)*rpath%dimension+dimno)
-        end do
-      end do
-
-      ! calc arc lengths
-      path_leng(1) = 0.0_wp
-      do repid_i = 2, rpath%nreplica
-        path_leng(repid_i) = path_leng(repid_i-1) + &
-          sqrt( sum( (path(repid_i,:)-path(repid_i-1,:))**2) )
-      end do
-      rpath%pathlength = path_leng(rpath%nreplica)
-
-      ! non-uniform normalized mesh along path
-      !
-      do repid_i = 1, rpath%nreplica
-        nonuniform_mesh(repid_i) = path_leng(repid_i) &
-                                 / path_leng(rpath%nreplica)
-      end do
-
-      ! interpolate images and evaluate energies at uniform mesh
-      allocate(Vs(rpath%nreplica))
-      do dimno = 1, rpath%dimension
-        call interpolation(rpath%nreplica, nonuniform_mesh, path(1,dimno), &
-                           Vs, path_reparm(1,dimno))
-      end do
-      deallocate(Vs)
-
+       write(MsgOut, *) "--- Start string iteration ---"
+       write(MsgOut, '(/,"Iter. ",i5)') 0
     end if
 
-    ! broadcast mep coordinates
-    call mpi_bcast(path_reparm, rpath%dimension*rpath%nreplica,&
-                   mpi_wp_real, 0, mpi_comm_world, ierror)
-#endif
-
-    do dimno = 1, rpath%dimension
-      rpath%mep_coord(dimno, repid) = path_reparm(repid, dimno)
-    end do
-
-    deallocate(after)
-    deallocate(path, path_reparm, path_leng, nonuniform_mesh)
-
-    return
-
-  end subroutine reparametrize_mep
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    interpolation
-  !> @brief        update images
-  !! @authors      YA
-  !! @param[in]    nn           : # of points
-  !! @param[in]    path         : images
-  !! @param[in]    qi           : non-uniform mesh
-  !! @param[inout] Vs           : work space
-  !! @param[out]   path_reparam : updated images
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine interpolation(nimages, qi, path, Vs, path_reparm)
-
-    ! formal arguments
-    integer,         intent(in) :: nimages
-    real(wp),        intent(in) :: path(nimages)
-    real(wp),        intent(in) :: qi(nimages)
-    real(wp),        intent(in) :: Vs(nimages)
-    real(wp),     intent(inout) :: path_reparm(nimages)
-
-    ! local variables
-    integer  :: i
-    real(wp) :: tmp
-    real(wp) :: coeff(4,nimages-1)
-
-    call cubic_spline_coeff(nimages, qi, path, coeff)
-
-    do i = 1, nimages
-      tmp = real(i-1,wp) / real(nimages-1,wp)
-      call cubic_spline(nimages, qi, path, coeff, tmp, path_reparm(i))
-    end do
-
-    return
-
-  end subroutine interpolation
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    energy_and_force
-  !> @brief        compute energy and force for each image
-  !! @authors      YA
-  !! @param[in]    rpath        : rpath info
-  !! @param[in]    molecule     : molecular info
-  !! @param[in]    enefunc      : enefunc info
-  !! @param[in]    pairlist     : pairlist info
-  !! @param[in]    boundary     : boundary info
-  !! @param[in]    nonb_ene     : flag for calculate nonbonded energy
-  !! @param[inout] dynvars      : dynvars info
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine energy_and_force(ncount, rpath, molecule, enefunc, pairlist, &
-                              boundary, nonb_ene, dynvars)
-
-    ! formal arguments
-    integer,             intent(in) :: ncount
-    type(s_rpath),    intent(inout) :: rpath
-    type(s_molecule),    intent(inout) :: molecule  !YA
-    type(s_enefunc),  intent(inout) :: enefunc
-    type(s_pairlist),    intent(in) :: pairlist
-    type(s_boundary),    intent(in) :: boundary
-    logical,             intent(in) :: nonb_ene
-    type(s_dynvars),  intent(inout) :: dynvars
-
-    ! local variables
-    character(256)                  :: folder, basename
-    character(5)                    :: num
-    logical                         :: savefile
-    integer                         :: repid
-    integer                         :: dimno, iatom, i
-    real(wp)                        :: x, y, x2, y2, r
-
-    ! qmmm settings
-    !
-    if(enefunc%qmmm%do_qmmm) then
-    !  folder   = 'qmmm_mep'
-    !  write(num,'(i5.5)') ncount
-    !  basename = 'mep'//num
-    !  savefile = (mod(ncount,rpath%qmsave_period) == 0)
-    !  call set_runtime_qmmm(enefunc%qmmm, folder, basename, savefile)
-    !
-      enefunc%qmmm%qm_classical = .FALSE.
-      if(rpath%opt_micro) enefunc%qmmm%qm_get_esp = .TRUE.
-    end if
-
-    ! compute energy and force
+    ! compute the initial energy and force
     !
     call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                         .false.,           &
                         dynvars%coord,     &
+                        dynvars%trans,     &
+                        dynvars%coord_pbc, &
                         dynvars%energy,    &
                         dynvars%temporary, &
                         dynvars%force,     &
+                        dynvars%force_omp, &
+                        dynvars%virial,    &
+                        dynvars%virial_extern)
+    call energy_and_force(dynvars, rpath)
+
+    ! calc initial path length
+    !
+    if (rpath%massWeightCoord) then
+      call trans_mass_weight_coord(molecule, rpath)
+      call calc_pathlength(rpath)
+      call backtrans_mass_weight_coord(molecule, rpath)
+
+    else
+      call calc_pathlength(rpath)
+
+    end if
+
+    ! output variables
+    !
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)
+    call print_images(rpath)
+
+    rpath%first_iter = .false.
+
+    ! main loop
+    !
+    do n = 1, rpath%ncycle
+      niter        = n
+      dynvars%step = n
+      ! output settings
+      !
+      if (main_rank) write(MsgOut, '(/,"Iter. ",i5)') n
+      if (rpath%eneout_period > 0) then
+        if (mod(n, rpath%eneout_period) == 0) then
+          if (replica_main_rank) write(output%logunit, '("Iter. ",i5,/)') n
+          minimize%eneout_period = min_ene_period
+
+        else
+          minimize%eneout_period = 0
+
+        end if
+      end if
+
+      ! optimize surrounding atoms
+      !
+      if (rpath%mep_partial_opt) then
+        save_step = dynvars%step
+
+        if (rpath%opt_micro) then
+          call minimize_micro (output, molecule, enefunc, dynvars, &
+                             minimize, pairlist, boundary, rpath, n)
+
+        else
+          if (minimize%method == MinimizeMethodSD) then
+            call steepest_descent (output, molecule, enefunc, dynvars, &
+                                   minimize, pairlist, boundary)
+
+          else if (minimize%method == MinimizeMethodLBFGS) then
+            call minimize_lbfgs (output, molecule, enefunc, dynvars,   &
+                                 minimize, pairlist, boundary)
+          end if
+
+        end if
+        dynvars%step = save_step
+
+      end if
+
+      ! set the energy and force
+      !
+      call energy_and_force(dynvars, rpath)
+
+      ! check convergence
+      !
+      call check_convergence(rpath, conv)
+      if (conv)  exit
+
+      ! output variables
+      !
+      call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                        boundary, rpath)
+      if (.not. (n == rpath%ncycle)) call print_images(rpath)
+
+      ! path update
+      !
+      call path_update_string(molecule, rpath, dynvars)
+
+    end do
+
+    ! output final status
+    !
+    rpath%eneout = .true.
+    rpath%crdout = .true.
+    rpath%rstout = .true.
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)
+    rpath%eneout = .false.
+    rpath%crdout = .false.
+    rpath%rstout = .false.
+
+    call print_images(rpath)
+
+    return
+
+  end subroutine run_rpath_string
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    run_rpath_string_replica
+  !> @brief        string method when nreplica is larger than total MPI proccess
+  !! @authors      SI
+  !! @param[inout] output      : output information
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] minimize    : minimize information
+  !! @param[inout] dynamics    : dynamics information
+  !! @param[inout] pairlist    : pairlist information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] rpath       : RPATH information
+  !! @param[out]   conv        : convergence flag
+  !! @param[in]    niter       : current iteration number
+  !! @param[in]    ireplica    : replica number in mpi process
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine run_rpath_string_replica(output, molecule, enefunc, dynvars, &
+                                      minimize, dynamics, pairlist, boundary, &
+                                      rpath, conv, niter, ireplica)
+
+    ! formal arguments
+    type(s_output),           intent(inout) :: output
+    type(s_molecule),         intent(inout) :: molecule
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_minimize), target, intent(inout) :: minimize
+    type(s_dynamics),         intent(inout) :: dynamics
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_rpath),            intent(inout) :: rpath
+    logical,                    intent(out) :: conv
+    integer,                     intent(in) :: niter
+    integer,                     intent(in) :: ireplica
+
+    ! local variables
+    integer                :: i, ii, j, repid, iatom
+    integer                :: min_ene_period, save_step
+    real(wp), pointer      :: coord(:,:)
+
+    repid = my_replica_no
+
+    min_ene_period = minimize%eneout_period
+
+    ! First iteration
+    !
+    if (niter == 0) then
+      if (ireplica == 1) then
+        ! save eneout_period for minimize
+        !
+        min_ene_period = minimize%eneout_period
+    
+        ! initialize
+        !
+        rpath%energy_prev     = 0.0_wp
+        rpath%mep_force       = 0.0_wp
+        rpath%mep_length      = 0.0_wp
+        rpath%pathlength_prev = 0.0_wp
+    
+        ! run rpath
+        !
+        dynvars%step = 0
+        if (main_rank) then
+           write(MsgOut, *) "--- Start string iteration ---"
+           write(MsgOut, '(/,"Iter. ",i5)') 0
+        end if
+      end if
+
+      ! compute the initial energy and force
+      !
+      call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                          .false.,           &
+                          dynvars%coord,     &
+                          dynvars%trans,     &
+                          dynvars%coord_pbc, &
+                          dynvars%energy,    &
+                          dynvars%temporary, &
+                          dynvars%force,     &
+                          dynvars%force_omp, &
+                          dynvars%virial,    &
+                          dynvars%virial_extern)
+      call energy_and_force_replica(dynvars, rpath)
+
+      ! Store the old force by micro iteration
+      ! 
+      do i = 1, minimize%num_optatoms_micro
+          iatom = minimize%optatom_micro_id(i)
+          rpath%micro_force(1:3, i, ireplica) = dynvars%force(1:3, iatom)
+      end do
+
+      if (ireplica == nrep_per_proc) then
+        ! calc initial path length
+        !
+        if (rpath%massWeightCoord) then
+          call trans_mass_weight_coord_replica(molecule, rpath)
+          call calc_pathlength_replica(rpath)
+          call backtrans_mass_weight_coord_replica(molecule, rpath)
+    
+        else
+          call calc_pathlength_replica(rpath)
+    
+        end if
+
+        ! output collective variables
+        !
+        call print_images(rpath)
+      end if
+
+      ! output variables
+      !
+      call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                        boundary, rpath)
+    end if
+
+    ! If first cycle, then return
+    !
+    if (rpath%first_iter) return
+
+    ! start string method
+    !
+    dynvars%step = niter
+
+    ! update the coordinates
+    !
+    if (niter /= 1) then
+      coord     => dynvars%coord 
+      ii = 1
+      do i = 1, rpath%mep_natoms
+        coord(1:3, rpath%mepatom_id(i)) = rpath%mep_coord(ii:ii+2,repid)
+        ii = ii + 3
+      end do
+    end if
+
+    ! output settings
+    !
+    if (main_rank .and. rpath%first_replica) &
+     write(MsgOut, '(/,"Iter. ",i5)') niter
+    if (rpath%eneout_period > 0) then
+      if (mod(niter, rpath%eneout_period) == 0) then
+        if (replica_main_rank) write(output%logunit, '("Iter. ",i5,/)') niter
+        minimize%eneout_period = min_ene_period
+
+      else
+        minimize%eneout_period = 0
+
+      end if
+    end if
+
+    ! optimize surrounding atoms
+    !
+    if (rpath%mep_partial_opt) then
+      save_step = dynvars%step
+      if (rpath%opt_micro) then
+        call minimize_micro (output, molecule, enefunc, dynvars, &
+                           minimize, pairlist, boundary, rpath, niter, ireplica)
+
+      else
+        if (minimize%method == MinimizeMethodSD) then
+          call steepest_descent (output, molecule, enefunc, dynvars, &
+                                   minimize, pairlist, boundary)
+
+        else if (minimize%method == MinimizeMethodLBFGS) then
+          call minimize_lbfgs (output, molecule, enefunc, dynvars,   &
+                               minimize, pairlist, boundary)
+        end if
+
+      end if
+      dynvars%step = save_step
+
+    end if
+
+    ! set the energy and force
+    !
+    call energy_and_force_replica(dynvars, rpath)
+
+    ! Store the old force by micro iteration
+    !  
+    do i = 1, minimize%num_optatoms_micro
+        iatom = minimize%optatom_micro_id(i)
+        rpath%micro_force(1:3, i, ireplica) = dynvars%force(1:3, iatom)
+    end do
+
+    ! check convergence
+    !   
+    if (ireplica == nrep_per_proc) call check_convergence(rpath, conv)
+
+    ! output variables and images
+    !
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)    
+    if (repid == nrep_per_proc) call print_images(rpath)
+
+    ! path update
+    !
+    call path_update_string_replica(molecule, rpath, dynvars)
+
+    return
+
+  end subroutine run_rpath_string_replica
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    path_update_string
+  !> @brief        evolve path (MEP version)
+  !! @authors      YK, YM, YA, KY
+  !! @param[in]    molecule : molecular info
+  !! @param[inout] rpath    : RPATH information
+  !! @param[inout] dynvars  : dynamics variables information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine path_update_string(molecule, rpath, dynvars)
+
+    ! formal arguments
+    type(s_molecule),            intent(in) :: molecule
+    type(s_rpath),    target, intent(inout) :: rpath
+    type(s_dynvars),  target, intent(inout) :: dynvars
+
+    ! local variables
+    integer           :: i, ii, nreplica
+    integer           :: repid
+    integer           :: d, dimension
+    real(wp)          :: delta
+    real(wp), pointer :: mep_force(:,:)
+    real(wp), pointer :: mep_coord(:,:)
+    real(wp), pointer :: recv_buff(:,:)
+    real(wp), pointer :: coord(:,:)
+
+    real(wp),    allocatable :: path_reparm(:)
+    real(wp),    allocatable :: nonuniform_mesh(:)
+    real(wp),    allocatable :: coeff(:,:)
+    real(wp)                 :: tmp
+
+    nreplica  =  rpath%nreplica
+    dimension =  rpath%dimension
+    delta     =  rpath%delta
+    mep_force => rpath%mep_force
+    mep_coord => rpath%mep_coord
+    recv_buff => rpath%recv_buff
+    coord     => dynvars%coord
+
+    repid = my_country_no + 1
+
+    if (rpath%massWeightCoord) call trans_mass_weight_coord(molecule, rpath)
+
+    ! evolve images
+    !
+    do i = 1, dimension
+      mep_coord(i, repid) = mep_coord(i, repid) + delta * mep_force(i, repid)
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allgather(mep_coord(1,repid), rpath%dimension, mpi_wp_real,&
+                       recv_buff(1,1),     rpath%dimension, mpi_wp_real,&
+                       mpi_comm_airplane, ierror)
+    mep_coord = recv_buff
+#endif
+
+    ! calc arc lengths
+    !
+    rpath%pathlength_prev = rpath%pathlength
+    call calc_pathlength(rpath, .false.)
+
+    ! non-uniform normalized mesh along path
+    !
+    allocate(nonuniform_mesh(nreplica))
+    do i = 1, nreplica
+      nonuniform_mesh(i) = rpath%mep_length(i) / rpath%pathlength
+    end do
+
+    ! interpolate images to make equi-distance distribution
+    !
+    allocate(path_reparm(nreplica), coeff(4,nreplica-1))
+    do d = 1, dimension
+      call cubic_spline_coeff(nreplica, nonuniform_mesh, mep_coord(d,:), coeff)
+
+      do i = 1, nreplica
+        tmp = real(i-1,wp) / real(nreplica-1,wp)
+        call cubic_spline(nreplica, nonuniform_mesh, mep_coord(d,:), coeff, &
+                          tmp, path_reparm(i))
+      end do
+      mep_coord(d,:) = path_reparm
+    end do
+    deallocate(path_reparm, coeff)
+    deallocate(nonuniform_mesh)
+
+    ! update lengths
+    !
+    call calc_pathlength(rpath, .false.)
+
+#ifdef HAVE_MPI_GENESIS
+    ! broadcast MEP coordinates
+    call mpi_bcast(mep_coord, rpath%dimension*rpath%nreplica,&
+                   mpi_wp_real, 0, mpi_comm_world, ierror)
+#endif
+
+    if (rpath%massWeightCoord) call backtrans_mass_weight_coord(molecule, rpath)
+
+    ! update the coordinates 
+    ii = 1
+    do i = 1, rpath%mep_natoms
+      coord(1:3, rpath%mepatom_id(i)) = rpath%mep_coord(ii:ii+2,repid)
+      ii = ii + 3
+    end do
+
+    return
+
+  end subroutine path_update_string
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    path_update_string_replica
+  !> @brief        evolve path (MEP version)
+  !! @authors      SI
+  !! @param[in]    molecule : molecular info
+  !! @param[inout] rpath    : RPATH information
+  !! @param[inout] dynvars  : dynamics variables information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine path_update_string_replica(molecule, rpath, dynvars)
+
+    ! formal arguments
+    type(s_molecule),            intent(in) :: molecule
+    type(s_rpath),    target, intent(inout) :: rpath
+    type(s_dynvars),  target, intent(inout) :: dynvars
+
+    ! local variables
+    integer           :: i, ii, nreplica
+    integer           :: repid
+    integer           :: d, dimension
+    real(wp)          :: delta
+    real(wp), pointer :: mep_force(:,:)
+    real(wp), pointer :: mep_coord(:,:)
+    real(wp), pointer :: recv_buff(:,:)
+    real(wp), pointer :: coord(:,:)
+
+    real(wp),    allocatable :: path_reparm(:)
+    real(wp),    allocatable :: nonuniform_mesh(:)
+    real(wp),    allocatable :: coeff(:,:)
+    real(wp)                 :: tmp
+
+    nreplica  =  rpath%nreplica
+    dimension =  rpath%dimension
+    delta     =  rpath%delta
+    mep_force => rpath%mep_force
+    mep_coord => rpath%mep_coord
+    recv_buff => rpath%recv_buff
+    coord     => dynvars%coord
+
+    repid = my_replica_no
+
+    if (rpath%massWeightCoord) &
+     call trans_mass_weight_coord(molecule, rpath)
+
+    ! evolve images
+    !
+    do i = 1, dimension
+      mep_coord(i, repid) = mep_coord(i, repid) + delta * mep_force(i, repid)
+    end do
+
+      !do i=1, nrep_per_proc
+      !  ii = nrep_per_proc*(my_country_no) + i
+      !  temp_ene(i) = rpath%mep_energy(ii)
+      !  temp_ene_prev(i) = rpath%mep_energy_prev(ii)
+      !end do
+    i = nrep_per_proc*(my_country_no) + 1
+    ii = i + nrep_per_proc - 1
+    if (.not. rpath%first_replica) then
+#ifdef HAVE_MPI_GENESIS    
+      call mpi_allgather(mep_coord(1,i), rpath%dimension*nrep_per_proc, mpi_wp_real,&
+                         recv_buff(1,1), rpath%dimension*nrep_per_proc, mpi_wp_real,&
+                         mpi_comm_airplane, ierror)    
+      mep_coord = recv_buff
+#endif
+      if (main_rank) then
+        ! calc arc lengths
+        !
+        rpath%pathlength_prev = rpath%pathlength
+        call calc_pathlength(rpath, .false.)
+
+        ! non-uniform normalized mesh along path
+        !
+        allocate(nonuniform_mesh(nreplica))
+        do i = 1, nreplica
+          nonuniform_mesh(i) = rpath%mep_length(i) / rpath%pathlength
+        end do
+
+        ! interpolate images to make equi-distance distribution
+        !
+        allocate(path_reparm(nreplica), coeff(4,nreplica-1))
+        do d = 1, dimension
+          call cubic_spline_coeff(nreplica, nonuniform_mesh, mep_coord(d,:), coeff)
+
+          do i = 1, nreplica
+            tmp = real(i-1,wp) / real(nreplica-1,wp)
+            call cubic_spline(nreplica, nonuniform_mesh, mep_coord(d,:), coeff, &
+                              tmp, path_reparm(i))
+          end do
+          mep_coord(d,:) = path_reparm
+        end do
+        deallocate(path_reparm, coeff)
+        deallocate(nonuniform_mesh)
+
+        ! update lengths
+        !
+        call calc_pathlength(rpath, .false.) 
+
+        if (rpath%massWeightCoord) &
+         call backtrans_mass_weight_coord_replica(molecule, rpath)
+      end if
+
+#ifdef HAVE_MPI_GENESIS
+      ! broadcast MEP coordinates
+      call mpi_bcast(mep_coord, rpath%dimension*rpath%nreplica,&
+                     mpi_wp_real, 0, mpi_comm_world, ierror)
+#endif
+
+    end if
+
+    return
+
+  end subroutine path_update_string_replica
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    minimize_micro
+  !> @brief        Optimization using ESP charges
+  !! @authors      KY, YA, SI
+  !! @param[in]    output       : output info
+  !! @param[in]    molecule     : molecular info
+  !! @param[in]    enefunc      : enefunc info
+  !! @param[inout] dynvars      : dynvars info
+  !! @param[in]    minimize     : minimize info
+  !! @param[in]    pairlist     : pairlist info
+  !! @param[in]    boundary     : boundary info
+  !! @param[in]    rpath        : rpath info
+  !! @param[in]    niter        : iteration of MEP search
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine minimize_micro(output, molecule, enefunc, dynvars, minimize, &
+                         pairlist, boundary, rpath, niter, ireplica)
+
+    ! formal arguments
+    type(s_output),           intent(inout) :: output
+    type(s_molecule),         intent(inout) :: molecule
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_minimize), target, intent(inout) :: minimize
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_rpath),            intent(inout) :: rpath
+    integer,                  intent(in)    :: niter
+    integer,        optional, intent(in)    :: ireplica
+
+    ! local variables
+    integer                :: i
+    integer                :: natom_micro
+    integer, pointer       :: optatom_micro_id(:)
+    real(wp)               :: energy0corr, e0
+    real(wp), allocatable  :: coord0(:,:), force0corr(:,:)
+
+    real(wp)    , pointer  :: coord(:,:), force(:,:)
+    type(s_qmmm), pointer  :: qmmm
+
+
+    ! pointers
+    !
+    coord => dynvars%coord
+    force => dynvars%force
+    qmmm => enefunc%qmmm
+
+    ! energy and gradient correction terms for micro_iteration
+    !
+    natom_micro       =  minimize%num_optatoms_micro
+    optatom_micro_id  => minimize%optatom_micro_id
+
+    energy0corr = dynvars%energy%total
+    allocate(force0corr(3,natom_micro), coord0(3,natom_micro))
+    do i = 1, natom_micro
+      coord0(1:3,i)     = coord(1:3,optatom_micro_id(i))
+      force0corr(1:3,i) = force(1:3,optatom_micro_id(i))
+      if (nrep_per_proc > 1) force0corr(1:3,i) = rpath%micro_force(1:3,i,ireplica)
+    end do
+
+    ! compute the ESP/MM energy and force
+    !
+    qmmm%qm_classical = .true.
+    call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                        enefunc%nonb_limiter, &
+                        dynvars%coord,        &
+                        dynvars%trans,        &
+                        dynvars%coord_pbc,    &
+                        dynvars%energy,       &
+                        dynvars%temporary,    &
+                        dynvars%force,        &
+                        dynvars%force_omp,    &
+                        dynvars%virial,       &
+                        dynvars%virial_extern)
+
+    ! get the correction
+    !
+    energy0corr = energy0corr - dynvars%energy%total
+    do i = 1, natom_micro
+      force0corr(1:3,i) = force0corr(1:3,i) - force(1:3,optatom_micro_id(i))
+    end do
+
+    ! QM internal energy
+    !
+    !rpath%qm_energy(my_country_no + 1) = energy0corr
+
+    ! minimize the structure using micro-iteration
+    !
+    call micro_iter(output, molecule, enefunc, dynvars, minimize, &
+             pairlist, boundary, coord0, energy0corr, force0corr, niter)
+
+    deallocate(coord0, force0corr)
+
+    ! compute the QM/MM energy and force
+    !
+    enefunc%qmmm%qm_classical = .false.
+    call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                        .false.,           &
+                        dynvars%coord,     &
+                        dynvars%trans,     &
+                        dynvars%coord_pbc, &
+                        dynvars%energy,    &
+                        dynvars%temporary, &
+                        dynvars%force,     &
+                        dynvars%force_omp, &
                         dynvars%virial,    &
                         dynvars%virial_extern)
 
-    if (.not. replica_main_rank) return
+  end subroutine minimize_micro
 
-    ! energy and force
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    gradient_correction
+  !> @brief        energy and gradient correction for micro iteration
+  !! @authors      YA, SI
+  !! @param[in]    minimize     : minimize info
+  !! @param[in]    molecule     : molecular info
+  !! @param[in]    enefunc      : enefunc info
+  !! @param[in]    pairlist     : pairlist info
+  !! @param[in]    boundary     : boundary info
+  !! @param[inout] dynvars      : dynvars info
+  !! @param[in]    rpath        : rpath info
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine gradient_correction(minimize, molecule, enefunc, pairlist, &
+                boundary, dynvars, rpath, energy0corr, coord0, force0corr)
+
+    ! formal arguments
+    type(s_minimize), target,   intent(in) :: minimize
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_enefunc), target, intent(inout) :: enefunc
+    type(s_pairlist),           intent(in) :: pairlist
+    type(s_boundary),           intent(in) :: boundary
+    type(s_dynvars), target, intent(inout) :: dynvars
+    type(s_rpath),           intent(inout) :: rpath
+    real(wp),                   intent(out) :: energy0corr, coord0(3,*), force0corr(3,*)
+
+    ! local variables
+    integer               :: i, repid, natom_micro
+    integer, pointer      :: optatom_micro_id(:)
+    real(wp), pointer     :: coord(:,:), force(:,:)
+    type(s_qmmm), pointer :: qmmm
+
+
+    natom_micro = minimize%num_optatoms_micro
+
+    ! Pointers
+    !
+    coord => dynvars%coord
+    force => dynvars%force
+    qmmm => enefunc%qmmm
+    optatom_micro_id => minimize%optatom_micro_id
+
+    ! energy and gradient correction terms for micro_iteration
+    !
+    energy0corr = dynvars%energy%total
+    do i = 1, natom_micro
+      coord0(1:3,i)     = coord(1:3,optatom_micro_id(i))
+      force0corr(1:3,i) = force(1:3,optatom_micro_id(i))
+    end do
+
+    qmmm%qm_classical = .TRUE.
+    call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                        enefunc%nonb_limiter, &
+                        dynvars%coord,        &
+                        dynvars%trans,        &
+                        dynvars%coord_pbc,    &
+                        dynvars%energy,       &
+                        dynvars%temporary,    &
+                        dynvars%force,        &
+                        dynvars%force_omp,    &
+                        dynvars%virial,       &
+                        dynvars%virial_extern)
+
+    energy0corr = energy0corr - dynvars%energy%total
+    do i = 1, natom_micro
+      force0corr(1:3,i) = force0corr(1:3,i) - force(1:3,optatom_micro_id(i))
+    end do
+
+    ! QM internal energy
+    !
+    repid = my_country_no + 1
+    if (nrep_per_proc > 1) repid = my_replica_no
+
+    rpath%qm_energy(repid) = energy0corr
+
+    return
+
+  end subroutine gradient_correction
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    energy_and_force
+  !> @brief        copy the energy and force from dynvars to rpath
+  !! @authors      YA, KY
+  !! @param[inout] dynvars      : dynvars info
+  !! @param[in]    rpath        : rpath info
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine energy_and_force(dynvars, rpath)
+
+    ! formal arguments
+    type(s_dynvars),  intent(inout) :: dynvars
+    type(s_rpath),    intent(inout) :: rpath
+
+    ! local variables
+    integer                         :: repid
+    integer                         :: iatom, i
+
+
+    repid = my_country_no + 1
+
+    ! energy
     !
     rpath%energy = dynvars%energy%total
+    rpath%mep_energy_prev = rpath%mep_energy
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allgather(rpath%energy,     1, mpi_wp_real, &
+                       rpath%mep_energy, 1, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)
+#endif
+
+    ! force
+    !
     do i = 1, rpath%mep_natoms
       iatom = rpath%mepatom_id(i)
-      rpath%force(i*3-2:i*3) = dynvars%force(1:3, iatom)
+      rpath%mep_force(i*3-2:i*3, repid) = dynvars%force(1:3, iatom)
     end do
 
     ! clear force for terminals
     !
     if(rpath%fix_terminal) then
-      repid = my_country_no + 1
       if((repid == 1) .or. (repid == rpath%nreplica)) then
-        rpath%force = 0.0_wp
+        rpath%mep_force(:, repid) = 0.0_wp
       end if
     end if
 
@@ -705,91 +1489,193 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    check_convergence
-  !> @brief        
-  !! @authors      YA
-  !! @param[in]    rpath        : rpath info
-  !! @param[in]    molecule     : molecular info
-  !! @param[in]    enefunc      : enefunc info
-  !! @param[in]    pairlist     : pairlist info
-  !! @param[in]    boundary     : boundary info
-  !! @param[in]    nonb_ene     : flag for calculate nonbonded energy
+  !  Subroutine    energy_and_force_replica
+  !> @brief        copy the energy and force from dynvars to rpath
+  !! @authors      SI
   !! @param[inout] dynvars      : dynvars info
+  !! @param[in]    rpath        : rpath info
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine check_convergence(rpath, niter, conv)
+  subroutine energy_and_force_replica(dynvars, rpath)
+
+    ! formal arguments
+    type(s_dynvars),  intent(inout) :: dynvars
+    type(s_rpath),    intent(inout) :: rpath
+
+    ! local variables
+    integer                         :: repid
+    integer                         :: iatom, i, ii
+    real(wp),           allocatable :: temp_ene(:), temp_ene_prev(:)
+
+    repid = my_replica_no
+
+    ! energy
+    !
+    rpath%mep_energy_prev(repid) = rpath%mep_energy(repid)
+    rpath%mep_energy(repid) = dynvars%energy%total
+
+#ifdef HAVE_MPI_GENESIS
+    if (mod(repid,nrep_per_proc) == 0) then
+      allocate(temp_ene(nrep_per_proc))
+      allocate(temp_ene_prev(nrep_per_proc))
+      do i=1, nrep_per_proc
+        ii = nrep_per_proc*(my_country_no) + i
+        temp_ene(i) = rpath%mep_energy(ii)
+        temp_ene_prev(i) = rpath%mep_energy_prev(ii)
+      end do
+      call mpi_allgather(temp_ene, nrep_per_proc, mpi_wp_real, &
+                         rpath%mep_energy, nrep_per_proc, mpi_wp_real, &
+                         mpi_comm_airplane, ierror)
+      call mpi_allgather(temp_ene_prev, nrep_per_proc, mpi_wp_real, &
+                         rpath%mep_energy_prev, nrep_per_proc, mpi_wp_real, &
+                         mpi_comm_airplane, ierror)      
+      deallocate(temp_ene)
+      deallocate(temp_ene_prev)
+    end if
+#endif
+
+    ! force
+    !
+    do i = 1, rpath%mep_natoms
+      iatom = rpath%mepatom_id(i)
+      rpath%mep_force(i*3-2:i*3, repid) = dynvars%force(1:3, iatom)
+    end do
+
+    ! clear force for terminals
+    !
+    if(rpath%fix_terminal) then
+      if((repid == 1) .or. (repid == rpath%nreplica)) then
+        rpath%mep_force(:, repid) = 0.0_wp
+      end if
+    end if
+
+    return
+
+  end subroutine energy_and_force_replica  
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    check_convergence
+  !> @brief        Check the convergence of the energy and pathlength
+  !! @authors      YA, KY
+  !! @param[in]    rpath        : rpath info
+  !! @param[out]   conv         : if true, convergence achieved
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine check_convergence(rpath, conv)
 
     ! formal arguments
     type(s_rpath),    intent(inout) :: rpath
-    integer,             intent(in) :: niter
     logical,            intent(out) :: conv
 
     ! local variables
+    integer                         :: i, iatom
     logical                         :: my_conv, conv_e, conv_path
-    integer                         :: repid, i
-    real(wp)                        :: disp, delta, dmax, sum
-    real(wp),           allocatable :: work(:), work1(:)
+    integer                         :: repid
+    real(wp)                        :: disp, delta, dmax
+    real(wp),           allocatable :: delta_ene(:)
 
 
-    repid = my_country_no + 1
-
-    ! Energy convergence
+    ! energy convergence
     !
-    allocate(work(rpath%nreplica))
-    allocate(work1(rpath%nreplica))
-    delta = rpath%energy - rpath%energy_prev
-    rpath%energy_prev = rpath%energy
-    call mpi_allgather(delta, 1, mpi_wp_real, work, 1, mpi_wp_real, &
-      mpi_comm_airplane, ierror)
-    call mpi_allgather(rpath%energy, 1, mpi_wp_real, work1, 1, mpi_wp_real, &
-      mpi_comm_airplane, ierror)
-    if (main_rank) then
+    allocate(delta_ene(rpath%nreplica))
+    delta_ene = rpath%mep_energy - rpath%mep_energy_prev
+    dmax = delta_ene(1)
+    do i = 2, rpath%nreplica
+      if (abs(dmax) < abs(delta_ene(i))) dmax = delta_ene(i)
+    end do
+    deallocate(delta_ene)
 
-      dmax = work(1)
-      sum = abs(work(1))
-      do i = 2, rpath%nreplica
-        sum = sum + abs(work(i))
-        if (abs(dmax) < abs(work(i))) dmax = work(i)
-      end do
-      conv_e = abs(dmax) < rpath%tol_energy
-      
-      write(MsgOut, '(/,"Image ", &
-                        "        Energy (kcal/mol)", &
-                        "              Relative E.", &
-                        "             Energy Conv.")')
-      write(MsgOut, '("------", &
-                      "-------------------------", &
-                      "-------------------------", &
-                      "-------------------------")')
-      do i = 1, rpath%nreplica
-        write(MsgOut, '(i5,X,3F25.10)') i, work1(i), work1(i) - work1(1), work(i)
-      end do
-      write(MsgOut, '("------", &
-        "-------------------------", &
-        "-------------------------", &
-        "-------------------------")')
-
-      
-      write(MsgOut, '(3X, "Energy Conv. (Max) = ", F25.15)') dmax
-      write(MsgOut, '(3X, "Path length: current value / variation = ", F15.10, "/", F15.10)') &
-        rpath%pathlength, rpath%pathlength - rpath%pathlength_prev
-
-      ! Path-length convergence
-      !
-      conv_path = abs(rpath%pathlength - rpath%pathlength_prev) < rpath%tol_path
-      rpath%pathlength_prev = rpath%pathlength
-      conv = conv_e .and. conv_path
-      
+    if (abs(dmax) < rpath%tol_energy) then
+      conv_e = .true.
+    else
+      conv_e = .false.
     end if
-    call mpi_bcast(conv, 1, mpi_logical, 0, mpi_comm_world, ierror)
 
-    deallocate(work)
-    deallocate(work1)
+    ! pathlength convergence
+    !
+    if (abs(rpath%pathlength - rpath%pathlength_prev) < rpath%tol_path) then
+      conv_path = .true.
+    else
+      conv_path = .false.
+    end if
+
+    if (conv_e .and. conv_path) then
+      conv = .true.
+    else
+      conv = .false.
+    end if
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_bcast(conv, 1, mpi_logical, 0, mpi_comm_world, ierror)
+#endif
     
     return
 
   end subroutine check_convergence
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    print_images
+  !> @brief        Print the information of images 
+  !! @authors      KY
+  !! @param[in]    rpath        : rpath info
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine print_images(rpath)
+
+    ! formal arguments
+    type(s_rpath),    intent(inout) :: rpath
+
+    ! local variables
+    integer                         :: i
+    real(wp)                        :: dmax
+    real(wp),           allocatable :: delta_ene(:)
+
+
+    if (main_rank) then
+
+      allocate(delta_ene(rpath%nreplica))
+      delta_ene = rpath%mep_energy - rpath%mep_energy_prev
+
+      dmax = delta_ene(1)
+      do i = 2, rpath%nreplica
+        if (abs(dmax) < abs(delta_ene(i))) dmax = delta_ene(i)
+      end do
+    
+      
+      write(MsgOut, '(/,10x, &
+                        "         Path Length", &
+                        "   Energy (kcal/mol)", &
+                        "         Relative E.", &
+                        "        Energy Conv.")')
+      write(MsgOut, '(90("-"))')
+      do i = 1, rpath%nreplica
+        write(MsgOut, '("Image ",i3,x,4f20.4)') &
+          i,                   &
+          rpath%mep_length(i), &
+          rpath%mep_energy(i), &
+          rpath%mep_energy(i) - rpath%mep_energy(1), &
+          delta_ene(i)
+      end do
+      write(MsgOut, '(90("-"))')
+
+      deallocate(delta_ene)
+      
+      write(MsgOut, '(3X, "Energy Conv. (Max) = ", F20.8)') dmax
+      write(MsgOut, '(3X, "Path length: current value / variation = ", &
+                      F15.8, " /", F15.8)') &
+                      rpath%pathlength, &
+                      rpath%pathlength - rpath%pathlength_prev
+
+    end if
+
+    return
+
+  end subroutine print_images
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -829,9 +1715,10 @@ contains
 
     delta = rpath%energy - rpath%energy_prev
     rpath%energy_prev = rpath%energy
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(delta, 1, mpi_wp_real, work, 1, mpi_wp_real, &
       mpi_comm_airplane, ierror)
-
+#endif
     ! RMSG and MaxG
     !
     rmsg(:) = 0.0_wp
@@ -917,7 +1804,7 @@ contains
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine    trans_mass_weight_coord
-  !> @brief        
+  !> @brief        Transform to mass-weighted Cartesian coordinates
   !! @authors      YA, KY
   !! @param[in]    molecule     : molecular info
   !! @param[inout] rpath        : rpath info
@@ -936,6 +1823,7 @@ contains
     real(wp)                        :: massfac
 
     repid = my_country_no + 1
+    if (nrep_per_proc > 1) repid = my_replica_no
 
     do i = 1, rpath%mep_natoms
       iatom = rpath%mepatom_id(i)
@@ -944,13 +1832,52 @@ contains
       offset = (i - 1) * 3
       rpath%mep_coord(offset+1:offset+3,repid) = &
         rpath%mep_coord(offset+1:offset+3,repid) * massfac
-      rpath%force(offset+1:offset+3) =  &
-        rpath%force(offset+1:offset+3) / massfac
+      rpath%mep_force(offset+1:offset+3,repid) = &
+        rpath%mep_force(offset+1:offset+3,repid) / massfac
     end do
 
     return
 
   end subroutine trans_mass_weight_coord
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    trans_mass_weight_coord
+  !> @brief        Transform to mass-weighted Cartesian coordinates
+  !! @authors      YA, KY
+  !! @param[in]    molecule     : molecular info
+  !! @param[inout] rpath        : rpath info
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine trans_mass_weight_coord_replica(molecule, rpath)
+
+    ! formal arguments
+    type(s_molecule),    intent(in) :: molecule
+    type(s_rpath),    intent(inout) :: rpath
+
+    ! local variables
+    integer                         :: repid
+    integer                         :: i, ii, iatom, irep, offset
+    real(wp)                        :: massfac
+
+    do irep = 1, nrep_per_proc
+      repid = nrep_per_proc*(my_country_no) + irep
+      do i = 1, rpath%mep_natoms
+        iatom = rpath%mepatom_id(i)
+        massfac = sqrt(molecule%mass(iatom))
+  
+        offset = (i - 1) * 3
+        rpath%mep_coord(offset+1:offset+3,repid) = &
+          rpath%mep_coord(offset+1:offset+3,repid) * massfac
+        rpath%mep_force(offset+1:offset+3,repid) = &
+          rpath%mep_force(offset+1:offset+3,repid) / massfac
+      end do
+    end do
+
+    return
+
+  end subroutine trans_mass_weight_coord_replica
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -982,20 +1909,177 @@ contains
       offset = (i - 1) * 3
       rpath%mep_coord(offset+1:offset+3,repid) = &
         rpath%mep_coord(offset+1:offset+3,repid) / massfac
-      rpath%force(offset+1:offset+3) = &
-        rpath%force(offset+1:offset+3) * massfac
+      rpath%mep_force(offset+1:offset+3,repid) = &
+        rpath%mep_force(offset+1:offset+3,repid) * massfac
     end do
 
     return
 
   end subroutine backtrans_mass_weight_coord
 
-!YA_Bgn
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    run_rpath_string
-  !> @brief        string method
-  !! @authors      TM, YK, YA, KY
+  !  Subroutine    backtrans_mass_weight_coord
+  !> @brief        
+  !! @authors      YA, KY
+  !! @param[in]    molecule     : molecular info
+  !! @param[inout] rpath        : rpath info
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine backtrans_mass_weight_coord_replica(molecule, rpath)
+
+    ! formal arguments
+    type(s_molecule),    intent(in) :: molecule
+    type(s_rpath),    intent(inout) :: rpath
+
+    ! local variables
+    integer                         :: repid
+    integer                         :: i, ii, iatom, irep, offset
+    real(wp)                        :: massfac
+
+    do irep = 1, rpath%nreplica
+      do i = 1, rpath%mep_natoms
+        iatom = rpath%mepatom_id(i)
+        massfac = sqrt(molecule%mass(iatom))
+  
+        offset = (i - 1) * 3
+        rpath%mep_coord(offset+1:offset+3,irep) = &
+          rpath%mep_coord(offset+1:offset+3,irep) / massfac
+        rpath%mep_force(offset+1:offset+3,irep) = &
+          rpath%mep_force(offset+1:offset+3,irep) * massfac
+      end do
+    end do
+
+    return
+
+  end subroutine backtrans_mass_weight_coord_replica
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    calc_pathlength
+  !> @brief        Calculate the arc length of current MEP
+  !! @authors      KY
+  !! @param[inout] rpath : rpath info
+  !! @param[in]    gather_coord : gather mep_coord, if true
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine calc_pathlength(rpath, gather_coord)
+
+    ! formal arguments
+    type(s_rpath), target, intent(inout) :: rpath
+    logical, optional,     intent(in)    :: gather_coord
+
+    ! local variables
+    integer           :: i, n
+    integer           :: repid
+    logical           :: flag
+    real(wp)          :: dd
+    real(wp), pointer :: mep_coord(:,:)
+    real(wp), pointer :: recv_buff(:,:)
+    real(wp), pointer :: mep_length(:)
+
+
+    mep_coord  => rpath%mep_coord
+    recv_buff  => rpath%recv_buff
+    mep_length => rpath%mep_length
+
+    if (present(gather_coord)) then
+        flag = gather_coord
+    end if
+
+    if (.not. present(gather_coord) .or. flag) then
+#ifdef HAVE_MPI_GENESIS
+      repid = my_country_no + 1
+      call mpi_allgather(mep_coord(1,repid), rpath%dimension, mpi_wp_real,&
+                         recv_buff(1,1),     rpath%dimension, mpi_wp_real,&
+                         mpi_comm_airplane, ierror)
+      mep_coord = recv_buff
+#endif
+    end if
+
+    mep_length(1) = 0.0_wp
+    do i = 2, rpath%nreplica
+
+      dd = 0.0_wp
+      do n = 1, rpath%dimension
+        dd = dd + (mep_coord(n,i) - mep_coord(n,i-1))**2
+      end do
+      mep_length(i) = mep_length(i-1) + sqrt(dd)
+
+    end do
+    rpath%pathlength = mep_length(rpath%nreplica)
+
+
+    return
+
+  end subroutine calc_pathlength
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    calc_pathlength_replica
+  !> @brief        Calculate the arc length of current MEP
+  !! @authors      KY, SI
+  !! @param[inout] rpath : rpath info
+  !! @param[in]    gather_coord : gather mep_coord, if true
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine calc_pathlength_replica(rpath, gather_coord)
+
+    ! formal arguments
+    type(s_rpath), target, intent(inout) :: rpath
+    logical, optional,     intent(in)    :: gather_coord
+
+    ! local variables
+    integer               :: i, n
+    integer               :: repid
+    real(wp)              :: dd
+    real(wp), pointer     :: mep_coord(:,:)
+    real(wp), pointer     :: recv_buff(:,:)
+    real(wp), pointer     :: mep_length(:)
+
+    mep_coord  => rpath%mep_coord
+    recv_buff  => rpath%recv_buff
+    mep_length => rpath%mep_length
+
+    if (.not. present(gather_coord) .or. &
+        (present(gather_coord) .and. gather_coord)) then
+#ifdef HAVE_MPI_GENESIS
+      repid = my_replica_no
+
+      call mpi_allgather(mep_coord(1,(repid-nrep_per_proc)+1), &
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                         recv_buff(1,1), &    
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                         mpi_comm_airplane, ierror)
+      mep_coord = recv_buff
+#endif
+    end if
+
+    mep_length(1) = 0.0_wp
+    do i = 2, rpath%nreplica
+
+      dd = 0.0_wp
+      do n = 1, rpath%dimension
+        dd = dd + (mep_coord(n,i) - mep_coord(n,i-1))**2
+      end do
+      mep_length(i) = mep_length(i-1) + sqrt(dd)
+
+    end do
+    rpath%pathlength = mep_length(rpath%nreplica)
+
+
+    return
+
+  end subroutine calc_pathlength_replica
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    run_rpath_neb_glbfgs
+  !> @brief        global LBFGS-NEB
+  !! @authors      YA, KY
   !! @param[inout] output      : output information
   !! @param[inout] molecule    : molecule information
   !! @param[inout] enefunc     : potential energy functions information
@@ -1008,8 +2092,8 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine run_rpath_string(output, molecule, enefunc, dynvars, minimize, &
-                           dynamics, pairlist, boundary, rpath, conv, niter)
+  subroutine run_rpath_neb_glbfgs(output, molecule, enefunc, dynvars, minimize, &
+                       dynamics, pairlist, boundary, rpath, conv, niter)
 
     ! formal arguments
     type(s_output),           intent(inout) :: output
@@ -1025,37 +2109,318 @@ contains
     integer,                    intent(out) :: niter
 
     ! local variables
-    integer                :: i, j, k, n
-    integer                :: iloop_start, iloop_end
+    integer                :: i, j
     integer                :: replicaid
-    integer                :: ii, jj, iatom, id
+    integer                :: ii, iatom, ioff, image
 
-    integer                :: natom_micro
-    integer, pointer       :: optatom_micro_id(:)
-    real(wp)               :: energy0corr, e0
-    real(wp), allocatable  :: coord0(:,:), force0corr(:,:)
-
-    real(wp)    , pointer  :: coord(:,:), force(:,:)
+    real(wp)    , pointer  :: coord(:,:)
     type(s_qmmm), pointer  :: qmmm
 
-    character(256)         :: folder, basename
-    character(5)           :: num
-    logical                :: savefile
+    logical                :: bnd, bnd_qmonly
+    real(wp)               :: maxmove
+    real(wp)               :: neb_energy, ddot
+    real(wp), allocatable  :: tmp(:)
+    integer, parameter     :: start_minimize = 2
 
-    integer                :: repid
+    ! local variabels for LBFGS
+    character(60)          :: csave, task
+    logical                :: lsave(4)
+    integer                :: no3, ncorr, nwork, dim
+    integer                :: isave(44)
+    integer                :: iprint = -1
+    integer, allocatable   :: list_bound(:), iwa(:)
+    real(wp)               :: dsave(29), factr, pgtol
+    real(wp), allocatable  :: vec(:), gradient(:), wa(:), lower(:), upper(:)
 
-    conv  = .true.
-    niter = 0
+    integer                :: min_ene_period, save_step
+
+    ! save eneout_period for minimize
+    !
+    min_ene_period = minimize%eneout_period
+
+    ! initialize
+    !
+    rpath%energy_prev     = 0.0_wp
+    rpath%mep_force       = 0.0_wp
+    rpath%mep_length      = 0.0_wp
+    rpath%pathlength_prev = 0.0_wp
+
+    ! Pointers
+    !
+    coord => dynvars%coord
+    qmmm  => enefunc%qmmm
+
+    ! My replica ID
+    !
+    replicaid = my_country_no + 1
+
+    ! allocate work arrays for G-LBFGS
+    !
+    ncorr = rpath%ncorrection
+    no3 = rpath%mep_natoms * 3
+    dim = no3 * rpath%nreplica
+    if (main_rank) then
+      nwork = (2*dim + 11*ncorr + 8) * ncorr + 5*dim
+      allocate(vec(dim))
+      allocate(gradient(dim))
+      allocate(lower(dim))
+      allocate(upper(dim))
+      allocate(list_bound(dim))
+      allocate(iwa(dim*3))
+      allocate(wa(nwork))
+      allocate(tmp(no3))
+
+      bnd        = rpath%lbfgs_bnd
+      bnd_qmonly = rpath%lbfgs_bnd_qmonly
+      maxmove    = rpath%lbfgs_bnd_maxmove
+
+      list_bound(:) = 0
+      if(bnd) then
+        if(bnd_qmonly) then
+          ! set boundary to QM atoms
+          do i = 1, rpath%mep_natoms
+            do j = 1, enefunc%qmmm%qm_natoms
+              if(rpath%mepatom_id(i) == enefunc%qmmm%qmatom_id(j)) then
+                list_bound(3*i-2:3*i) = 2
+                exit
+              end if
+            end do
+          end do
+        else
+          ! set boundary to all atoms
+          list_bound = 2
+        end if
+
+        ioff = no3
+        do image = 2, rpath%nreplica
+          list_bound(ioff+1:ioff+no3) = list_bound(1:no3)
+          ioff = ioff + no3
+        end do
+
+      end if
+
+    end if
+
+    ! run rpath
+    !
+    dynvars%step = 0
+    if (main_rank) then
+      write(MsgOut, *) "--- Start NEB iteration ---"
+    end if
+
+    task = 'START'
+
+    niter = -1
+    do
+      if (task(1:2) .eq. 'FG') then
+        niter = niter + 1
+        dynvars%step = niter
+        if (niter /= 0) rpath%first_iter = .false.
+
+        ! output settings
+        !
+        if (main_rank) write(MsgOut, '(/,"Iter. ",i5)') niter
+        if (rpath%eneout_period > 0) then
+          if (mod(niter, rpath%eneout_period) == 0) then
+            minimize%eneout_period = min_ene_period
+
+          else
+            minimize%eneout_period = 0
+
+          end if
+        end if
+
+        ! optimize surrounding atoms
+        !
+        if (rpath%mep_partial_opt) then
+          if (niter > start_minimize) then
+
+            save_step = dynvars%step
+            if (rpath%opt_micro) then
+              call minimize_micro (output, molecule, enefunc, dynvars, &
+                                   minimize, pairlist, boundary, rpath, niter)
+            else
+              
+              if (minimize%method == MinimizeMethodSD) then
+                call steepest_descent (output, molecule, enefunc, dynvars, &
+                                       minimize, pairlist, boundary)
+                
+              else if (minimize%method == MinimizeMethodLBFGS) then
+                call minimize_lbfgs (output, molecule, enefunc, dynvars, &
+                                     minimize, pairlist, boundary)
+              end if
+            end if
+            dynvars%step = save_step
+
+          else
+            ! compute the QM/MM energy and force
+            !
+            enefunc%qmmm%qm_classical = .false.
+            call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                                .false.,           &
+                                dynvars%coord,     &
+                                dynvars%trans,     &
+                                dynvars%coord_pbc, &
+                                dynvars%energy,    &
+                                dynvars%temporary, &
+                                dynvars%force,     &
+                                dynvars%force_omp, &
+                                dynvars%virial,    &
+                                dynvars%virial_extern)
+
+          end if
+          
+        end if
+        
+        ! energy and NEB force
+        !
+        call energy_and_force(dynvars, rpath)
+        call calc_neb_force(rpath)
+
+        ! check convergence and output variables
+        !
+        call check_convergence(rpath, conv)
+        if (conv .or. (niter == rpath%ncycle))  exit
+
+        ! output rpath info (rstmep)
+        !
+        call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                          boundary, rpath)
+        call print_images(rpath)
+
+      end if
+
+      ! path update
+      !
+      if (rpath%massWeightCoord) call trans_mass_weight_coord(molecule, rpath)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_allgather(rpath%mep_coord(1,replicaid), rpath%dimension, mpi_wp_real,&
+                         rpath%recv_buff(1,1),         rpath%dimension, mpi_wp_real,&
+                         mpi_comm_airplane, ierror)
+      rpath%mep_coord = rpath%recv_buff
+      call mpi_allgather(rpath%mep_force(1,replicaid), rpath%dimension, mpi_wp_real,&
+                         rpath%recv_buff(1,1),         rpath%dimension, mpi_wp_real,&
+                         mpi_comm_airplane, ierror)
+      rpath%mep_force = rpath%recv_buff
+#endif
+
+      if (main_rank) then
+        
+        ! global vector and gradient
+        ioff = 0
+        do image = 1, rpath%nreplica
+          vec(ioff+1:ioff+no3)      =  rpath%mep_coord(1:no3,image)
+          gradient(ioff+1:ioff+no3) = -rpath%mep_force(1:no3,image)
+          ioff = ioff + no3
+        end do
+
+        ! global energy
+        neb_energy = 0.0_wp
+        do image = 1, rpath%nreplica
+          neb_energy = neb_energy + rpath%mep_energy(image)
+          if (image > 1) then
+            tmp(:) = rpath%mep_coord(:,image) - rpath%mep_coord(:,image-1)
+            !YA_20180119 neb_energy = neb_energy + &
+            !              0.5_wp * ddot(no3, tmp, 1, tmp, 1) * rpath%k_spring
+            neb_energy = neb_energy                         &
+                       + 0.5_wp * ddot(no3, tmp, 1, tmp, 1) &
+                       * rpath%k_spring * dble(rpath%nreplica - 1)
+          end if
+        end do
+
+        ! boundary
+        if(bnd) then
+          if(bnd_qmonly) then
+            ! set boundary to QM atoms
+            do i = 1, dim
+              if (list_bound(i) == 2) then
+                upper(i) = vec(i) + maxmove
+                lower(i) = vec(i) - maxmove
+              end if
+            end do
+          else
+            ! set boundary to all atoms
+            do i = 1, dim
+              upper(i) = vec(i) + maxmove
+              lower(i) = vec(i) - maxmove
+            end do
+          end if
+        end if
+
+        factr = 0.0_wp
+        pgtol = 0.0_wp
+        if (rpath%verbose .and. main_rank) iprint = 1
+        call setulb(dim, ncorr, vec, lower, upper, list_bound, neb_energy, &
+                    gradient, factr, pgtol, wa, iwa, task, &
+                    iprint, csave, lsave, isave, dsave, my_country_no)
+
+        ioff = 0
+        do image = 1, rpath%nreplica
+          rpath%mep_coord(1:no3,image) = vec(ioff+1:ioff+no3)
+          ioff = ioff + no3
+        end do
+      
+      end if
+
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(task, 60, mpi_character, 0, mpi_comm_world, ierror)
+      call mpi_bcast(rpath%mep_coord(1,1), dim, mpi_wp_real, &
+                     0, mpi_comm_world, ierror)
+#endif
+
+      ! update pathlength
+      !
+      rpath%pathlength_prev = rpath%pathlength
+      call calc_pathlength(rpath, .false.)
+
+      if (rpath%massWeightCoord) call backtrans_mass_weight_coord(molecule, rpath)
+
+      ! update the coordinates 
+      !
+      ii = 0
+      do i = 1, rpath%mep_natoms
+        iatom = rpath%mepatom_id(i)
+        coord(1:3,iatom) = rpath%mep_coord(ii+1:ii+3,replicaid)
+        ii = ii + 3
+      end do
+
+    end do
+
+    ! output final status
+    !
+    rpath%eneout = .true.
+    rpath%crdout = .true.
+    rpath%rstout = .true.
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)
+    rpath%eneout = .false.
+    rpath%crdout = .false.
+    rpath%rstout = .false.
+
+    call print_images(rpath)
+
+    ! free work arrays
+    !
+    if (main_rank) then
+      deallocate(vec)
+      deallocate(gradient)
+      deallocate(lower)
+      deallocate(upper)
+      deallocate(list_bound)
+      deallocate(iwa)
+      deallocate(wa)
+      deallocate(tmp)
+    end if
 
     return
 
-  end subroutine run_rpath_string
+  end subroutine run_rpath_neb_glbfgs
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    run_rpath_neb
-  !> @brief        NEB method
-  !! @authors      YA
+  !  Subroutine    run_rpath_neb_glbfgs_replica
+  !> @brief        global LBFGS-NEB if npreplica > nproc
+  !! @authors      SI
   !! @param[inout] output      : output information
   !! @param[inout] molecule    : molecule information
   !! @param[inout] enefunc     : potential energy functions information
@@ -1065,144 +2430,392 @@ contains
   !! @param[inout] pairlist    : pairlist information
   !! @param[inout] boundary    : boundary conditions information
   !! @param[inout] rpath       : RPATH information
+  !! @param[out]   conv        : convergence flag
+  !! @param[in]    niter       : current iteration number
+  !! @param[in]    ireplica    : replica number in mpi process  
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine run_rpath_neb(output, molecule, enefunc, dynvars, minimize, &
-                           dynamics, pairlist, boundary, rpath, conv, niter)
+  subroutine run_rpath_neb_glbfgs_replica(output, molecule, enefunc, dynvars, &
+                                          minimize, dynamics, pairlist, &
+                                          boundary, rpath, conv, niter, ireplica)
 
     ! formal arguments
     type(s_output),           intent(inout) :: output
     type(s_molecule),         intent(inout) :: molecule
-    type(s_enefunc),          intent(inout) :: enefunc
-    type(s_dynvars),          intent(inout) :: dynvars
-    type(s_minimize),         intent(inout) :: minimize
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_minimize), target, intent(inout) :: minimize
     type(s_dynamics),         intent(inout) :: dynamics
     type(s_pairlist),         intent(inout) :: pairlist
     type(s_boundary),         intent(inout) :: boundary
     type(s_rpath),            intent(inout) :: rpath
     logical,                    intent(out) :: conv
-    integer,                    intent(out) :: niter
+    integer,                     intent(in) :: niter
+    integer,                     intent(in) :: ireplica
 
     ! local variables
-    conv  = .true.
-    niter = 0
+    integer                :: i, j
+    integer                :: replicaid
+    integer                :: ii, iatom, ioff, image
 
-    return
+    real(wp)    , pointer  :: coord(:,:), force(:,:), force_omp(:,:,:)
+    type(s_qmmm), pointer  :: qmmm
 
-  end subroutine run_rpath_neb
+    logical                :: bnd, bnd_qmonly
+    real(wp)               :: maxmove
+    real(wp)               :: neb_energy, ddot
+    real(wp), allocatable  :: tmp(:)
+    integer, parameter     :: start_minimize = 2
 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    neb_energy_and_force
-  !> @brief        compute energy and NEB force for each image
-  !! @authors      YA
-  !! @param[in]    rpath        : rpath info
-  !! @param[in]    molecule     : molecular info
-  !! @param[in]    enefunc      : enefunc info
-  !! @param[in]    pairlist     : pairlist info
-  !! @param[in]    boundary     : boundary info
-  !! @param[in]    nonb_ene     : flag for calculate nonbonded energy
-  !! @param[inout] dynvars      : dynvars info
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
+    ! local variabels for LBFGS
+    integer                :: no3, ncorr, nwork, dim
+    integer                :: iprint = -1
+    integer, allocatable   :: list_bound(:)
+    real(wp)               :: factr, pgtol
+    real(wp), allocatable  :: vec(:), gradient(:), lower(:), upper(:)
 
-  subroutine neb_energy_and_force(ncount, rpath, molecule, enefunc, pairlist, boundary, &
-                                  nonb_ene, dynvars, update)
+    integer                :: min_ene_period, save_step
 
-    ! formal arguments
-    integer,             intent(in) :: ncount
-    type(s_rpath),    intent(inout) :: rpath
-    type(s_molecule),    intent(inout) :: molecule
-    type(s_enefunc),  intent(inout) :: enefunc
-    type(s_pairlist),    intent(in) :: pairlist
-    type(s_boundary),    intent(in) :: boundary
-    logical,             intent(in) :: nonb_ene
-    type(s_dynvars),  intent(inout) :: dynvars
-    logical,             intent(in) :: update
 
-    ! local variables
-    character(256)                  :: folder, basename
-    character(5)                    :: num
-    logical                         :: savefile
-    integer                         :: repid
-    integer                         :: dimno, iatom, i, ii
-    real(wp)                        :: x, y, x2, y2, r, t
-
-    ! qmmm settings
+    ! Pointers
     !
-    if(enefunc%qmmm%do_qmmm) then
-      !folder   = 'qmmm_mep'
-      !write(num,'(i5.5)') ncount
-      !basename = 'mep'//num
-      !savefile = (mod(ncount,rpath%qmsave_period) == 0)
-      !call set_runtime_qmmm(enefunc%qmmm, folder, basename, savefile)
+    coord => dynvars%coord
+    force => dynvars%force
+    force_omp => dynvars%force_omp
+    qmmm  => enefunc%qmmm
 
-      enefunc%qmmm%qm_classical = .FALSE.
-      if(rpath%opt_micro) enefunc%qmmm%qm_get_esp = .TRUE.
+    ! My replica ID
+    !
+    replicaid = my_replica_no
+
+    ! initialize
+    !
+    ncorr = rpath%ncorrection
+    no3   = rpath%mep_natoms * 3
+    dim   = no3 * rpath%nreplica
+    nwork = (2*dim + 11*ncorr + 8) * ncorr + 5*dim
+    rpath%rstout     = .true.
+    rpath%neb_output = .false.
+
+    if ((niter == 0) .and. (ireplica == 1)) then
+      ! save eneout_period for minimize
+      !
+      min_ene_period = minimize%eneout_period
+
+      ! initialize
+      !
+      rpath%neb_cycle       = 0
+      rpath%energy_prev     = 0.0_wp
+      rpath%mep_force       = 0.0_wp
+      rpath%mep_length      = 0.0_wp
+      rpath%pathlength_prev = 0.0_wp   
+    end if   
+
+    if (main_rank) then
+      ! allocate work arrays for G-LBFGS
+      !
+      allocate(vec(dim))
+      allocate(gradient(dim))
+      allocate(lower(dim))
+      allocate(upper(dim))
+      allocate(list_bound(dim))
+      allocate(tmp(no3))
+
+      bnd        = rpath%lbfgs_bnd
+      bnd_qmonly = rpath%lbfgs_bnd_qmonly
+      maxmove    = rpath%lbfgs_bnd_maxmove
+
+      list_bound(:) = 0
+      if(bnd) then
+        if(bnd_qmonly) then
+          ! set boundary to QM atoms
+          do i = 1, rpath%mep_natoms
+            do j = 1, enefunc%qmmm%qm_natoms
+              if(rpath%mepatom_id(i) == enefunc%qmmm%qmatom_id(j)) then
+                list_bound(3*i-2:3*i) = 2
+                exit
+              end if
+            end do
+          end do
+        else
+          ! set boundary to all atoms
+          list_bound = 2
+        end if
+
+        ioff = no3
+        do image = 2, rpath%nreplica
+          list_bound(ioff+1:ioff+no3) = list_bound(1:no3)
+          ioff = ioff + no3
+        end do
+
+      end if
+
+    end if 
+
+    ! Run RPATH
+    !    
+    if (niter == 0) then
+      rpath%task = 'START'
+
+      dynvars%step = 0
+      if (main_rank .and. (ireplica == 1)) then
+        write(MsgOut, *) "--- Start NEB iteration ---"
+      end if  
     end if
 
-    ! compute energy and force
+    ! update the coordinates
     !
-    call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
-                        .false.,           &
-                        dynvars%coord,     &
-                        dynvars%energy,    &
-                        dynvars%temporary, &
-                        dynvars%force,     &
-                        dynvars%virial,    &
-                        dynvars%virial_extern)
-!TMP_YA_Bgn
-!TMP    x = dynvars%coord(1,1)
-!TMP    y = dynvars%coord(2,1)
-!TMP    t = x*x + y*y
-!TMP    dynvars%energy%total = (1.0_wp - t)*(1.0_wp - t) + y*y / t
-!TMP    dynvars%force(:,:) = 0.0_wp
-!TMP    dynvars%force(1,1) = -(-4.0_wp*x*(1.0_wp - t) - y*y * 2.0_wp * x/(t*t))
-!TMP    dynvars%force(2,1) = -(-4.0_wp*y*(1.0_wp - t) - y*y * 2.0_wp * y/(t*t) + 2*y/t)
-!TMP_YA_End
+    if (niter /= 0) then
+      ii = 1
+      do i = 1, rpath%mep_natoms
+        coord(1:3, rpath%mepatom_id(i)) = rpath%mep_coord(ii:ii+2,replicaid)
+        ii = ii + 3
+      end do
+    end if
 
-    if (.not. replica_main_rank) return
+    if (rpath%task(1:2) .eq. 'FG') then
 
-    rpath%energy = dynvars%energy%total
-    ii = 0
-    do i = 1, rpath%mep_natoms
-      iatom = rpath%mepatom_id(i)
-      rpath%force(ii+1:ii+3) = dynvars%force(1:3,iatom)
-      ii = ii + 3
-    end do
+      dynvars%step = rpath%neb_cycle
+      rpath%neb_output = .true.
+      !if (ireplica == rpath%nreplica) rpath%neb_cycle = rpath%neb_cycle + 1
 
-    ! NEB force
+      ! output settings
+      !
+      if (main_rank .and. (ireplica == 1)) &
+       write(MsgOut, '(/,"Iter. ",i5)') rpath%neb_cycle
+      if (rpath%eneout_period > 0) then
+        if (mod(rpath%neb_cycle, rpath%eneout_period) == 0) then
+          minimize%eneout_period = min_ene_period
+
+        else
+          minimize%eneout_period = 0
+
+        end if
+      end if
+
+      ! optimize surrounding atoms
+      !
+      if (rpath%mep_partial_opt) then
+        if (rpath%neb_cycle > start_minimize) then
+          save_step = dynvars%step
+          if (rpath%opt_micro) then
+            call minimize_micro (output, molecule, enefunc, dynvars, &
+                                 minimize, pairlist, boundary, rpath, &
+                                 rpath%neb_cycle, ireplica)
+          else
+              
+            if (minimize%method == MinimizeMethodSD) then
+              call steepest_descent (output, molecule, enefunc, dynvars, &
+                                     minimize, pairlist, boundary)
+                
+            else if (minimize%method == MinimizeMethodLBFGS) then
+              call minimize_lbfgs (output, molecule, enefunc, dynvars, &
+                                   minimize, pairlist, boundary)
+            end if
+          end if
+          dynvars%step = save_step
+
+        else
+          ! compute the QM/MM energy and force
+          !
+          enefunc%qmmm%qm_classical = .false.
+          call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                              .false.,           &
+                              dynvars%coord,     &
+                              dynvars%trans,     &
+                              dynvars%coord_pbc, &
+                              dynvars%energy,    &
+                              dynvars%temporary, &
+                              dynvars%force,     &
+                              dynvars%force_omp, &
+                              dynvars%virial,    &
+                              dynvars%virial_extern)
+        end if
+      end if
+        
+      ! energy and NEB force
+      !
+      call energy_and_force_replica(dynvars, rpath)
+
+      ! Store the old force by micro iteration
+      !
+      do i = 1, minimize%num_optatoms_micro
+        iatom = minimize%optatom_micro_id(i)
+        rpath%micro_force(1:3, i, ireplica) = dynvars%force(1:3, iatom)
+      end do
+
+      if (ireplica == nrep_per_proc) call calc_neb_force_replica(rpath)
+
+      ! check convergence and output variables
+      !
+      if (ireplica == nrep_per_proc) &
+       call check_convergence(rpath, conv)
+       
+      ! output rpath info
+      !
+      call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                        boundary, rpath)
+      if (ireplica == nrep_per_proc) then 
+        call print_images(rpath)
+        rpath%neb_cycle = rpath%neb_cycle + 1
+      end if  
+
+      rpath%neb_output = .false.
+    end if
+
+    ! path update
     !
-    call neb_force(rpath, update)
+    if (ireplica == nrep_per_proc .and. .not. conv) then
+      if (rpath%massWeightCoord) call trans_mass_weight_coord_replica(molecule, rpath)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_allgather(rpath%mep_coord(1,(replicaid-nrep_per_proc)+1), &
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                         rpath%recv_buff(1,1), &    
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                         mpi_comm_airplane, ierror)      
+      rpath%mep_coord = rpath%recv_buff
+
+      call mpi_allgather(rpath%mep_force(1,(replicaid-nrep_per_proc)+1), &
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real,&
+                         rpath%recv_buff(1,1), &
+                         (rpath%dimension)*nrep_per_proc, mpi_wp_real,&
+                         mpi_comm_airplane, ierror)        
+      rpath%mep_force = rpath%recv_buff
+#endif
+
+      if (main_rank) then
+        ! global vector and gradient
+        ioff = 0
+        do image = 1, rpath%nreplica
+          vec(ioff+1:ioff+no3)      =  rpath%mep_coord(1:no3,image)
+          gradient(ioff+1:ioff+no3) = -rpath%mep_force(1:no3,image)
+          ioff = ioff + no3
+        end do
+
+        ! global energy
+        neb_energy = 0.0_wp
+        do image = 1, rpath%nreplica
+          neb_energy = neb_energy + rpath%mep_energy(image)
+          if (image > 1) then
+            tmp(:) = rpath%mep_coord(:,image) - rpath%mep_coord(:,image-1)
+            !YA_20180119 neb_energy = neb_energy + &
+            !              0.5_wp * ddot(no3, tmp, 1, tmp, 1) * rpath%k_spring
+            neb_energy = neb_energy                         &
+                       + 0.5_wp * ddot(no3, tmp, 1, tmp, 1) &
+                       * rpath%k_spring * dble(rpath%nreplica - 1)
+          end if
+        end do
+
+        ! boundary
+        if(bnd) then
+          if(bnd_qmonly) then
+            ! set boundary to QM atoms
+            do i = 1, dim
+              if (list_bound(i) == 2) then
+                upper(i) = vec(i) + maxmove
+                lower(i) = vec(i) - maxmove
+              end if
+            end do
+          else
+            ! set boundary to all atoms
+            do i = 1, dim
+              upper(i) = vec(i) + maxmove
+              lower(i) = vec(i) - maxmove
+            end do
+          end if
+        end if
+
+        factr = 0.0_wp
+        pgtol = 0.0_wp
+        if (rpath%verbose .and. main_rank) iprint = 1
+        call setulb(dim, ncorr, vec, lower, upper, list_bound, neb_energy, &
+                    gradient, factr, pgtol, rpath%wa(:,my_replica_no), &
+                    rpath%iwa(:,my_replica_no), rpath%task, iprint, &
+                    rpath%csave(my_replica_no), rpath%lsave(:,my_replica_no), &
+                    rpath%isave(:,my_replica_no), &
+                    rpath%dsave(:,my_replica_no), my_country_no)
+
+        ioff = 0
+        do image = 1, rpath%nreplica
+          rpath%mep_coord(1:no3,image) = vec(ioff+1:ioff+no3)
+          ioff = ioff + no3
+        end do
+      
+      end if
+
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(rpath%task, 60, mpi_character, 0, mpi_comm_world, ierror)
+      call mpi_bcast(rpath%mep_coord(1,1), dim, mpi_wp_real, &
+                       0, mpi_comm_world, ierror)
+#endif
+
+      ! update pathlength
+      !
+      rpath%pathlength_prev = rpath%pathlength
+      call calc_pathlength(rpath, .false.)
+
+      if (rpath%massWeightCoord) call backtrans_mass_weight_coord_replica(molecule, rpath)
+
+    end if
+
+    if (conv .or. rpath%neb_cycle == (rpath%ncycle+1)) then
+      if (ireplica == nrep_per_proc) then
+        ! free work arrays
+        !
+        deallocate(rpath%wa)
+        deallocate(rpath%iwa)
+        deallocate(rpath%isave)
+        deallocate(rpath%dsave)
+        deallocate(rpath%lsave)
+        deallocate(rpath%csave)
+      end if          
+    end if
+
+    ! free work arrays
+    !
+    if (main_rank) then
+      deallocate(vec)
+      deallocate(gradient)
+      deallocate(lower)
+      deallocate(upper)
+      deallocate(list_bound)
+      deallocate(tmp)
+    end if
+
+    ! output restart file
+    !
+    call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                      boundary, rpath)
 
     return
 
-  end subroutine neb_energy_and_force
+  end subroutine run_rpath_neb_glbfgs_replica
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    neb_force
+  !  Subroutine    calc_neb_force
   !> @brief        compute NEB force
-  !! @authors      YA
+  !! @authors      YA, KY
   !! @param[in]    rpath        : rpath info
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine neb_force(rpath, update)
+  subroutine calc_neb_force(rpath)
 
     ! formal arguments
     type(s_rpath), target,    intent(inout) :: rpath
-    logical,                     intent(in) :: update
 
     ! local variables
     logical           :: isCI(rpath%nreplica)
     integer           :: natom, image, repid
     real(wp), parameter :: zero = 0.0_wp
-    real(wp), pointer :: mep_energy(:), mep_coord(:,:), mep_force(:,:)
-    real(wp), allocatable :: tmp1(:), tmp2(:), tau(:,:), work(:)
+    real(wp), pointer :: mep_energy(:)
+    real(wp), pointer :: mep_coord(:,:), mep_force(:,:), recv_buff(:,:)
+    real(wp), allocatable :: tmp1(:), tmp2(:), tau(:,:)
     real(wp)          :: norm, norm1, norm2, deltaE_f, deltaE_b, fac1, fac2, fac
     real(wp)          :: ddot
+    real(wp), allocatable :: recvbuf(:,:)
 
 
     natom = rpath%mep_natoms
@@ -1213,46 +2826,51 @@ contains
     mep_energy => rpath%mep_energy
     mep_coord  => rpath%mep_coord
     mep_force  => rpath%mep_force
+    recv_buff  => rpath%recv_buff
 
     ! collect image information
-    if (update) then
-      allocate(work(3*natom))
-      work(:) = mep_coord(:,repid)
-      call mpi_allgather(rpath%energy, 1, mpi_wp_real, mep_energy, 1, mpi_wp_real, &
-        mpi_comm_airplane, ierror)
-      call mpi_allgather(work, 3*natom, mpi_wp_real, mep_coord, 3*natom, &
-        mpi_wp_real, mpi_comm_airplane, ierror)
-      call mpi_allgather(rpath%force, 3*natom, mpi_wp_real, mep_force, 3*natom, &
-        mpi_wp_real, mpi_comm_airplane, ierror)
-      deallocate(work)
-    end if
+    !
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allgather(rpath%energy, 1, mpi_wp_real, mep_energy, 1, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)
+    call mpi_allgather(mep_coord(1,repid), rpath%dimension, mpi_wp_real,&
+                       recv_buff(1,1),     rpath%dimension, mpi_wp_real,&
+                       mpi_comm_airplane, ierror)
+    mep_coord = recv_buff
+
+    call mpi_allgather(mep_force(1,repid), rpath%dimension, mpi_wp_real,&
+                       recv_buff(1,1),     rpath%dimension, mpi_wp_real,&
+                       mpi_comm_airplane, ierror)
+    mep_force = recv_buff
+#endif
     
     ! identify climbing image
+    !
     isCI(:) = .FALSE.
-    !if (rpath%climbing_image) then
     if (rpath%do_cineb) then
       do image = 2, rpath%nreplica - 1
         if (mep_energy(image) > mep_energy(image-1) .and. &
           mep_energy(image) > mep_energy(image+1)) then
           isCI(image) = .TRUE.
           if (main_rank) then
-            write(*, '(" Climbing image: ",i0)') image
+            write(MsgOut, '(" Climbing image: ",i0)') image
           end if
         end if
       end do
     end if
 
     ! tangential vector
-    allocate(tau(3*natom,rpath%nreplica))
-    allocate(tmp1(3*natom))
-    allocate(tmp2(3*natom))
+    !
+    allocate(tau(rpath%dimension, rpath%nreplica))
+    allocate(tmp1(rpath%dimension))
+    allocate(tmp2(rpath%dimension))
 
     tau(:,:) = zero
     do image = 2, rpath%nreplica - 1
       deltaE_f = mep_energy(image+1) - mep_energy(image)
-      deltaE_b = mep_energy(image) - mep_energy(image-1)
+      deltaE_b = mep_energy(image)   - mep_energy(image-1)
       tmp1(:) = mep_coord(:,image+1) - mep_coord(:,image)
-      tmp2(:) = mep_coord(:,image) - mep_coord(:,image-1)
+      tmp2(:) = mep_coord(:,image)   - mep_coord(:,image-1)
       if (deltaE_b > zero .and. deltaE_f > zero) then
         tau(:,image) = tmp1(:)
       else if (deltaE_b < zero .and. deltaE_f < zero) then
@@ -1267,13 +2885,14 @@ contains
         end if
       end if
       ! normalization
-      norm = ddot(natom*3, tau(1,image), 1, tau(1,image), 1)
+      norm = ddot(rpath%dimension, tau(1,image), 1, tau(1,image), 1)
       tau(:,image) = tau(:,image) / sqrt(norm)
     end do
 
     ! NEB force: perpeudicular component
+    !
     do image = 2, rpath%nreplica - 1
-      norm = ddot(natom*3, tau(1,image), 1, rpath%mep_force(1,image),1)
+      norm = ddot(rpath%dimension, tau(1,image), 1, rpath%mep_force(1,image),1)
       if (isCI(image)) then
         mep_force(:,image) = mep_force(:,image) - 2.0_wp * norm * tau(:,image)
       else
@@ -1282,12 +2901,13 @@ contains
     end do
 
     ! NEB force: spring force
+    !
     do image = 2, rpath%nreplica - 1
       if (isCI(image)) cycle
       tmp1(:) = mep_coord(:,image+1) - mep_coord(:,image)
-      tmp2(:) = mep_coord(:,image) - mep_coord(:,image-1)
-      norm1 = ddot(natom*3, tmp1, 1, tmp1, 1)
-      norm2 = ddot(natom*3, tmp2, 1, tmp2, 1)
+      tmp2(:) = mep_coord(:,image)   - mep_coord(:,image-1)
+      norm1 = ddot(rpath%dimension, tmp1, 1, tmp1, 1)
+      norm2 = ddot(rpath%dimension, tmp2, 1, tmp2, 1)
       fac = rpath%k_spring * (sqrt(norm1) - sqrt(norm2))
       mep_force(:,image) = mep_force(:,image) + fac * tau(:,image)      
     end do
@@ -1305,80 +2925,155 @@ contains
 
     return
 
-  end subroutine neb_force
+  end subroutine calc_neb_force
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    gradient_correction
-  !> @brief        energy and gradient correction for micro iteration
-  !! @authors      YA
+  !  Subroutine    calc_neb_force_replica
+  !> @brief        compute NEB force if npreplica > nproc
+  !! @authors      SI
   !! @param[in]    rpath        : rpath info
-  !! @param[in]    molecule     : molecular info
-  !! @param[in]    enefunc      : enefunc info
-  !! @param[in]    pairlist     : pairlist info
-  !! @param[in]    boundary     : boundary info
-  !! @param[in]    nonb_ene     : flag for calculate nonbonded energy
-  !! @param[inout] dynvars      : dynvars info
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine gradient_correction(minimize, molecule, enefunc, pairlist, boundary, dynvars, &
-                                 rpath, energy0corr, coord0, force0corr)
+  subroutine calc_neb_force_replica(rpath)
 
     ! formal arguments
-    type(s_minimize), target,   intent(in) :: minimize
-    type(s_molecule),        intent(inout) :: molecule
-    type(s_enefunc), target, intent(inout) :: enefunc
-    type(s_pairlist),           intent(in) :: pairlist
-    type(s_boundary),           intent(in) :: boundary
-    type(s_dynvars), target, intent(inout) :: dynvars
-    type(s_rpath),              intent(inout) :: rpath
-    real(wp),                   intent(out) :: energy0corr, coord0(3,*), force0corr(3,*)
+    type(s_rpath), target,    intent(inout) :: rpath
 
     ! local variables
-    integer               :: i, repid, natom_micro
-    integer, pointer      :: optatom_micro_id(:)
-    real(wp), pointer     :: coord(:,:), force(:,:)
-    type(s_qmmm), pointer :: qmmm
+    logical           :: isCI(rpath%nreplica)
+    integer           :: natom, image, repid
+    real(wp), parameter :: zero = 0.0_wp
+    real(wp), pointer :: mep_energy(:)
+    real(wp), pointer :: mep_coord(:,:), mep_force(:,:), recv_buff(:,:)
+    real(wp), allocatable :: tmp1(:), tmp2(:), tau(:,:)
+    real(wp)          :: norm, norm1, norm2, deltaE_f, deltaE_b, fac1, fac2, fac
+    real(wp)          :: ddot
+    real(wp), allocatable :: recvbuf(:)
 
 
-    natom_micro = minimize%num_optatoms_micro
+    natom = rpath%mep_natoms
+    repid = my_replica_no
 
     ! Pointers
     !
-    coord => dynvars%coord
-    force => dynvars%force
-    qmmm => enefunc%qmmm
-    optatom_micro_id => minimize%optatom_micro_id
+    mep_energy => rpath%mep_energy
+    mep_coord  => rpath%mep_coord
+    mep_force  => rpath%mep_force
+    recv_buff  => rpath%recv_buff
 
-    ! energy and gradient correction terms for micro_iteration
+    ! collect image information
+    !  
+#ifdef HAVE_MPI_GENESIS
+    allocate(recvbuf(rpath%nreplica))
+    !! Energy
+    call mpi_allgather(mep_energy((repid-nrep_per_proc)+1), &
+                       nrep_per_proc, mpi_wp_real, recvbuf(1), &
+                       nrep_per_proc, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)
+    mep_energy = recvbuf
+
+    !! Coord
+    call mpi_allgather(mep_coord(1,(repid-nrep_per_proc)+1), &
+                       (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                       recv_buff(1,1), &    
+                       (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)        
+    mep_coord = recv_buff
+
+    !! Force
+    call mpi_allgather(mep_force(1,(repid-nrep_per_proc)+1), &
+                       (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                       recv_buff(1,1), &    
+                       (rpath%dimension)*nrep_per_proc, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)   
+    mep_force = recv_buff
+    deallocate(recvbuf)
+#endif
+    
+    ! identify climbing image
     !
-    energy0corr = dynvars%energy%total
-    do i = 1, natom_micro
-      coord0(1:3,i)     = coord(1:3,optatom_micro_id(i))
-      force0corr(1:3,i) = force(1:3,optatom_micro_id(i))
+    isCI(:) = .FALSE.
+    if (rpath%do_cineb) then
+      do image = 2, rpath%nreplica - 1
+        if (mep_energy(image) > mep_energy(image-1) .and. &
+          mep_energy(image) > mep_energy(image+1)) then
+          isCI(image) = .TRUE.
+          if (main_rank) then
+            write(MsgOut, '(" Climbing image: ",i0)') image
+          end if
+        end if
+      end do
+    end if
+
+    ! tangential vector
+    !
+    allocate(tau(rpath%dimension, rpath%nreplica))
+    allocate(tmp1(rpath%dimension))
+    allocate(tmp2(rpath%dimension))
+
+    tau(:,:) = zero
+    do image = 2, rpath%nreplica - 1
+      deltaE_f = mep_energy(image+1) - mep_energy(image)
+      deltaE_b = mep_energy(image)   - mep_energy(image-1)
+      tmp1(:) = mep_coord(:,image+1) - mep_coord(:,image)
+      tmp2(:) = mep_coord(:,image)   - mep_coord(:,image-1)
+      if (deltaE_b > zero .and. deltaE_f > zero) then
+        tau(:,image) = tmp1(:)
+      else if (deltaE_b < zero .and. deltaE_f < zero) then
+        tau(:,image) = tmp2(:)
+      else
+        fac1 = max(abs(deltaE_b),abs(deltaE_f))
+        fac2 = min(abs(deltaE_b),abs(deltaE_f))
+        if (mep_energy(image+1) > mep_energy(image-1)) then
+          tau(:,image) = fac1 * tmp1(:) + fac2 * tmp2(:)
+        else
+          tau(:,image) = fac2 * tmp1(:) + fac1 * tmp2(:)
+        end if
+      end if
+      ! normalization
+      norm = ddot(rpath%dimension, tau(1,image), 1, tau(1,image), 1)
+      tau(:,image) = tau(:,image) / sqrt(norm)
     end do
 
-    qmmm%qm_classical = .TRUE.
-    call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
-                        enefunc%nonb_limiter,                     &
-                        coord, dynvars%energy, dynvars%temporary, &
-                        force, dynvars%virial, dynvars%virial_extern)
-
-    energy0corr = energy0corr - dynvars%energy%total
-    do i = 1, natom_micro
-      force0corr(1:3,i) = force0corr(1:3,i) - force(1:3,optatom_micro_id(i))
+    ! NEB force: perpeudicular component
+    !
+    do image = 2, rpath%nreplica - 1
+      norm = ddot(rpath%dimension, tau(1,image), 1, rpath%mep_force(1,image),1)
+      if (isCI(image)) then
+        mep_force(:,image) = mep_force(:,image) - 2.0_wp * norm * tau(:,image)
+      else
+        mep_force(:,image) = mep_force(:,image) - norm * tau(:,image)
+      end if
     end do
 
-    ! QM internal energy
+    ! NEB force: spring force
     !
-    repid = my_country_no + 1
-    rpath%qm_energy(repid) = energy0corr
+    do image = 2, rpath%nreplica - 1
+      if (isCI(image)) cycle
+      tmp1(:) = mep_coord(:,image+1) - mep_coord(:,image)
+      tmp2(:) = mep_coord(:,image)   - mep_coord(:,image-1)
+      norm1 = ddot(rpath%dimension, tmp1, 1, tmp1, 1)
+      norm2 = ddot(rpath%dimension, tmp2, 1, tmp2, 1)
+      fac = rpath%k_spring * (sqrt(norm1) - sqrt(norm2))
+      mep_force(:,image) = mep_force(:,image) + fac * tau(:,image)      
+    end do
+
+    deallocate(tmp1)
+    deallocate(tmp2)
+    deallocate(tau)
+
+    ! clear force for terminals
+    !
+    if (rpath%fix_terminal) then
+      mep_force(:,1) = zero
+      mep_force(:,rpath%nreplica) = zero
+    end if
 
     return
 
-  end subroutine gradient_correction
-!YA_End
+  end subroutine calc_neb_force_replica
 
 end module at_rpath_mep_mod
 

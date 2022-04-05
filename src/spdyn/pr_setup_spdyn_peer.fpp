@@ -106,6 +106,13 @@ module pr_setup_spdyn_peer_mod
   private ::       setup_enefunc_bond_constraint_G_peer
   private ::       setup_enefunc_angl_constraint_G_peer
   private ::       setup_enefunc_nonb_G_peer
+  private ::       setup_enefunc_vsite2_G_peer
+  private ::       setup_enefunc_vsite3_G_peer
+  private ::       setup_enefunc_vsite3fd_G_peer
+  private ::       setup_enefunc_vsite3fad_G_peer
+  private ::       setup_enefunc_vsite3out_G_peer
+  private ::       setup_enefunc_vsite4fdn_G_peer
+  private ::       setup_enefunc_vsiten_G_peer
   private ::       setup_enefunc_restraints_peer
   private ::         setup_enefunc_rest_domain_peer
   private ::     alloc_id_g2l
@@ -1166,7 +1173,7 @@ contains
 
     ! restraints (gromacs)
     !
-    call setup_enefunc_gro_restraints_peer_0(grotop, enefunc)
+!   call setup_enefunc_gro_restraints_peer_0(grotop, enefunc)
 
 
     return
@@ -2430,7 +2437,7 @@ contains
 
     ! decide cell capacity (max**) for memory allocation
     !
-    call setup_cell_capacity(boundary, domain)
+    call setup_cell_capacity_pio(boundary, domain)
 
 
     ! memory allocaltion of maps connecting local to global cell indices
@@ -5846,6 +5853,13 @@ contains
     call alloc_enefunc(enefunc, EneFuncRBDihe,   ncel, ncel)
     call alloc_enefunc(enefunc, EneFuncImpr,     ncel, ncel)
     call alloc_enefunc(enefunc, EneFuncBondCell, ncel, ncelb)
+    call alloc_enefunc(enefunc, EneFuncVsite2,    ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3,    ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3fd,  ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3fad, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite3out, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsite4fdn, ncel, ncel)
+    call alloc_enefunc(enefunc, EneFuncVsiten,    ncel, ncel)
 
 
     if (.not. constraints%rigid_bond) then
@@ -5898,6 +5912,41 @@ contains
     ! restraint
     !
     call setup_enefunc_restraints_peer(domain_index, domain, enefunc)
+
+
+    ! virtual site 2
+    !
+    call setup_enefunc_vsite2_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site 3
+    !
+    call setup_enefunc_vsite3_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site 3fd
+    !
+    call setup_enefunc_vsite3fd_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site 3fad
+    !
+    call setup_enefunc_vsite3fad_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site 3out
+    !
+    call setup_enefunc_vsite3out_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site 4fdn
+    !
+    call setup_enefunc_vsite4fdn_G_peer(grotop, domain_index, domain, enefunc)
+
+
+    ! virtual site n
+    !
+    call setup_enefunc_vsiten_G_peer(grotop, domain_index, domain, enefunc)
 
 
     ! restraints (gromacs)
@@ -7084,6 +7133,613 @@ contains
 
   end subroutine setup_enefunc_nonb_G_peer
 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite2_G_peer
+  !> @brief        define vertial site 2 term for each cell in potential energy
+  !!               function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite2_G_peer(grotop, domain_index, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite2
+    list      => enefunc%vsite2_list
+    vs_a      => enefunc%vsite2_a
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites2
+
+          if (gromol%vsites2(k)%func /= 1) cycle
+
+          idx1 = gromol%vsites2(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites2(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites2(k)%atom_idx3 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx3)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite2) &
+                call error_msg('Setup_Enefunc_Vsite2_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:3,vsite(icel_local),icel_local) = (/idx1,idx2,idx3/)
+              vs_a(    vsite(icel_local),icel_local) = gromol%vsites2(k)%a
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite2_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3_G_peer
+  !> @brief        define vertial site 3 term for each cell in potential energy
+  !!               function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3_G_peer(grotop, domain_index, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3
+    list      => enefunc%vsite3_list
+    vs_a      => enefunc%vsite3_a
+    vs_b      => enefunc%vsite3_b
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 1) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3) &
+                call error_msg('Setup_Enefunc_Vsite3_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(    vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_b(    vsite(icel_local),icel_local) = gromol%vsites3(k)%b
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite3_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fd_G_peer
+  !> @brief        define vertial site 3fd term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fd_G_peer(grotop, domain_index, domain,enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_d(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3fd
+    list      => enefunc%vsite3fd_list
+    vs_a      => enefunc%vsite3fd_a
+    vs_d      => enefunc%vsite3fd_d
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 2) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3fd) &
+              call error_msg('Setup_Enefunc_Vsite3fd_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_d(vsite(icel_local),icel_local) = gromol%vsites3(k)%d*10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite3fd_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3fad_G_peer
+  !> @brief        define vertial site 3fad term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3fad_G_peer(grotop, domain_index,domain,enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_th(:,:), vs_d(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3fad
+    list      => enefunc%vsite3fad_list
+    vs_th     => enefunc%vsite3fad_theta
+    vs_d      => enefunc%vsite3fad_d
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 3) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3fad) &
+              call error_msg('Setup_Enefunc_Vsite3fad_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_th(vsite(icel_local),icel_local) = gromol%vsites3(k)%theta*RAD
+              vs_d (vsite(icel_local),icel_local) = gromol%vsites3(k)%d*10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite3fad_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite3out_G_peer
+  !> @brief        define vertial site 3out term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite3out_G_peer(grotop, domain_index,domain,enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, idx4, icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:), vs_c(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite3out
+    list      => enefunc%vsite3out_list
+    vs_a      => enefunc%vsite3out_a
+    vs_b      => enefunc%vsite3out_b
+    vs_c      => enefunc%vsite3out_c
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites3
+
+          if (gromol%vsites3(k)%func /= 4) cycle
+
+          idx1 = gromol%vsites3(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites3(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites3(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites3(k)%atom_idx4 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx4)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite3out) &
+              call error_msg('Setup_Enefunc_Vsite3out_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:4,vsite(icel_local),icel_local) = (/idx1,idx2,idx3,idx4/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites3(k)%a
+              vs_b(vsite(icel_local),icel_local) = gromol%vsites3(k)%b
+              vs_c(vsite(icel_local),icel_local) = gromol%vsites3(k)%c * 0.1_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite3out_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsite4fdn_G_peer
+  !> @brief        define vertial site 4fdn term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsite4fdn_G_peer(grotop, domain_index,domain,enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: ioffset
+    integer                  :: idx1, idx2, idx3, idx4, idx5
+    integer                  :: icel1, icel2, icel_local
+
+    type(s_grotop_mol), pointer :: gromol
+    real(wp),           pointer :: vs_a(:,:), vs_b(:,:), vs_c(:,:)
+    integer,            pointer :: vsite(:), list(:,:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsite4fdn
+    list      => enefunc%vsite4fdn_list
+    vs_a      => enefunc%vsite4fdn_a
+    vs_b      => enefunc%vsite4fdn_b
+    vs_c      => enefunc%vsite4fdn_c
+
+    ioffset   = 0
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsites4
+
+          if (gromol%vsites4(k)%func /= 2) cycle
+
+          idx1 = gromol%vsites4(k)%atom_idx1 + ioffset
+          idx2 = gromol%vsites4(k)%atom_idx2 + ioffset
+          idx3 = gromol%vsites4(k)%atom_idx3 + ioffset
+          idx4 = gromol%vsites4(k)%atom_idx4 + ioffset
+          idx5 = gromol%vsites4(k)%atom_idx5 + ioffset
+
+          icel1 = id_g2l(1,idx1)
+          icel2 = id_g2l(1,idx5)
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsite4fdn) &
+              call error_msg('Setup_Enefunc_Vsite4fdn_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:5,vsite(icel_local),icel_local) = &
+                                                   (/idx1,idx2,idx3,idx4,idx5/)
+              vs_a(vsite(icel_local),icel_local) = gromol%vsites4(k)%a
+              vs_b(vsite(icel_local),icel_local) = gromol%vsites4(k)%b
+              vs_c(vsite(icel_local),icel_local) = gromol%vsites4(k)%c * 10.0_wp
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    return
+
+  end subroutine setup_enefunc_vsite4fdn_G_peer
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_vsiten_G_peer
+  !> @brief        define vertial site n term for each cell in potential
+  !!               energy function
+  !! @authors      NT
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_vsiten_G_peer(grotop, domain_index, domain, enefunc)
+
+    ! formal arguments
+    type(s_grotop),               intent(in)    :: grotop
+    type(s_domain_index), target, intent(in)    :: domain_index
+    type(s_domain),       target, intent(in)    :: domain
+    type(s_enefunc),      target, intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k, ni
+    integer                  :: ioffset
+    integer                  :: icel1, icel2, icel_local
+
+    integer, allocatable     :: idx(:)
+
+    type(s_grotop_mol), pointer :: gromol
+    integer,            pointer :: vsite(:), list(:,:,:), vs_n(:,:)
+    integer,            pointer :: ncel, cell_pair(:,:)
+    integer,            pointer :: id_g2l(:,:)
+
+
+    ncel      => domain%num_cell_local
+    cell_pair => domain%cell_pair
+    id_g2l    => domain%id_g2l
+
+    vsite     => enefunc%num_vsiten
+    list      => enefunc%vsiten_list
+    vs_n      => enefunc%vsiten_n
+
+    ioffset   = 0
+
+    allocate(idx(1))
+
+    do i = 1, grotop%num_molss
+      gromol => grotop%molss(i)%moltype%mol
+      do j = 1, grotop%molss(i)%count
+
+        do k = 1, gromol%num_vsitesn
+
+          if (gromol%vsitesn(k)%func /= 1 .or. &
+              gromol%vsitesn(k)%func /= 2 .or. &
+              gromol%vsitesn(k)%func /= 3) cycle
+
+          ni = size(gromol%vsitesn(k)%atom_idcs) + 1
+
+          if (size(idx) /= ni) then
+            deallocate(idx)
+            allocate(idx(ni))
+          end if
+
+          idx(1)    = gromol%vsitesn(k)%atom_idx          + ioffset
+          idx(2:ni) = gromol%vsitesn(k)%atom_idcs(1:ni-1) + ioffset
+
+          icel1 = id_g2l(1,idx(1))
+          icel2 = id_g2l(1,idx(size(idx)))
+
+          if (icel1 /= 0 .and. icel2 /= 0) then
+
+            icel_local = cell_pair(icel1,icel2)
+
+            if (icel_local > 0 .and. icel_local <= ncel) then
+
+              if (vsite(icel_local)+1 > MaxVsiten) &
+                call error_msg('Setup_Enefunc_Vsiten_G_Peer> Too many vsites.')
+
+              vsite(icel_local) = vsite(icel_local) + 1
+              list(1:ni,vsite(icel_local),icel_local) = idx(1:ni)
+
+            end if
+
+          end if
+
+        end do
+
+        ioffset = ioffset + gromol%num_atoms
+
+      end do
+    end do
+
+    deallocate(idx)
+
+    return
+
+  end subroutine setup_enefunc_vsiten_G_peer
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

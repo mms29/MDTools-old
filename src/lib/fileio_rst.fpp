@@ -2,7 +2,7 @@
 !
 !  Module   fileio_rst
 !> @brief   Restart file I/O module
-!! @authors Takaharu Mori (TM), Chigusa Kobayashi (CK)
+!! @authors Takaharu Mori (TM), Chigusa Kobayashi (CK), Kiyoshi Yagi (KY)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
 !
@@ -59,6 +59,8 @@ module fileio_rst_mod
     real(wp)                      :: fix_layer   = 0.0_wp
     integer                       :: num_fixatm  = 0
     logical, allocatable          :: fixatm(:)
+    ! QMMM
+    real(wp), allocatable         :: qm_charge(:)
   end type s_rst
 
   ! parameters for allocatable variables
@@ -67,6 +69,7 @@ module fileio_rst_mod
   integer,      public, parameter :: RestartRandom    = 3
   integer,      public, parameter :: RestartRpath     = 4
   integer,      public, parameter :: RestartSpot      = 5
+  integer,      public, parameter :: RestartQMMM      = 6
 
   ! parameters
   integer,      public, parameter :: RstfileTypeUndef = 0
@@ -74,12 +77,17 @@ module fileio_rst_mod
   integer,      public, parameter :: RstfileTypeMd    = 2
   integer,      public, parameter :: RstfileTypeRemd  = 3
   integer,      public, parameter :: RstfileTypeRpath = 4
+  integer,      public, parameter :: RstfileTypeBd    = 5
 
   integer,              parameter :: HeaderLength     = 80
+
+  ! local variables
+  logical,                private :: vervose = .true.
 
   ! subroutines
   public  :: input_rst
   public  :: output_rst
+  public  :: init_rst
   public  :: alloc_rst
   public  :: dealloc_rst
   public  :: dealloc_rst_all
@@ -188,9 +196,43 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    init_rst
+  !> @brief        initialize RST information
+  !! @authors      NT
+  !! @param[inout] rst : structure of restart information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine init_rst(rst)
+
+    ! formal arguments
+    type(s_rst),             intent(inout) :: rst
+
+
+    rst%rstfile_type         = 0
+    rst%num_atoms            = 0
+    rst%iseed                = 0
+    rst%thermostat_momentum  = 0.0_wp
+    rst%barostat_momentum(3) = 0.0_wp
+    rst%box_size_x           = 0.0_wp
+    rst%box_size_y           = 0.0_wp
+    rst%box_size_z           = 0.0_wp
+    rst%energy               = 0.0_wp
+    rst%delta_r              = 0.0_wp
+    rst%iseed_remd           = 0
+    rst%iseed_rpath          = 0
+    rst%dimension            = 0
+    rst%nreplicas            = 0
+
+    return
+
+  end subroutine init_rst
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    alloc_rst
   !> @brief        allocate restart information
-  !! @authors      TM, CK
+  !! @authors      TM, CK, KY
   !! @param[inout] rst       : structure of restart information
   !! @param[in]    variable  : selected variable
   !! @param[in]    var_size  : size of the selected variable
@@ -308,6 +350,18 @@ contains
       rst%exponent(1:var_size1) = 0
       rst%fixatm  (1:var_size2) = .false.
 
+    case (RestartQMMM)
+
+      if (allocated(rst%qm_charge)) then
+        if (size(rst%qm_charge) == var_size1) return
+        deallocate(rst%qm_charge, stat = dealloc_stat)
+      end if
+
+      allocate(rst%qm_charge(var_size1), &
+               stat = alloc_stat)
+
+      rst%qm_charge (1:var_size1) = 0.0_wp
+
     case default
 
       call error_msg('Alloc_Rst> bad variable')
@@ -325,7 +379,7 @@ contains
   !
   !  Subroutine    dealloc_rst
   !> @brief        deallocate restart information
-  !! @authors      TM, CK
+  !! @authors      TM, CK, KY
   !! @param[inout] psf      : structure of restart information
   !! @param[in]    variable : selected variable
   !
@@ -390,6 +444,13 @@ contains
                    stat = dealloc_stat)
       end if
 
+    case (RestartQMMM)
+
+      if (allocated(rst%qm_charge)) then
+        deallocate(rst%qm_charge, &
+                   stat = dealloc_stat)
+      end if
+
     case default
       call error_msg('Dealloc_Restart> bad variable')
 
@@ -405,7 +466,7 @@ contains
   !
   !  Subroutine    dealloc_rst_all
   !> @brief        deallocate all restart information
-  !! @authors      TM, CK
+  !! @authors      TM, CK, KY
   !! @param[inout] rst : structure of restart information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -421,6 +482,7 @@ contains
     call dealloc_rst(rst, RestartRandom)
     call dealloc_rst(rst, RestartRpath)
     call dealloc_rst(rst, RestartSpot)
+    call dealloc_rst(rst, RestartQMMM)
 
     return
 
@@ -430,7 +492,7 @@ contains
   !
   !  Subroutine    read_rst_binary
   !> @brief        read binary restart data
-  !! @authors      TM, CK
+  !! @authors      TM, CK, KY
   !! @param[in]    file : unit number of restart file
   !! @param[out]   rst  : structure of restart information
   !
@@ -443,7 +505,7 @@ contains
     type(s_rst),             intent(inout) :: rst
 
     ! local variables
-    integer                  :: i, random_size
+    integer                  :: i, random_size, qm_size
     logical                  :: is_tag
 
     real(wp),    allocatable :: v(:)
@@ -538,11 +600,20 @@ contains
       deallocate(v)
     end if
 
-    call get_data_size(file, 'random', random_size)
-    if (random_size > 0) then
-      call alloc_rst(rst, RestartRandom, random_size)
-      call read_data_byte_array &
-        (file, 'random', (/random_size/), rst%random(1:random_size))
+    !call get_data_size(file, 'random', random_size)
+    !if (random_size > 0) then
+    !  call alloc_rst(rst, RestartRandom, random_size)
+    !  call read_data_byte_array &
+    !    (file, 'random', (/random_size/), rst%random(1:random_size))
+    !end if
+
+    if (find_tag(file, 'random')) then
+      call get_data_size(file, 'random', random_size)
+      if (random_size > 0) then
+        call alloc_rst(rst, RestartRandom, random_size)
+        call read_data_byte_array &
+          (file, 'random', (/random_size/), rst%random(1:random_size))
+      end if
     end if
 
     ! REMD and RPATH
@@ -603,9 +674,20 @@ contains
       call read_data_logical_array(file, 'fixatm', (/rst%num_atoms/), rst%fixatm)
     end if
 
+    ! QMMM
+    if (find_tag(file, 'qm_charge')) then
+      call get_data_size(file, 'qm_charge', qm_size)
+      if (qm_size > 0) then
+        call alloc_rst(rst, RestartQMMM, qm_size)
+        call read_data_real_array &
+          (file, 'qm_charge', (/qm_size/), rst%qm_charge(1:qm_size))
+      end if
+    end if
+
     ! write the summary
     !
-    if (main_rank) then
+    if (nrep_per_proc > 1) vervose = .false.
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Read_Rst_Binary> Summary of RST file'
       !write(MsgOut,'(A)') '  RstfileType     =         MD'
       write(MsgOut,'(A20,I10,A20,I10)')                &
@@ -642,8 +724,12 @@ contains
              '  num_fixatm        = ', rst%num_fixatm
       end if
 
+      if (allocated(rst%qm_charge)) then
+        write(MsgOut,'(A20,I10,A20,I10)')              &
+             '  num_of_qm_charge  = ', size(rst%qm_charge)
+      end if
       write(MsgOut,'(A)') ''
-
+      vervose = .false.
     end if
 
     return
@@ -654,7 +740,7 @@ contains
   !
   !  Subroutine    read_rst_ascii
   !> @brief        read ascii restart data
-  !! @authors      TM, CK
+  !! @authors      TM, CK, KY
   !! @param[in]    file : unit number of restart file
   !! @param[out]   rst  : structure of restart information
   !
@@ -667,7 +753,7 @@ contains
     type(s_rst),             intent(inout) :: rst
 
     ! local variables
-    integer                  :: i, random_size
+    integer                  :: i, random_size, qm_size
     character(HeaderLength)  :: head1, head2
     character(100)           :: tag
 
@@ -713,7 +799,8 @@ contains
 
       ! write the summary
       !
-      if (main_rank) then
+      if (nrep_per_proc > 1) vervose = .false.
+      if (main_rank .and. vervose) then
 
         write(MsgOut,'(A)') 'Read_Rst_Ascii> Summary of RST file'
 
@@ -726,6 +813,7 @@ contains
                                      rst%box_size_z
 
         write(MsgOut,'(A)') ' '
+        vervose = .false.
       end if
 
     case(RstfileTypeMd)
@@ -920,7 +1008,7 @@ contains
 
     end select
 
-    read(file,'(a)') tag
+    read(file,'(a)', end=999) tag
     read(file,*) rst%sph_pot
     if (rst%sph_pot) then
       read(file,'(a)') tag
@@ -950,6 +1038,21 @@ contains
            '  nfunctions        = ', rst%nfunctions, &
            '  num_fixatm        = ', rst%num_fixatm
     end if
+
+    read(file,'(a)', end=999) tag
+    read(file,*,end=40) qm_size
+40  if (qm_size > 0) then
+      call alloc_rst(rst, RestartQMMM, qm_size)
+      read(file,*)  rst%qm_charge
+    end if
+
+    if (main_rank .and. qm_size > 0) then
+      write(MsgOut,'(A20,I10,A20,I10)')              &
+           '  num_of_qm_charge  = ', size(rst%qm_charge)
+    end if
+
+
+999 continue
 
     return
 
@@ -1031,8 +1134,8 @@ contains
 
     if (allocated(rst%random)) then
       call write_data_byte_array(file, 'random',(/size(rst%random)/), rst%random(1:size(rst%random)))
-    else
-      call write_data_byte_array(file, 'random', (/0/), rst%random)
+    !else
+    !  call write_data_byte_array(file, 'random', (/0/), rst%random)
     end if
 
     ! REMD and RPATH
@@ -1066,6 +1169,14 @@ contains
       call write_data_real(file, 'fix_layer', rst%fix_layer)
       call write_data_integer(file, 'num_fixatm', rst%num_fixatm)
       call write_data_logical_array(file, 'fixatm', (/rst%num_atoms/), rst%fixatm)
+    end if
+
+    ! QMMM
+    if (allocated(rst%qm_charge)) then
+      call write_data_real_array(file, 'qm_charge', (/size(rst%qm_charge)/), &
+                                 rst%qm_charge)
+    !else
+    !  call write_data_real_array(file, 'qm_charge', (/0/), rst%qm_charge)
     end if
 
     return
@@ -1275,6 +1386,14 @@ contains
       write(file,*) rst%num_fixatm
       write(file,*) '# fixatm'
       write(file,*) rst%fixatm
+    end if
+
+    write(file,*) '# qm_charge'
+    if (allocated(rst%qm_charge)) then
+      write(file,*) size(rst%qm_charge)
+      write(file,*) rst%qm_charge
+    else
+      write(file,*) 0
     end if
 
     return

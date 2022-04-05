@@ -23,6 +23,7 @@ module at_dynamics_str_mod
   ! structures
   type, public :: s_dynamics
     logical             :: restart
+    logical             :: multiple_random_seed
     integer             :: integrator
     integer             :: nsteps
     real(wp)            :: timestep
@@ -52,6 +53,14 @@ module at_dynamics_str_mod
     character(MaxFilename)     :: nm_file
     character(MaxFilename)     :: nm_init
     real(wp)            :: nm_dt
+    logical             :: shrink_box
+    integer             :: shrink_period
+    real(wp)            :: dbox_x
+    real(wp)            :: dbox_y
+    real(wp)            :: dbox_z
+    logical             :: esp_mm
+    integer             :: calc_qm_period
+    logical             :: avg_qm_charge
   end type s_dynamics
 
   type, public:: s_nmmd_dynamics
@@ -61,9 +70,15 @@ end type s_nmmd_dynamics
   ! parameters
   integer,      public, parameter :: IntegratorLEAP = 1
   integer,      public, parameter :: IntegratorVVER = 2
-  integer,      public, parameter :: IntegratorNMMD = 3
+  integer,      public, parameter :: IntegratorBDEM = 3
+  integer,      public, parameter :: IntegratorBD2N = 4
+  integer,      public, parameter :: IntegratorSDMP = 5
+  integer,      public, parameter :: IntegratorVVER_CG = 6
+  integer,      public, parameter :: IntegratorNMMD = 7
 
-  character(*), public, parameter :: IntegratorTypes(3)  = (/'LEAP','VVER','NMMD'/)
+  character(*), public, parameter :: IntegratorTypes(7)  = &
+                                      (/'LEAP   ','VVER   ','BDEM   ',&
+                                        'BD2N   ','SDMP   ','VVER_CG', 'NMMD'/)
 
 
   ! subroutines
