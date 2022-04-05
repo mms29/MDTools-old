@@ -68,9 +68,9 @@ contains
     real(wp)                 :: w, d1, d2, KBT, distance
     integer                  :: ireplica, i, j, file_w, file_d, file_dist, tmp
     integer                  :: nline, nline_w, nline_d, nline_dist, ncol_d
-    integer                  :: tim
+    real(wp)                 :: tim
 
-    real(wp),    allocatable :: weight(:), data(:, :), pmf1d(:), pmf2d(:, :)
+    real(wp),    allocatable :: weight(:), data(:, :), pmf1d(:,:), pmf2d(:, :)
 
 
     if (option%check_only) &
@@ -195,28 +195,34 @@ contains
     call open_file(file_d, output%pmffile, IOFileOutputNew)
 
     if (option%dimension == 1) then
-
-      do i = 1, size(pmf1d)
-        write(file_d,*) option%center(1, i), pmf1d(i)
-      end do
-
+      ! Periodic CV cannot print out standard type PMF
+      if (option%is_periodic(1)) then
+        do i = 1, size(pmf1d(1,:))
+          write(file_d,*) option%center(1, i), pmf1d(2, i)
+        end do   
+      else
+        do i = 1, size(pmf1d(1,:))
+          write(file_d,*) option%center(1, i), pmf1d(1, i), pmf1d(2, i)
+        end do
+      end if
     else if (option%dimension == 2) then
 
-      do j = 1, size(pmf2d(1, :))
-        do i = 1, size(pmf2d(:, 1))
-          write(file_d,'(es25.16e3,$)') pmf2d(i, j)
+      if(option%output_type == OutputTypeMATLAB) then
+        do j = 1, size(pmf2d(1, :))
+          do i = 1, size(pmf2d(:, 1))
+            write(file_d,'(es25.16e3,$)') pmf2d(i, j)
+          end do
+          write(file_d, *)
         end do
-        write(file_d, *)
-      end do
+      else if(option%output_type == OutputTypeGNUPLOT) then
+        do i = 1, size(pmf2d(:, 1))
+          do j = 1, size(pmf2d(1, :))
+            write(file_d, *) option%center(1, i), option%center(2, j), pmf2d(i, j)
+          end do
+          write(file_d, *)
+        end do
+      end if
 
-      ! do i = 1, size(pmf2d(:, 1))
-      !   ! write(*,*)'size(pmf2d(1, :)) = ', size(pmf2d(1, :))
-      !   ! write(*,*)'size(pmf2d(:, 1)) = ', size(pmf2d(:, 1))
-      !   do j = 1, size(pmf2d(1, :))
-      !     write(file_d, *) option%center(1, i), option%center(2, j), pmf2d(i, j)
-      !   end do
-      !   write(file_d, *)
-      ! end do
     end if
 
     call close_file(file_d)
@@ -237,11 +243,21 @@ contains
     write(MsgOut,'(A)') ''
     write(MsgOut,'(A)') '  [pmffile] ' // trim(output%pmffile)
     if (option%dimension == 1) then
-      write(MsgOut,'(A)') '    Column 1: coordinates of bin centers'
-      write(MsgOut,'(A)') '    Column 2: Free energy profile at the corresponding bin'
-      write(MsgOut,'(A)') ''
+      ! Periodic CV cannot print out standard type PMF now 
+      if (option%is_periodic(1)) then
+        write(MsgOut,'(A)') '    Column 1: coordinates of grid centers'
+        write(MsgOut,'(A)') '    Column 2: Free energy profile at the corresponding bin'
+        write(MsgOut,'(A)') ''
+      else
+        write(MsgOut,'(A)') '    Column 1: coordinates of grid centers'
+        write(MsgOut,'(A)') '    Column 2: Free energy profile at the corresponding bin &
+                                 by standard method'
+        write(MsgOut,'(A)') '    Column 3: Free energy profile at the corresponding bin &
+                                 by Gaussian Distribution'
+        write(MsgOut,'(A)') ''
+      end if
     else if (option%dimension == 2) then
-      write(MsgOut,'(A)') '    Row X and Column Y: free energy profile at a bin center located at center(X,Y)'
+      write(MsgOut,'(A)') '    Row X and Column Y: free energy profile at bin center (X,Y)'
       write(MsgOut,'(A)') ''
     end if
 
@@ -260,15 +276,17 @@ contains
     type(s_option),          intent(in)    :: option
     real(wp),                intent(in)    :: data(:, :)
     real(wp),                intent(in)    :: weight(:)
-    real(wp),                allocatable   :: pmf(:)
+    real(wp),                allocatable   :: pmf(:,:)
     real(wp)                               :: KBT
 
     ! local variables
     integer                  :: nbin, ndata
     integer                  :: ibin, idata
+    integer                  :: ipmf 
 
     real(wp)                 :: ZERO = 0.0_wp
     real(wp)                 :: NaN
+    real(wp)                 :: ddata = 0.0_wp
 
     real(wp),    allocatable :: dx1(:,:), x(:,:), s(:)
 
@@ -279,47 +297,73 @@ contains
     nbin  = size(option%center(1, :))
     ndata = size(data(1, :))
 
-    allocate(pmf(nbin))
+    allocate(pmf(2, nbin))
     allocate(dx1(nbin, ndata), x(ndata, nbin), s(nbin))
 
-    do ibin = 1, nbin
-      if (option%is_periodic(1)) then
+    ! impf = 1 > Standard PMF, 2 > Gaussian type PMF 
+    do ipmf = 1, 2
+      dx1(1:nbin, 1:ndata) = 0.0_wp
+
+      ! Periodic CV cannot print out standard type PMF now
+      if((ipmf == 1) .and. (option%is_periodic(1))) exit
+      do ibin = 1, nbin
+        if (option%is_periodic(1)) then
+          do idata = 1, ndata
+            dx1(ibin, idata) = (periodic(data(1, idata), option%center(1, ibin), &
+              option%box_size(1)) / option%band_width(1))**2.0_wp
+          end do
+        else
+          if(ipmf == 2) then
+            ! For Gauusian type PMF
+            dx1(ibin, 1:ndata) = ((data(1, 1:ndata) - option%center(1, ibin)) / &
+              option%band_width(1)) ** 2.0_wp
+          else
+            ! For standard type PMF
+            do idata = 1, ndata
+              ddata = data(1, idata) - option%center(1, ibin)
+              if((-option%delta_grid(1) < ddata) .and. (option%delta_grid(1) > ddata)) &
+                dx1(ibin, idata) = dx1(ibin, idata) + 1.0_wp
+            end do
+          end if
+        end if
+        !x  (1:nbin,idata) = -0.5_wp * dx1(idata, 1:nbin) * log(weight(idata))
+
+        if(ipmf == 2) dx1(ibin, 1:ndata) = exp(-0.5_wp * dx1(ibin, 1:ndata)) / &
+                                           (sqrt(2.0_wp*PI)*option%band_width(1))
         do idata = 1, ndata
-          dx1(ibin, idata) = (periodic(data(1, idata), option%center(1, ibin), option%box_size(1)) &
-            /option%band_width(1))**2.0_wp
+          dx1(ibin, idata) = dx1(ibin, idata)*weight(idata)
         end do
-      else
-        dx1(ibin, 1:ndata) = ((data(1, 1:ndata) - option%center(1, ibin)) / &
-          option%band_width(1)) ** 2.0_wp
-      end if
-      !x  (1:nbin,idata) = -0.5_wp * dx1(idata, 1:nbin) * log(weight(idata))
-      dx1(ibin, 1:ndata) = exp(-0.5_wp * dx1(ibin, 1:ndata)) / &
-                           (sqrt(2.0_wp*PI)*option%band_width(1))
-      do idata = 1, ndata
-        dx1(ibin, idata) = dx1(ibin, idata)*weight(idata)
       end do
-    end do
 
-    do ibin = 1, nbin
-      pmf(ibin) = 0.0_wp
-      do idata = 1, ndata
-        pmf(ibin) = pmf(ibin) + dx1(ibin, idata)
+      if(ipmf == 1) then
+        ! Check Histogram
+        write(MsgOut,'(A,f5.3)') '    Summation P(r) in each = ', sum(dx1)
+      end if   
+
+      do ibin = 1, nbin
+        pmf(ipmf, ibin) = 0.0_wp
+        do idata = 1, ndata
+          pmf(ipmf, ibin) = pmf(ipmf, ibin) + dx1(ibin, idata)
+        end do
       end do
-    end do
 
-    do ibin = 1, nbin
-      pmf(ibin) = -KBT*log(pmf(ibin))
-    end do
+      do ibin = 1, nbin
+        pmf(ipmf, ibin) = -KBT*log(pmf(ipmf, ibin))
+      end do
 
-    ! call logsumexp2(x, s)
+      ! call logsumexp2(x, s)
+  
+      ! do ibin = 1, nbin
+      !   if (s(ibin) < RMIN) &
+      !     s(ibin) = NaN
+      ! end do
+  
+      ! pmf(1:nbin) = -log(s(1:nbin))
 
-    ! do ibin = 1, nbin
-    !   if (s(ibin) < RMIN) &
-    !     s(ibin) = NaN
-    ! end do
+      ! Lowest PMF is set to be 0.0
+      pmf(ipmf, 1:nbin) = pmf(ipmf, 1:nbin) - minval(pmf(ipmf, 1:nbin))
 
-    ! pmf(1:nbin) = -log(s(1:nbin))
-    ! pmf(1:nbin) = pmf(1:nbin) - minval(pmf(1:nbin))
+    end do  
 
     deallocate(s, x, dx1)
 
@@ -362,37 +406,37 @@ contains
     ! write(*,*)'nbin1 = ', nbin1
     ! write(*,*)'nbin2 = ', nbin2
     ! write(*,*)'ndata = ', ndata
-    ! write(*,*)'option%center(1, 1:3) = ', option%center(1, 1:3)
-    ! write(*,*)'option%center(2, 1:3) = ', option%center(2, 1:3)
+    ! write(*,*)'option%center(1, :) = ', option%center(1, :)
+    ! write(*,*)'option%center(2, :) = ', option%center(2, :)
 
     allocate(pmf(nbin1, nbin2))
     allocate(dx1(nbin1, ndata), dx2(nbin2, ndata))
 
-    do ibin = 1, nbin1
+    do i = 1, nbin1
       if (option%is_periodic(1)) then
         do idata = 1, ndata
-          dx1(ibin, idata) = (periodic(data(1, idata), option%center(1, ibin), option%box_size(1)) &
+          dx1(i, idata) = (periodic(data(1, idata), option%center(1, i), option%box_size(1)) &
             /option%band_width(1))**2.0_wp
         end do
       else
-        dx1(ibin, 1:ndata) = ((data(1, 1:ndata) - option%center(1, ibin)) / &
+        dx1(i, 1:ndata) = ((data(1, 1:ndata) - option%center(1, i)) / &
           option%band_width(1)) ** 2.0_wp
       end if
-      dx1(ibin, 1:ndata) = exp(-0.5_wp * dx1(ibin, 1:ndata)) / &
+      dx1(i, 1:ndata) = exp(-0.5_wp * dx1(i, 1:ndata)) / &
                            (sqrt(2.0_wp*PI)*option%band_width(1))
     end do
 
-    do ibin = 1, nbin2
-      if (option%is_periodic(1)) then
+    do j = 1, nbin2
+      if (option%is_periodic(2)) then
         do idata = 1, ndata
-          dx2(ibin, idata) = (periodic(data(2, idata), option%center(2, ibin), option%box_size(2)) &
+          dx2(j, idata) = (periodic(data(2, idata), option%center(2, j), option%box_size(2)) &
             /option%band_width(2))**2.0_wp
         end do
       else
-        dx2(ibin, 1:ndata) = ((data(2, 1:ndata) - option%center(2, ibin)) / &
+        dx2(j, 1:ndata) = ((data(2, 1:ndata) - option%center(2, j)) / &
           option%band_width(2)) ** 2.0_wp
       end if
-      dx2(ibin, 1:ndata) = exp(-0.5_wp * dx2(ibin, 1:ndata)) / &
+      dx2(j, 1:ndata) = exp(-0.5_wp * dx2(j, 1:ndata)) / &
                            (sqrt(2.0_wp*PI)*option%band_width(2))
     end do
 
@@ -410,6 +454,8 @@ contains
         pmf(i, j) = -KBT*log(pmf(i, j))
       end do
     end do
+
+    pmf(1:nbin1, 1:nbin2) = pmf(1:nbin1, 1:nbin2) - minval(pmf(1:nbin1, 1:nbin2))
 
     deallocate(dx1, dx2)
 

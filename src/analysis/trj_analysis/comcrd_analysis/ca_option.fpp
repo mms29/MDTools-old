@@ -35,6 +35,7 @@ module ca_option_mod
     integer                         :: analysis_atom  = 0
     integer                         :: analysis_for   = AnalysisForAll
     integer                         :: output_coord   = OutputCoordXYZ
+    logical                         :: output_atomno  = .true.
     integer                         :: pbc_correct    = PBCCModeNo
   end type s_opt_info
 
@@ -109,6 +110,9 @@ contains
     call read_ctrlfile_type   (handle, Section, 'output_coord', &
                                opt_info%output_coord, OutputCoordTypes)
 
+    call read_ctrlfile_logical(handle, Section, &
+                              'output_atomno', opt_info%output_Atomno)
+
     call read_ctrlfile_type   (handle, Section, 'pbc_correct',  &
                                opt_info%pbc_correct, PBCCModeTypes)
 
@@ -139,6 +143,12 @@ contains
 
     write(MsgOut,'(A20,A10)')   &
                     '  output coord    = ', OutputCoordTypes(opt_info%output_coord)
+
+    if (opt_info%output_atomno) then
+      write(MsgOut,'(A20,A3)') '  output atomno   = ', 'yes'
+    else
+      write(MsgOut,'(A20,A2)') '  output atomno   = ', 'no'
+    end if
 
     write(MsgOut,'(A)') ' '
 
@@ -189,6 +199,8 @@ contains
     option%analysis_for  = opt_info%analysis_for
 
     option%output_coord = opt_info%output_coord
+
+    option%output_atomno = opt_info%output_atomno
 
     ! pbc correct
     option%pbcc_mode = opt_info%pbc_correct

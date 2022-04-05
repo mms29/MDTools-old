@@ -27,7 +27,7 @@ module at_energy_pme_mod
   use mpi_parallel_mod
   use constants_mod
   use fft3d_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -227,7 +227,7 @@ contains
     type(s_boundary),         intent(in)    :: boundary
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: r(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -471,7 +471,7 @@ contains
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     !$omp barrier
     !$omp master
     call mpi_alltoall &
@@ -703,7 +703,7 @@ contains
 
     ! X is saved on qdf_send and distributed
     !
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     !$omp barrier
     !$omp master
     call mpi_allgather(qdf_send(1,1,1,my_city_rank+1), &
@@ -807,7 +807,7 @@ contains
 
     eelec = eelec + u
     virial(1:3,1:3) = virial(1:3,1:3) + vir_local(1:3,1:3)
-    force(1:3,1:natm) = force(1:3,1:natm) + f(1:3,1:natm)
+    force(1:3,1:natm,1) = force(1:3,1:natm,1) + f(1:3,1:natm)
 
     return
 

@@ -105,7 +105,8 @@ contains
                 enefunc%num_dihedrals, &
                 enefunc%num_impropers, &
                 enefunc%num_restraintfuncs, &
-                enefunc%num_restraintgroups)
+                enefunc%num_restraintgroups,&
+                enefunc%num_morph_sc)
 
     allocate(enefunc%work(MAXWRK,nwork),stat=alloc_stat)
     if (alloc_stat /= 0) call error_msg_alloc

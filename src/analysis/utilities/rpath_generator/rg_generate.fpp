@@ -202,7 +202,7 @@ contains
     type(s_trj_file)         :: file
     integer                  :: i, j, k, istep
     integer                  :: nbrella, ibrella, ndim, nstep, natom, nfunc
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     integer                  :: fitting_method_old
 
 
@@ -905,7 +905,7 @@ contains
   function get_numbered_filename(basename, num)
 
     ! return value
-    character(1000)          :: get_numbered_filename
+    character(MaxFilename)   :: get_numbered_filename
 
     ! formal arguments
     character(*),            intent(in)    :: basename
@@ -913,7 +913,7 @@ contains
 
     ! local variables
     integer                  :: lidx, ridx
-    character(1000)          :: lstr, rstr
+    character(MaxFilename)   :: lstr, rstr
 
 
     lidx = index(basename, '{', back=.true.)
@@ -1041,7 +1041,8 @@ contains
 
     ! local variables
     integer                  :: file
-    character(MaxLine)       :: filename, line
+    character(MaxFilename)   :: filename
+    character(MaxLine)       :: line
 
 
     !filename = get_replicate_name1(cvfile, 1)
@@ -1078,7 +1079,7 @@ contains
     integer                  :: i, hdr_size, step_size
     integer(8)               :: file_size
     integer(4)               :: icntrl(20), ntitle
-    character(MaxLine)       :: filename
+    character(MaxFilename)   :: filename
     character(80)            :: title(10)
     character(4)             :: hdr
     logical                  :: exist

@@ -29,9 +29,9 @@ module hb_option_str_mod
     real(wp)                      :: hb_distance
     real(wp)                      :: dha_angle
     real(wp)                      :: hda_angle
-    character(MaxLine)            :: analysis_atom_exp
+    character(MaxLineLong)        :: analysis_atom_exp
     type(s_selatoms)              :: analysis_atom
-    character(MaxLine)            :: target_atom_exp
+    character(MaxLineLong)        :: target_atom_exp
     type(s_selatoms)              :: target_atom
     integer                       :: boundary_type
     character(LEN=6), allocatable :: solvent_list(:)

@@ -28,11 +28,16 @@ module sp_energy_restraints_mod
   use timers_mod
   use messages_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! subroutines
@@ -44,8 +49,11 @@ module sp_energy_restraints_mod
   private :: compute_energy_restraints_dihed
   private :: compute_energy_restraints_repul
   private :: compute_energy_restraints_fb
+  private :: compute_energy_restraints_conf
   private :: get_restraint_coordinates
   private :: get_restraint_forces
+  ! FEP
+  public  :: compute_energy_restraints_fep
 
 contains
 
@@ -88,6 +96,7 @@ contains
 
     ! local variables
     real(wp)                 :: edist, eangle, edihed, etilt, eexp, erepul, efb
+    real(wp)                 :: econf
     real(wp),        pointer :: bonds_coord(:,:), bonds_force(:,:)
     integer,         pointer :: bonds_to_atom(:)
 
@@ -105,6 +114,7 @@ contains
     eemfit = 0.0_dp
     erepul = 0.0_wp
     efb    = 0.0_wp
+    econf  = 0.0_wp
     bonds_force(1:3,1:enefunc%num_atoms_bonds_restraint) = 0.0_wp
 
     if (get_coord) then
@@ -141,7 +151,11 @@ contains
     call compute_energy_restraints_fb(calc_force, enefunc, boundary, &
                                     bonds_coord, bonds_force, virial, efb)
 
-    ebonds = ebonds + edist + eangle + edihed + erepul + efb
+    call compute_energy_restraints_conf(calc_force, enefunc, boundary, &
+                                    bonds_coord, bonds_force, virial, econf)
+
+
+    ebonds = ebonds + edist + eangle + edihed + erepul + efb + econf
  
     if (calc_force) then
       call get_restraint_forces(domain, enefunc, bonds_to_atom,             &
@@ -1527,6 +1541,173 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    compute_energy_restraints_conf
+  !> @brief        calculate confinement restraint energy
+  !! @authors      KK 
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    boundary : boundary condition information
+  !! @param[in]    conf_coord : restraint bonds coordinates
+  !! @param[inout] conf_force : restraint bonds forces
+  !! @param[inout] virial   : virial term of target systems
+  !! @param[inout] efb      : flat bottom restraint energy of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_restraints_conf(calc_force, enefunc, boundary, conf_coord, &
+      conf_force, virial, econf)
+
+    ! formal arguments
+    logical,                 intent(in)    :: calc_force
+    type(s_enefunc), target, intent(inout) :: enefunc
+    type(s_boundary),        intent(in)    :: boundary
+    real(wp),                intent(in)    :: conf_coord(:,:)
+    real(wp),                intent(inout) :: conf_force(:,:)
+    real(dp),                intent(inout) :: virial(:,:,:)
+    real(wp),                intent(inout) :: econf
+
+    ! local variable
+    real(wp)                 :: sig(1:2)
+    real(wp)                 :: work(1:3)
+    real(wp)                 :: r_sum, dtmp, rtmp, r_dif, coef, coefi
+    integer                  :: numgrp, iexpo
+    integer                  :: inum, i, j, jx, index, id, ixyz, jxyz
+    integer                  :: iatm
+    real(wp)                 :: ref_xyz
+    real(wp),    allocatable :: grad_coef(:, :)
+    real(wp)                 :: box_size(3)
+
+    real(wp),        pointer :: const(:,:)
+    real(wp),        pointer :: ref(:,:)
+    real(wp),        pointer :: masscoef(:,:)
+    real(wp),        pointer :: com(:,:), dij(:,:), coefgrp(:,:)
+    integer,         pointer :: num_funcs, numatoms(:)
+    integer,         pointer :: bondslist(:,:)
+    integer,         pointer :: kind(:)
+    integer,         pointer :: grplist(:,:)
+    integer,         pointer :: funcgrp(:)
+    integer,         pointer :: expo(:)
+
+    num_funcs => enefunc%num_restraintfuncs
+    funcgrp   => enefunc%restraint_funcgrp
+    const     => enefunc%restraint_const
+    ref       => enefunc%restraint_ref
+    expo      => enefunc%restraint_exponent_func
+    grplist   => enefunc%restraint_grouplist
+    numatoms  => enefunc%restraint_numatoms
+    bondslist => enefunc%restraint_bondslist
+    kind      => enefunc%restraint_kind
+    masscoef  => enefunc%restraint_masscoef
+    coefgrp   => enefunc%restraint_wtmp
+    com       => enefunc%restraint_rcom1
+    dij       => enefunc%restraint_rcom2
+    box_size(1) = boundary%box_size_x
+    box_size(2) = boundary%box_size_y
+    box_size(3) = boundary%box_size_z
+
+    do inum = 1, num_funcs
+      if (kind(inum) == RestraintsFuncCONF .or. &
+        kind(inum) == RestraintsFuncCONFCOM) then
+
+        ! initialization
+        !
+        numgrp = funcgrp(inum)
+        iexpo  = expo(inum)
+        allocate(grad_coef(3, numgrp))
+        if (kind(inum) == RestraintsFuncCONF) then
+          do j = 1, numgrp
+            coefgrp(1:numatoms(grplist(j,inum)),j) = &
+              1.0_wp/real(numatoms(grplist(j,inum)),wp)
+          end do
+        else
+          do j = 1, numgrp
+            coefgrp(1:numatoms(grplist(j,inum)),j) = &
+              masscoef(1:numatoms(grplist(j,inum)),grplist(j,inum))
+          end do
+        end if
+
+        ! check atom group range and calculate center of mass of each group
+        !
+        do j = 1, numgrp
+          com(1:3,j) = 0.0_wp
+          do jx = 1, numatoms(grplist(j,inum))
+            index = bondslist(jx,grplist(j,inum))
+            com(1:3,j) = com(1:3,j) + conf_coord(1:3,index) * coefgrp(jx,j)
+          end do
+        end do
+
+        ! calculation of distance energy
+        !
+        do id = 1, numgrp
+          dij(1:3,id) = com(1:3,id)
+          if (boundary%type == BoundaryTypePBC) then
+            dij(1:3,id) = dij(1:3,id) - box_size(1:3) * &
+              anint(dij(1:3,id)/box_size(1:3))
+          end if
+        end do
+
+        do id = 1, numgrp
+          do ixyz = 1, 3
+            ref_xyz = box_size(ixyz) * 0.5_wp - ref(1, inum) 
+            if (dij(ixyz, id) > ref_xyz) then
+              r_dif = dij(ixyz, id) - ref(1,inum)
+              if (iexpo == 2) then
+                econf               = econf  + const(1,inum)*r_dif*r_dif
+                grad_coef(ixyz, id) = 2.0_wp * const(1,inum)*r_dif
+              else
+                econf               = econf  + const(1,inum)*r_dif**(iexpo)
+                grad_coef(ixyz, id) = real(iexpo,wp)*const(1,inum)*r_dif**(iexpo-1)
+              end if
+            else if (dij(ixyz, id) < -ref_xyz) then
+              r_dif = dij(ixyz, id) + ref(1,inum)
+              if (iexpo == 2) then
+                econf               = econf  + const(1,inum)*r_dif*r_dif
+                grad_coef(ixyz, id) = 2.0_wp * const(1,inum)*r_dif
+              else
+                econf               = econf + const(1,inum)*r_dif**(iexpo)
+                grad_coef(ixyz, id) = real(iexpo,wp)*const(1,inum)*r_dif**(iexpo-1)
+              end if
+            else
+              grad_coef(ixyz, id) = 0.0_wp
+            end if
+          end do
+        end do
+
+        ! calculation of force
+        !
+        if (calc_force) then
+          do id = 1, numgrp
+            do ixyz = 1, 3
+              if (dij(ixyz, id) < 1e-10_wp) then
+                coefi = 0.0_wp
+              else
+                coefi = grad_coef(ixyz, id)
+              end if
+              do j = 1, numatoms(grplist(id,inum))
+                iatm = bondslist(j,grplist(id,inum))
+                work(ixyz) = - coefi * coefgrp(j,id)
+                conf_force(ixyz,iatm) = conf_force(ixyz,iatm) + work(ixyz)
+              end do
+
+              ! virial
+              ! 
+              if (main_rank) then
+                  work(ixyz)= coefi * dij(ixyz,id)
+                  do jxyz = 1, 3
+                    virial(jxyz, ixyz,1) = virial(jxyz, ixyz,1) - work(ixyz) * dij(jxyz, id)
+                  end do
+              end if
+            end do 
+          end do
+        end if
+        deallocate(grad_coef)
+      end if
+    end do
+
+    return
+  end subroutine compute_energy_restraints_conf
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    get_restraint_coordinates
   !> @brief        get restraint coordinates
   !! @authors      JJ
@@ -1572,7 +1753,7 @@ contains
       end if
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(mpi_in_place, bonds_coord, &
                        3*enefunc%num_atoms_bonds_restraint, &
                        mpi_wp_real, mpi_sum, mpi_comm_country, ierror)
@@ -1647,7 +1828,7 @@ contains
     before_reduce(4:6) = val2(1:3)
     before_reduce(7)   = val3
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(before_reduce, after_reduce, 7, mpi_real8, &
                        mpi_sum, mpi_comm_city, ierror)
 #else
@@ -1661,5 +1842,168 @@ contains
     return
 
   end subroutine reduce_com
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_restraints_fep
+  !> @brief        calculate restraint energy for FEP
+  !! @authors      HO
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_restraints_fep(get_coord, calc_force, domain, boundary, &
+                                       enefunc, coord, force, virial, virial_ext,   &
+                                       eposi, ermsd, rmsd, ebonds, eemfit, emcorr)
+
+    ! formal arguments
+    logical,                 intent(in)    :: get_coord
+    logical,                 intent(in)    :: calc_force
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_boundary),        intent(in)    :: boundary
+    type(s_enefunc), target, intent(inout) :: enefunc
+    real(dp),                intent(in)    :: coord(:,:,:)
+    real(wp),                intent(inout) :: force(:,:,:,:)
+    real(dp),                intent(inout) :: virial(3,3,nthread)
+    real(dp),                intent(inout) :: virial_ext(3,3,nthread)
+    real(dp),                intent(inout) :: eposi(nthread)
+    real(dp),                intent(inout) :: ermsd
+    real(dp),                intent(inout) :: rmsd
+    real(dp),                intent(inout) :: ebonds
+    real(dp),                intent(inout) :: eemfit
+    real(dp),                intent(inout) :: emcorr
+
+    ! local variables
+    real(wp)                 :: edist, eangle, edihed, etilt, eexp, erepul, efb
+    real(wp),        pointer :: bonds_coord(:,:), bonds_force(:,:)
+    integer,         pointer :: bonds_to_atom(:)
+
+    ! local variables for FEP
+    integer                  :: ncell, natom, id, i, j, k, ix, ic, jc
+    integer                  :: omp_get_thread_num
+    real(wp),        pointer :: f_fep(:,:,:,:)
+    real(dp)                 :: v_fep(3,3,nthread)
+    real(dp)                 :: v_ext_fep(3,3,nthread)
+    real(dp)                 :: eposi_fep(nthread)
+
+
+    call timer(TimerRestraint, TimerOn)
+
+    bonds_to_atom => enefunc%restraint_bondslist_to_atomlist
+    bonds_coord   => enefunc%restraint_bonds_coord
+    bonds_force   => enefunc%restraint_bonds_force
+
+    edist  = 0.0_wp
+    eangle = 0.0_wp
+    edihed = 0.0_wp
+    ermsd  = 0.0_wp
+    eemfit = 0.0_dp
+    erepul = 0.0_wp
+    efb    = 0.0_wp
+    bonds_force(1:3,1:enefunc%num_atoms_bonds_restraint) = 0.0_wp
+
+    if (get_coord) then
+      call get_restraint_coordinates(domain, enefunc, coord, bonds_to_atom, &
+                                     bonds_coord)
+    end if
+
+    ! FEP: initialize temporary arrays
+    f_fep => domain%f_fep_omp
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+    !$omp parallel do
+    do id = 1, nthread
+      f_fep(1:3,1:natom,1:ncell,id) = 0.0_wp
+    end do
+    !$omp end parallel do
+    v_fep(1:3,1:3,1:nthread) = 0.0_dp
+    v_ext_fep(1:3,1:3,1:nthread) = 0.0_dp
+    eposi_fep(1:nthread) = 0.0_dp
+    !$omp parallel default(shared) private(id, i, ix) 
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        f_fep(1:3,ix,i,id+1) = force(1:3,ix,i,id+1)
+      end do
+    end do
+    !$omp end parallel
+    do id = 1, nthread
+      v_fep(1:3,1:3,id)     = virial(1:3,1:3,id)
+      v_ext_fep(1:3,1:3,id) = virial_ext(1:3,1:3,id)
+      eposi_fep(id) = eposi(id)
+    end do
+
+    ! point restraint energy
+    !
+    if (enefunc%restraint_posi) &
+    call compute_energy_restraints_pos(calc_force, domain, enefunc, coord,  &
+                                       force, virial, virial_ext, eposi)
+
+    if (enefunc%restraint_rmsd) &
+    call compute_energy_restraints_rmsd(domain, enefunc, coord,             &
+                                        force, virial, virial_ext, ermsd, rmsd)
+
+    call compute_energy_restraints_dist(calc_force, enefunc, bonds_coord,   &
+                                       bonds_force, virial, edist)
+
+    call compute_energy_restraints_angle(calc_force, enefunc, bonds_coord,  &
+                                       bonds_force, virial, eangle)
+
+    call compute_energy_restraints_dihed(calc_force, enefunc, bonds_coord,  &
+                                       bonds_force, virial, edihed)
+
+    call compute_energy_experimental_restraint(calc_force, domain, boundary,&
+                                       enefunc, coord, force, virial_ext,   &
+                                       eemfit, emcorr)
+
+    call compute_energy_restraints_repul(calc_force, enefunc, boundary, &
+                                    bonds_coord, bonds_force, virial, erepul)
+
+    call compute_energy_restraints_fb(calc_force, enefunc, boundary, &
+                                    bonds_coord, bonds_force, virial, efb)
+
+    ! FEP: multiply lambrest by energies (excluding eposi)
+    ermsd  = enefunc%lambrest*ermsd
+    eemfit = enefunc%lambrest*eemfit
+    emcorr = enefunc%lambrest*emcorr
+    ebonds = ebonds + enefunc%lambrest*&
+             (edist + eangle + edihed + erepul + efb)
+
+    if (calc_force) then
+      call get_restraint_forces(domain, enefunc, bonds_to_atom,             &
+                                bonds_force, force)
+    end if
+
+    ! FEP: multiply lambrest by forces and virials (and eposi) using OMP
+    !$omp parallel default(shared) private(id, i, ix) 
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        f_fep(1:3,ix,i,id+1) = force(1:3,ix,i,id+1) - f_fep(1:3,ix,i,id+1)
+        force(1:3,ix,i,id+1) = force(1:3,ix,i,id+1) + (enefunc%lambrest-1.0_wp)*f_fep(1:3,ix,i,id+1)
+      end do
+    end do
+    !$omp end parallel
+    do id = 1, nthread
+      v_fep(1:3,1:3,id)  = virial(1:3,1:3,id) - v_fep(1:3,1:3,id)
+      virial(1:3,1:3,id) = virial(1:3,1:3,id) + (real(enefunc%lambrest,dp)-1.0_dp)*v_fep(1:3,1:3,id)
+      v_ext_fep(1:3,1:3,id)  = virial_ext(1:3,1:3,id) - v_ext_fep(1:3,1:3,id)
+      virial_ext(1:3,1:3,id) = virial_ext(1:3,1:3,id) + (real(enefunc%lambrest,dp)-1.0_dp)*v_ext_fep(1:3,1:3,id)
+      eposi_fep(id) = eposi(id) - eposi_fep(id)
+      eposi(id)     = eposi(id) + (real(enefunc%lambrest,dp)-1.0_dp)*eposi_fep(id)
+    end do
+
+    call timer(TimerRestraint, TimerOff)
+
+    return
+
+  end subroutine compute_energy_restraints_fep
 
 end module sp_energy_restraints_mod

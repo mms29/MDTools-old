@@ -32,6 +32,7 @@ module trajectory_str_mod
     integer,                allocatable :: md_steps(:)
     integer,                allocatable :: mdout_periods(:)
     integer,                allocatable :: ana_periods(:)
+    integer,                allocatable :: start_steps(:)
     integer                             :: trj_format
     integer                             :: trj_type
   end type s_trj_list
@@ -114,6 +115,7 @@ contains
                trj_list%md_steps     (ntrj), &
                trj_list%mdout_periods(ntrj), &
                trj_list%ana_periods  (ntrj), &
+               trj_list%start_steps  (ntrj), &
                stat = alloc_stat)
 
     if (alloc_stat /= 0)   call error_msg_alloc
@@ -123,6 +125,7 @@ contains
     trj_list%md_steps     (1:ntrj) = 0
     trj_list%mdout_periods(1:ntrj) = 0
     trj_list%ana_periods  (1:ntrj) = 0
+    trj_list%start_steps  (1:ntrj) = 0
 
     return
 
@@ -153,6 +156,7 @@ contains
                  trj_list%md_steps,      &
                  trj_list%mdout_periods, &
                  trj_list%ana_periods,   &
+                 trj_list%start_steps,   &
                  stat = dealloc_stat)
     end if
 

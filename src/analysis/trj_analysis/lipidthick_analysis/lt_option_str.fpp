@@ -22,10 +22,10 @@ module lt_option_str_mod
   private
 
   type, public :: s_option
-    logical             :: check_only
+    logical                :: check_only
 
-    type(s_selatoms)    :: membrane_atom
-    character(MaxLine)  :: membrane_atom_exp
+    type(s_selatoms)       :: membrane_atom
+    character(MaxLineLong) :: membrane_atom_exp
   end type s_option
 
   ! subroutines

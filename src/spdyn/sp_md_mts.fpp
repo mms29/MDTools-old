@@ -37,7 +37,7 @@ module sp_md_mts_mod
   use timers_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -236,8 +236,9 @@ contains
         if (dynamics%nbupdate_period > 0 .and. &
             j == multistep .and. i > 0) then
 
-          call domain_interaction_update_md(istep, dynamics, domain, enefunc, &
-                                          pairlist, boundary, constraints, comm)
+          call domain_interaction_update_md(istep, dynamics, ensemble, domain, &
+                                            enefunc, pairlist, boundary,       &
+                                            constraints, comm)
 
         end if
 

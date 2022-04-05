@@ -28,7 +28,7 @@ module at_enefunc_pme_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -437,7 +437,7 @@ contains
     !
     index_z = iproc_y(my_city_rank)*ny
     index_y = iproc_z(my_city_rank)*nz
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_comm_split(mpi_comm_city,index_y,my_city_rank,grid_commy,ierror)
     call mpi_comm_size (grid_commy, nprocy, ierror)
     call mpi_comm_rank (grid_commy, my_y_rank, ierror)

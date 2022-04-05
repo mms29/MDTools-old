@@ -41,10 +41,11 @@ module ma_option_mod
     integer                         :: self_iteration   = 5
     integer                         :: newton_iteration = 100
     character(MaxLine)              :: temperature
-    real(wp)                        :: target_temperature = 0.0
+    real(wp)                        :: target_temperature = 0.0_wp
     real(wp)                        :: tolerance        = 10E-08_wp
     character(MaxLineLong_CV), allocatable :: rest_func_no(:)
     character(MaxLine), allocatable :: grids(:)
+    character(MaxLine)              :: out_unit         = 'NONE'
 
     ! restraints variables
     integer,            allocatable :: rest_funcs(:)
@@ -77,7 +78,7 @@ contains
     write(MsgOut,'(A)') 'nreplica         = 4'
     write(MsgOut,'(A)') 'dimension        = 1'
     write(MsgOut,'(A)') 'nblocks          = 1'
-    write(MsgOut,'(A)') 'input_type       = US  # US REMD FEP REST'
+    write(MsgOut,'(A)') 'input_type       = US  # US REMD FEP REST MBGO'
     write(MsgOut,'(A)') 'self_iteration   = 5'
     write(MsgOut,'(A)') 'newton_iteration = 100'
     write(MsgOut,'(A)') 'temperature      = 300.0'
@@ -85,6 +86,7 @@ contains
     write(MsgOut,'(A)') 'tolerance        = 10E-08'
     write(MsgOut,'(A)') 'rest_function1   = 1'
     write(MsgOut,'(A)') 'grids1           = 0.0 360.0 91 # min max num_grids, num_grids means the number of bins + 1'
+    write(MsgOut,'(A)') 'output_unit      = NONE  # unit for fene and pmf [NONE, kcal/mol]. NONE corresponds to dimensionless'
     write(MsgOut,'(A)') ''
     ! write(MsgOut,'(A)') '[SELECTION]'
     ! write(MsgOut,'(A)') 'group1         = an:NL'
@@ -186,6 +188,9 @@ contains
     call read_ctrlfile_real   (handle, SectionMbar, &
                                'tolerance', opt_info%tolerance)
 
+    if (opt_info%target_temperature == 0.0_wp) &
+      call error_msg('Read_Ctrl_Option> target_temperature should be specified.')
+
     if (opt_info%dimension > 2) &
       call error_msg('Read_Ctrl_Option> Dimension must be 1 or 2.')
 
@@ -212,6 +217,9 @@ contains
       call read_ctrlfile_string (handle, SectionMbar, &
                                  'grids'//cdim, opt_info%grids(i))
     end do
+
+    call read_ctrlfile_string (handle, SectionMbar, &
+                               'output_unit', opt_info%out_unit)
 
     call end_ctrlfile_section(handle)
 
@@ -309,6 +317,9 @@ contains
         '  grids           = ', trim(opt_info%grids(i))
 
     end do
+
+    write(MsgOut,'(A20,A)') &
+         ' output_unit     = ', trim(opt_info%out_unit)
 
     write(MsgOut,'(A)') ''
 
@@ -435,16 +446,13 @@ contains
       read(opt_info%temperature, *) tmp
       option%temperature(:) = tmp
     end if
-    write(*, *) 'temperature = ', option%temperature(:)
-
+    !write(*, *) 'temperature = ', option%temperature(:)
 
     ! target temperature
     option%target_temperature = opt_info%target_temperature
 
-
     ! tolerance
     option%tolerance = opt_info%tolerance
-
 
     if (option%input_type == InputTypeCV .or. option%input_type == InputTypeUS) then
 
@@ -511,6 +519,18 @@ contains
 
     end if
 
+    ! unit for output
+    option%out_unit = opt_info%out_unit
+    if (option%out_unit == 'kcal/mol') then
+      write(MsgOut,'(A)') &
+        'Setup_Option> Unit for fene and pmf is set to kcal/mol'
+    else if (option%out_unit == 'NONE') then
+      write(MsgOut,'(A)') &
+        'Setup_Option> Unit for fene and pmf is set to dimension less'
+    else
+      call error_msg('Setup_Option> Unknown unit. out_unit should be NONE or kcal/mol')
+    end if
+ 
     ! selection settings
     !
 

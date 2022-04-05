@@ -7,4 +7,4 @@
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
 
-SUBDIRS = emmap_generator pathcv_analysis rpath_generator qmmm_generator
+SUBDIRS = emmap_generator pathcv_analysis rpath_generator qmmm_generator morph_generator 

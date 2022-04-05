@@ -5,7 +5,7 @@
 !! @authors Jaewoon Jung (JJ) , Chigusa Kobayshi (CK)
 !
 !  (c) Copyright 2014 RIKEN. All rights reserved.
-! 
+!
 !--------1---------2---------3---------4---------5---------6---------7---------8
 
 #ifdef HAVE_CONFIG_H
@@ -52,6 +52,16 @@ module sp_migration_mod
   public :: update_incoming_enefunc_restraint
   public :: update_outgoing_enefunc_fitting
   public :: update_incoming_enefunc_fitting
+
+  ! FEP
+  public :: update_outgoing_solute_fep
+  public :: update_outgoing_atom_fep
+  public :: update_outgoing_water_fep
+  public :: update_outgoing_HGr_fep
+  public :: update_incoming_solute_fep
+  public :: update_incoming_atom_fep
+  public :: update_incoming_water_fep
+  public :: update_incoming_HGr_fep
 
 contains
 
@@ -1634,6 +1644,10 @@ contains
           ubforce   (angle_exit_index(k,i),i)   = buf_real(4,k,i)
         end do
 
+        if (my_country_rank.eq.4.and.i.eq.5) then
+          do ix = 1, nangle(i)
+          end do
+        end if
         do k = angle_exit(i)+1, angle_add(i)
           ix = k + nangle(i) - angle_exit(i)
           anglelist (1,ix,i) = buf_int(1,k,i)
@@ -2617,7 +2631,7 @@ contains
     integer                  :: i1, i2, icel1, icel2
     integer                  :: list1, list2
 
-    real(wp),        pointer :: lj12(:,:), lj6(:,:)
+    real(wp),        pointer :: lj12(:,:), lj10(:,:), lj6(:,:)
     real(wp),        pointer :: buf_real(:,:,:)
     integer,         pointer :: ncel_local, nboundary
     integer,         pointer :: cell_pair(:,:), id_g2l(:,:)
@@ -2634,6 +2648,7 @@ contains
     ncontact    => enefunc%num_contact
     contactlist => enefunc%contact_list
     lj12        => enefunc%contact_lj12
+    lj10        => enefunc%contact_lj10
     lj6         => enefunc%contact_lj6
     contact_exit=> enefunc%contact_exit
     index       => enefunc%contact_exit_index
@@ -2664,7 +2679,8 @@ contains
           contact_add(icel_local) = contact_add(icel_local) + 1
           list1 = contact_add(icel_local)
           buf_real(1,list1,icel_local) = lj12(ix,i)
-          buf_real(2,list1,icel_local) = lj6(ix,i)
+          buf_real(2,list1,icel_local) = lj10(ix,i)
+          buf_real(3,list1,icel_local) = lj6(ix,i)
           buf_int (1,list1,icel_local) = contactlist(1,ix,i)
           buf_int (2,list1,icel_local) = contactlist(2,ix,i)
 
@@ -2699,7 +2715,7 @@ contains
     integer                  :: list
     logical                  :: insert
 
-    real(wp),        pointer :: buf_real(:,:,:), lj12(:,:), lj6(:,:)
+    real(wp),        pointer :: buf_real(:,:,:), lj12(:,:), lj10(:,:), lj6(:,:)
     integer,         pointer :: ncel_local, nboundary, cell_g2l(:), id_g2l(:,:)
     integer,         pointer :: contact_add(:), contact_exit(:)
     integer,         pointer :: contact_exit_index(:,:)
@@ -2719,6 +2735,7 @@ contains
     buf_real           => enefunc%buf_contact_real
     contactlist        => enefunc%contact_list
     lj12               => enefunc%contact_lj12
+    lj10               => enefunc%contact_lj10
     lj6                => enefunc%contact_lj6
     ncontact           => enefunc%num_contact
 
@@ -2741,7 +2758,8 @@ contains
           contactlist(1,list,i) = buf_int (1,k,i)
           contactlist(2,list,i) = buf_int (2,k,i)
           lj12(list,i)          = buf_real(1,k,i)
-          lj6 (list,i)          = buf_real(2,k,i)
+          lj10(list,i)          = buf_real(2,k,i)
+          lj6 (list,i)          = buf_real(3,k,i)
         end do
 
         do k = contact_exit(i)+1, contact_add(i)
@@ -2749,7 +2767,8 @@ contains
           contactlist (1,ix,i) = buf_int(1,k,i)
           contactlist (2,ix,i) = buf_int(2,k,i)
           lj12 (ix,i)          = buf_real(1,k,i)
-          lj6(ix,i)            = buf_real(2,k,i)
+          lj10 (ix,i)          = buf_real(2,k,i)
+          lj6  (ix,i)          = buf_real(3,k,i)
         end do
 
         ncontact(i) = ncontact(i) + contact_add(i) - contact_exit(i)
@@ -2761,7 +2780,8 @@ contains
           contactlist (1,list,i) = buf_int (1,k,i)
           contactlist (2,list,i) = buf_int (2,k,i)
           lj12(list,i)           = buf_real(1,k,i)
-          lj6 (list,i)           = buf_real(2,k,i)
+          lj10(list,i)           = buf_real(2,k,i)
+          lj6 (list,i)           = buf_real(3,k,i)
         end do
 
         j  = 0
@@ -2784,6 +2804,7 @@ contains
             contactlist (1,list,i) = contactlist(1,ix,i)
             contactlist (2,list,i) = contactlist(2,ix,i)
             lj12(list,i)           = lj12(ix,i)
+            lj10(list,i)           = lj10(ix,i)
             lj6 (list,i)           = lj6(ix,i)
             j = j + 1
             k = k + 1
@@ -3182,4 +3203,1289 @@ contains
     return
 
   end subroutine update_incoming_enefunc_fitting
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_outgoing_solute_fep
+  !> @brief        check solute particles going other cells for FEP
+  !! @authors      NK, HO
+  !! @param[in]    boundary : boundary condition information
+  !! @param[inout] domain   : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_outgoing_solute_fep(boundary, domain)
+
+    ! formal arguments
+    type(s_boundary), target, intent(in)    :: boundary
+    type(s_domain),   target, intent(inout) :: domain
+
+    ! local variable
+    real(dp)                  :: x_shift, y_shift, z_shift
+    real(dp)                  :: move(3)
+    integer                   :: i, k, ix, icx, icy, icz, icel, ncel
+    integer                   :: icel_local, icel_bd
+
+    real(dp),         pointer :: bsize_x, bsize_y, bsize_z
+    real(dp),         pointer :: csize_x, csize_y, csize_z
+    real(dp),         pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),         pointer :: charge(:,:)
+    real(dp),         pointer :: mass(:,:)
+    real(dp),         pointer :: buf_real(:,:,:)
+    integer,          pointer :: ncel_x, ncel_y, ncel_z, ncel_local, ncel_bd
+    integer,          pointer :: nsolute(:), cell_g2l(:), cell_g2b(:)
+    integer,          pointer :: atmcls(:,:), id_l2g(:,:)
+    integer,          pointer :: ptl_add(:), ptl_exit(:), ptlindex(:,:)
+    integer,          pointer :: buf_int(:,:,:)
+
+    ! FEP
+    integer,          pointer :: fepgrp(:,:)
+
+    bsize_x    => boundary%box_size_x
+    bsize_y    => boundary%box_size_y
+    bsize_z    => boundary%box_size_z
+    ncel_x     => boundary%num_cells_x
+    ncel_y     => boundary%num_cells_y
+    ncel_z     => boundary%num_cells_z
+    csize_x    => boundary%cell_size_x
+    csize_y    => boundary%cell_size_y
+    csize_z    => boundary%cell_size_z
+
+    ncel_local => domain%num_cell_local
+    ncel_bd    => domain%num_cell_boundary
+    nsolute    => domain%num_solute
+    cell_g2l   => domain%cell_g2l
+    cell_g2b   => domain%cell_g2b
+    coord      => domain%coord
+    velocity   => domain%velocity
+    charge     => domain%charge
+    mass       => domain%mass
+    atmcls     => domain%atom_cls_no
+    id_l2g     => domain%id_l2g
+    ptl_add    => domain%ptl_add
+    ptl_exit   => domain%ptl_exit
+    ptlindex   => domain%ptl_exit_index
+    buf_int    => domain%buf_integer
+    buf_real   => domain%buf_real
+
+    ! FEP
+    fepgrp     => domain%fepgrp
+
+
+    ! initializaiton
+    !
+    ncel = ncel_local + ncel_bd
+    ptl_exit(1:ncel_local) = 0
+    ptl_add(1:ncel) = 0
+
+    ! Check outgoing particles
+    !
+    do i = 1, ncel_local
+
+      k = 0
+      do ix = 1, nsolute(i)
+
+        x_shift = coord(1,ix,i) - boundary%origin_x
+        y_shift = coord(2,ix,i) - boundary%origin_y
+        z_shift = coord(3,ix,i) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+        x_shift = x_shift + move(1)
+        y_shift = y_shift + move(2)
+        z_shift = z_shift + move(3)
+
+        !assign which cell
+        icx = int(x_shift/csize_x)
+        icy = int(y_shift/csize_y)
+        icz = int(z_shift/csize_z)
+        if (icx == ncel_x) icx = icx - 1
+        if (icy == ncel_y) icy = icy - 1
+        if (icz == ncel_z) icz = icz - 1
+        icel = 1 + icx + icy*ncel_x + icz*ncel_x*ncel_y
+        icel_local = cell_g2l(icel)
+        icel_bd    = cell_g2b(icel)
+
+        if (icel_local /= i) then
+
+          ptl_exit(i) = ptl_exit(i) + 1
+          ptlindex(ptl_exit(i),i) = ix
+
+          if (icel_local /= 0) then
+
+            ptl_add (icel_local) = ptl_add(icel_local) + 1
+            buf_real(1,ptl_add(icel_local),icel_local) = coord(1,ix,i)
+            buf_real(2,ptl_add(icel_local),icel_local) = coord(2,ix,i)
+            buf_real(3,ptl_add(icel_local),icel_local) = coord(3,ix,i)
+            buf_real(4,ptl_add(icel_local),icel_local) = velocity(1,ix,i)
+            buf_real(5,ptl_add(icel_local),icel_local) = velocity(2,ix,i)
+            buf_real(6,ptl_add(icel_local),icel_local) = velocity(3,ix,i)
+            buf_real(7,ptl_add(icel_local),icel_local) = charge(ix,i)
+            buf_real(8,ptl_add(icel_local),icel_local) = mass(ix,i)
+            buf_int (1,ptl_add(icel_local),icel_local) = atmcls(ix,i)
+            buf_int (2,ptl_add(icel_local),icel_local) = id_l2g(ix,i)
+            buf_int (3,ptl_add(icel_local),icel_local) = fepgrp(ix,i)
+
+          else if (icel_bd /= 0) then
+
+            icel_bd = icel_bd + ncel_local
+            ptl_add (icel_bd) = ptl_add(icel_bd) + 1
+            buf_real(1,ptl_add(icel_bd),icel_bd) = coord(1,ix,i)
+            buf_real(2,ptl_add(icel_bd),icel_bd) = coord(2,ix,i)
+            buf_real(3,ptl_add(icel_bd),icel_bd) = coord(3,ix,i)
+            buf_real(4,ptl_add(icel_bd),icel_bd) = velocity(1,ix,i)
+            buf_real(5,ptl_add(icel_bd),icel_bd) = velocity(2,ix,i)
+            buf_real(6,ptl_add(icel_bd),icel_bd) = velocity(3,ix,i)
+            buf_real(7,ptl_add(icel_bd),icel_bd) = charge(ix,i)
+            buf_real(8,ptl_add(icel_bd),icel_bd) = mass(ix,i)
+            buf_int (1,ptl_add(icel_bd),icel_bd) = atmcls(ix,i)
+            buf_int (2,ptl_add(icel_bd),icel_bd) = id_l2g(ix,i)
+            buf_int (3,ptl_add(icel_bd),icel_bd) = fepgrp(ix,i)
+
+          end if
+
+        end if
+
+       end do
+    end do
+
+    return
+
+  end subroutine update_outgoing_solute_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_outgoing_atom_fep
+  !> @brief        check particles (not bonded to hydrogen) going other cells
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[in]    boundary    : boundary condition information
+  !! @param[in]    constraints : constraints information
+  !! @param[inout] domain      : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_outgoing_atom_fep(boundary, constraints, domain)
+
+    ! formal arguments
+    type(s_boundary),    target, intent(in)    :: boundary
+    type(s_constraints), target, intent(in)    :: constraints
+    type(s_domain),      target, intent(inout) :: domain
+
+    ! local variable
+    real(dp)                     :: x_shift, y_shift, z_shift
+    real(dp)                     :: move(3)
+    integer                      :: i, k, ix, icx, icy, icz, icel, ncel
+    integer                      :: icel_local, icel_bd
+
+    real(dp),            pointer :: bsize_x, bsize_y, bsize_z
+    real(dp),            pointer :: csize_x, csize_y, csize_z
+    real(dp),            pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),            pointer :: charge(:,:)
+    real(dp),            pointer :: mass(:,:)
+    real(dp),            pointer :: buf_real(:,:,:)
+    integer,             pointer :: ncel_x, ncel_y, ncel_z, ncel_local, ncel_bd
+    integer,             pointer :: nsolute(:), cell_g2l(:), cell_g2b(:)
+    integer,             pointer :: atmcls(:,:), id_l2g(:,:)
+    integer,             pointer :: ptl_add(:), ptl_exit(:), ptlindex(:,:)
+    integer,             pointer :: buf_int(:,:,:)
+
+    ! FEP
+    integer,             pointer :: fepgrp(:,:)
+
+
+    bsize_x    => boundary%box_size_x
+    bsize_y    => boundary%box_size_y
+    bsize_z    => boundary%box_size_z
+    ncel_x     => boundary%num_cells_x
+    ncel_y     => boundary%num_cells_y
+    ncel_z     => boundary%num_cells_z
+    csize_x    => boundary%cell_size_x
+    csize_y    => boundary%cell_size_y
+    csize_z    => boundary%cell_size_z
+
+    nsolute    => constraints%No_HGr
+
+    ncel_local => domain%num_cell_local
+    ncel_bd    => domain%num_cell_boundary
+    cell_g2l   => domain%cell_g2l
+    cell_g2b   => domain%cell_g2b
+    coord      => domain%coord
+    velocity   => domain%velocity
+    charge     => domain%charge
+    mass       => domain%mass
+    atmcls     => domain%atom_cls_no
+    id_l2g     => domain%id_l2g
+    ptl_add    => domain%ptl_add
+    ptl_exit   => domain%ptl_exit
+    ptlindex   => domain%ptl_exit_index
+    buf_int    => domain%buf_integer
+    buf_real   => domain%buf_real
+
+    ! FEP
+    fepgrp     => domain%fepgrp
+
+
+    ! initializaiton
+    !
+    ncel = ncel_local + ncel_bd
+    ptl_exit(1:ncel_local) = 0
+    ptl_add(1:ncel) = 0
+
+    ! Check outgoing particles
+    !
+    do i = 1, ncel_local
+
+      k = 0
+      do ix = 1, nsolute(i)
+
+        x_shift = coord(1,ix,i) - boundary%origin_x
+        y_shift = coord(2,ix,i) - boundary%origin_y
+        z_shift = coord(3,ix,i) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+        x_shift = x_shift + move(1)
+        y_shift = y_shift + move(2)
+        z_shift = z_shift + move(3)
+
+        !assign which cell
+        icx = int(x_shift/csize_x)
+        icy = int(y_shift/csize_y)
+        icz = int(z_shift/csize_z)
+        if (icx == ncel_x) icx = icx - 1
+        if (icy == ncel_y) icy = icy - 1
+        if (icz == ncel_z) icz = icz - 1
+        icel = 1 + icx + icy*ncel_x + icz*ncel_x*ncel_y
+        icel_local = cell_g2l(icel)
+        icel_bd    = cell_g2b(icel)
+
+        if (icel_local /= i) then
+
+          ptl_exit(i) = ptl_exit(i) + 1
+          ptlindex(ptl_exit(i),i) = ix
+
+          if (icel_local /= 0) then
+
+            ptl_add (icel_local) = ptl_add(icel_local) + 1
+            buf_real(1,ptl_add(icel_local),icel_local) = coord(1,ix,i)
+            buf_real(2,ptl_add(icel_local),icel_local) = coord(2,ix,i)
+            buf_real(3,ptl_add(icel_local),icel_local) = coord(3,ix,i)
+            buf_real(4,ptl_add(icel_local),icel_local) = velocity(1,ix,i)
+            buf_real(5,ptl_add(icel_local),icel_local) = velocity(2,ix,i)
+            buf_real(6,ptl_add(icel_local),icel_local) = velocity(3,ix,i)
+            buf_real(7,ptl_add(icel_local),icel_local) = charge(ix,i)
+            buf_real(8,ptl_add(icel_local),icel_local) = mass(ix,i)
+            buf_int (1,ptl_add(icel_local),icel_local) = atmcls(ix,i)
+            buf_int (2,ptl_add(icel_local),icel_local) = id_l2g(ix,i)
+            buf_int (3,ptl_add(icel_local),icel_local) = fepgrp(ix,i)
+
+          else if (icel_bd /= 0) then
+
+            icel_bd = icel_bd + ncel_local
+            ptl_add (icel_bd) = ptl_add(icel_bd) + 1
+            buf_real(1,ptl_add(icel_bd),icel_bd) = coord(1,ix,i)
+            buf_real(2,ptl_add(icel_bd),icel_bd) = coord(2,ix,i)
+            buf_real(3,ptl_add(icel_bd),icel_bd) = coord(3,ix,i)
+            buf_real(4,ptl_add(icel_bd),icel_bd) = velocity(1,ix,i)
+            buf_real(5,ptl_add(icel_bd),icel_bd) = velocity(2,ix,i)
+            buf_real(6,ptl_add(icel_bd),icel_bd) = velocity(3,ix,i)
+            buf_real(7,ptl_add(icel_bd),icel_bd) = charge(ix,i)
+            buf_real(8,ptl_add(icel_bd),icel_bd) = mass(ix,i)
+            buf_int (1,ptl_add(icel_bd),icel_bd) = atmcls(ix,i)
+            buf_int (2,ptl_add(icel_bd),icel_bd) = id_l2g(ix,i)
+            buf_int (3,ptl_add(icel_bd),icel_bd) = fepgrp(ix,i)
+
+          end if
+
+        end if
+
+       end do
+    end do
+
+    return
+
+  end subroutine update_outgoing_atom_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_outgoing_water_fep
+  !> @brief        check water particles going/remaining cells
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[in]    boundary : boundary condition information
+  !! @param[inout] domain   : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_outgoing_water_fep(water_atom, boundary, domain)
+
+    ! formal arguments
+    integer,                  intent(in)    :: water_atom
+    type(s_boundary), target, intent(in)    :: boundary
+    type(s_domain),   target, intent(inout) :: domain
+
+    ! local variable
+    real(dp)                  :: x_shift, y_shift, z_shift
+    real(dp)                  :: move(3)
+    integer                   :: i, k, iwater, list, ix
+    integer                   :: icx, icy, icz, icel, ncel
+    integer                   :: icel_local, icel_bd
+
+    real(dp),         pointer :: bsize_x, bsize_y, bsize_z
+    real(dp),         pointer :: csize_x, csize_y, csize_z
+    real(dp),         pointer :: coord(:,:,:), velocity(:,:,:)
+    real(dp),         pointer :: water_move_real(:,:,:), water_stay_real(:,:,:)
+    integer,          pointer :: ncel_x, ncel_y, ncel_z, ncel_local, ncel_bd
+    integer,          pointer :: nwater(:), water_list(:,:,:)
+    integer,          pointer :: cell_g2l(:), cell_g2b(:), id_l2g(:,:)
+    integer,          pointer :: water_move(:), water_stay(:)
+    integer,          pointer :: water_move_int(:,:,:), water_stay_int(:,:,:)
+
+    ! FEP
+    integer,          pointer :: fepgrp(:,:)
+
+
+    bsize_x         => boundary%box_size_x
+    bsize_y         => boundary%box_size_y
+    bsize_z         => boundary%box_size_z
+    ncel_x          => boundary%num_cells_x
+    ncel_y          => boundary%num_cells_y
+    ncel_z          => boundary%num_cells_z
+    csize_x         => boundary%cell_size_x
+    csize_y         => boundary%cell_size_y
+    csize_z         => boundary%cell_size_z
+
+    ncel_local      => domain%num_cell_local
+    ncel_bd         => domain%num_cell_boundary
+    nwater          => domain%num_water
+    water_list      => domain%water_list
+    cell_g2l        => domain%cell_g2l
+    cell_g2b        => domain%cell_g2b
+    coord           => domain%coord
+    velocity        => domain%velocity
+    id_l2g          => domain%id_l2g
+    water_move      => domain%water%move
+    water_stay      => domain%water%stay
+    water_move_real => domain%water%move_real
+    water_stay_real => domain%water%stay_real
+    water_move_int  => domain%water%move_integer
+    water_stay_int  => domain%water%stay_integer
+
+    ! FEP
+    fepgrp          => domain%fepgrp
+
+
+    ! initializaiton
+    !
+    ncel = ncel_local + ncel_bd
+    water_stay(1:ncel_local) = 0
+    water_move(1:ncel) = 0
+
+    ! Check outgoing particles
+    !
+    do i = 1, ncel_local
+
+      k = 0
+      do iwater = 1, nwater(i)
+
+        ix = water_list(1,iwater,i)
+        x_shift = coord(1,ix,i) - boundary%origin_x
+        y_shift = coord(2,ix,i) - boundary%origin_y
+        z_shift = coord(3,ix,i) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+        x_shift = x_shift + move(1)
+        y_shift = y_shift + move(2)
+        z_shift = z_shift + move(3)
+
+        !assign which cell
+        icx = int(x_shift/csize_x)
+        icy = int(y_shift/csize_y)
+        icz = int(z_shift/csize_z)
+        if (icx == ncel_x) icx = icx - 1
+        if (icy == ncel_y) icy = icy - 1
+        if (icz == ncel_z) icz = icz - 1
+        icel = 1 + icx + icy*ncel_x + icz*ncel_x*ncel_y
+        icel_local = cell_g2l(icel)
+        icel_bd    = cell_g2b(icel)
+
+        ! atom index
+        if (icel_local /= i) then
+
+          if (icel_local /= 0) then
+
+            water_move(icel_local) = water_move(icel_local) + 1
+
+            do list = 1, water_atom
+              ix = water_list(list,iwater,i)
+              water_move_real(6*(list-1)+1,water_move(icel_local),icel_local) &
+                 = coord(1,ix,i)
+              water_move_real(6*(list-1)+2,water_move(icel_local),icel_local) &
+                 = coord(2,ix,i)
+              water_move_real(6*(list-1)+3,water_move(icel_local),icel_local) &
+                 = coord(3,ix,i)
+              water_move_real(6*(list-1)+4,water_move(icel_local),icel_local) &
+                 = velocity(1,ix,i)
+              water_move_real(6*(list-1)+5,water_move(icel_local),icel_local) &
+                 = velocity(2,ix,i)
+              water_move_real(6*(list-1)+6,water_move(icel_local),icel_local) &
+                 = velocity(3,ix,i)
+              water_move_int(2*(list-1)+1,water_move(icel_local),icel_local)          &
+                 = id_l2g(ix,i)
+              water_move_int(2*(list-1)+2,water_move(icel_local),icel_local)          &
+                 = fepgrp(ix,i)
+            end do
+
+          else if (icel_bd /= 0) then
+
+            icel_bd = icel_bd + ncel_local
+            water_move(icel_bd) = water_move(icel_bd) + 1
+
+            do list = 1, water_atom
+              ix = water_list(list,iwater,i)
+              water_move_real(6*(list-1)+1,water_move(icel_bd),icel_bd)       &
+                 = coord(1,ix,i)
+              water_move_real(6*(list-1)+2,water_move(icel_bd),icel_bd)       &
+                 = coord(2,ix,i)
+              water_move_real(6*(list-1)+3,water_move(icel_bd),icel_bd)       &
+                 = coord(3,ix,i)
+              water_move_real(6*(list-1)+4,water_move(icel_bd),icel_bd)       &
+                 = velocity(1,ix,i)
+              water_move_real(6*(list-1)+5,water_move(icel_bd),icel_bd)       &
+                 = velocity(2,ix,i)
+              water_move_real(6*(list-1)+6,water_move(icel_bd),icel_bd)       &
+                 = velocity(3,ix,i)
+              water_move_int(2*(list-1)+1,water_move(icel_bd),icel_bd) = id_l2g(ix,i)
+              water_move_int(2*(list-1)+2,water_move(icel_bd),icel_bd) = fepgrp(ix,i)
+            end do
+          end if
+
+        else
+
+          water_stay(i) = water_stay(i) + 1
+
+          do list = 1, water_atom
+            ix = water_list(list,iwater,i)
+            water_stay_real(6*(list-1)+1,water_stay(i),i) = coord(1,ix,i)
+            water_stay_real(6*(list-1)+2,water_stay(i),i) = coord(2,ix,i)
+            water_stay_real(6*(list-1)+3,water_stay(i),i) = coord(3,ix,i)
+            water_stay_real(6*(list-1)+4,water_stay(i),i) = velocity(1,ix,i)
+            water_stay_real(6*(list-1)+5,water_stay(i),i) = velocity(2,ix,i)
+            water_stay_real(6*(list-1)+6,water_stay(i),i) = velocity(3,ix,i)
+            water_stay_int(2*(list-1)+1,water_stay(i),i) = id_l2g(ix,i)
+            water_stay_int(2*(list-1)+2,water_stay(i),i) = fepgrp(ix,i)
+          end do
+
+        end if
+
+      end do
+
+    end do
+
+    return
+
+  end subroutine update_outgoing_water_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_outgoing_HGr_fep
+  !> @brief        check hydrogen-bonded particles going/remaining cells
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[in]    boundary    : boundary condition information
+  !! @param[inout] constraints : constraints information
+  !! @param[inout] domain      : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_outgoing_HGr_fep(boundary, constraints, domain)
+
+    ! formal arguments
+    type(s_boundary),    target, intent(in)    :: boundary
+    type(s_constraints), target, intent(inout) :: constraints
+    type(s_domain),      target, intent(inout) :: domain
+
+    ! local variable
+    real(dp)                     :: x_shift, y_shift, z_shift
+    real(dp)                     :: move(3)
+    integer                      :: i, j, k, list, ix
+    integer                      :: num_move, num_stay
+    integer                      :: icx, icy, icz, icel, ncel
+    integer                      :: icel_local, icel_bd
+
+    real(dp),            pointer :: bsize_x, bsize_y, bsize_z
+    real(dp),            pointer :: csize_x, csize_y, csize_z
+    real(dp),            pointer :: coord(:,:,:), vel(:,:,:)
+    real(wp),            pointer :: charge(:,:)
+    real(dp),            pointer :: mass(:,:)
+    real(dp),            pointer :: HGr_bond_dist(:,:,:,:)
+    real(dp),            pointer :: HGr_move_real(:,:,:,:)
+    real(dp),            pointer :: HGr_stay_real(:,:,:,:)
+    integer,             pointer :: ncel_x, ncel_y, ncel_z
+    integer,             pointer :: ncel_local, ncel_bd
+    integer,             pointer :: connect
+    integer,             pointer :: atmcls(:,:)
+    integer,             pointer :: HGr_local(:,:), HGr_bond_list(:,:,:,:)
+    integer,             pointer :: cell_g2l(:), cell_g2b(:), id_l2g(:,:)
+    integer,             pointer :: HGr_move(:,:), HGr_stay(:,:)
+    integer,             pointer :: HGr_move_int(:,:,:,:), HGr_stay_int(:,:,:,:)
+
+    ! FEP
+    integer,             pointer :: fepgrp(:,:)
+
+    bsize_x       => boundary%box_size_x
+    bsize_y       => boundary%box_size_y
+    bsize_z       => boundary%box_size_z
+    ncel_x        => boundary%num_cells_x
+    ncel_y        => boundary%num_cells_y
+    ncel_z        => boundary%num_cells_z
+    csize_x       => boundary%cell_size_x
+    csize_y       => boundary%cell_size_y
+    csize_z       => boundary%cell_size_z
+
+    HGr_local     => constraints%HGr_local
+    HGr_bond_list => constraints%HGr_bond_list
+    HGr_move      => constraints%HGr_move
+    HGr_stay      => constraints%HGr_stay
+    HGr_bond_dist => constraints%HGr_bond_dist
+    HGr_move_real => constraints%HGr_move_real
+    HGr_stay_real => constraints%HGr_stay_real
+    HGr_move_int  => constraints%HGr_move_int
+    HGr_stay_int  => constraints%HGr_stay_int
+    connect       => constraints%connect
+
+    ncel_local    => domain%num_cell_local
+    ncel_bd       => domain%num_cell_boundary
+    cell_g2l      => domain%cell_g2l
+    cell_g2b      => domain%cell_g2b
+    coord         => domain%coord
+    vel           => domain%velocity
+    charge        => domain%charge
+    mass          => domain%mass
+    id_l2g        => domain%id_l2g
+    atmcls        => domain%atom_cls_no
+
+    ! FEP
+    fepgrp        => domain%fepgrp
+
+
+    ! initializaiton
+    !
+    ncel = ncel_local + ncel_bd
+    HGr_stay(1:connect,1:ncel_local) = 0
+    HGr_move(1:connect,1:ncel) = 0
+
+    ! Check outgoing particles
+    !
+    do i = 1, ncel_local
+      do j = 1, connect
+        do k = 1, HGr_local(j,i)
+
+          ix = HGr_bond_list(1,k,j,i)
+          x_shift = coord(1,ix,i) - boundary%origin_x
+          y_shift = coord(2,ix,i) - boundary%origin_y
+          z_shift = coord(3,ix,i) - boundary%origin_z
+
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          x_shift = x_shift + move(1)
+          y_shift = y_shift + move(2)
+          z_shift = z_shift + move(3)
+
+          !assign which cell
+          icx = int(x_shift/csize_x)
+          icy = int(y_shift/csize_y)
+          icz = int(z_shift/csize_z)
+          if (icx == ncel_x) icx = icx - 1
+          if (icy == ncel_y) icy = icy - 1
+          if (icz == ncel_z) icz = icz - 1
+          icel = 1 + icx + icy*ncel_x + icz*ncel_x*ncel_y
+          icel_local = cell_g2l(icel)
+          icel_bd    = cell_g2b(icel)
+
+          ! atom index
+          if (icel_local /= i) then
+            if (icel_local /= 0) then
+
+              HGr_move(j,icel_local) = HGr_move(j,icel_local) + 1
+              num_move = HGr_move(j,icel_local)
+
+              do list = 1, j+1
+                ix = HGr_bond_list(list,k,j,i)
+                HGr_move_real(9*(list-1)+1,num_move,j,icel_local) = &
+                     coord(1,ix,i)
+                HGr_move_real(9*(list-1)+2,num_move,j,icel_local) = &
+                     coord(2,ix,i)
+                HGr_move_real(9*(list-1)+3,num_move,j,icel_local) = &
+                     coord(3,ix,i)
+                HGr_move_real(9*(list-1)+4,num_move,j,icel_local) = vel(1,ix,i)
+                HGr_move_real(9*(list-1)+5,num_move,j,icel_local) = vel(2,ix,i)
+                HGr_move_real(9*(list-1)+6,num_move,j,icel_local) = vel(3,ix,i)
+                HGr_move_real(9*(list-1)+7,num_move,j,icel_local) = charge(ix,i)
+                HGr_move_real(9*(list-1)+8,num_move,j,icel_local) = mass(ix,i)
+                HGr_move_real(9*(list-1)+9,num_move,j,icel_local) = &
+                     HGr_bond_dist(list,k,j,i)
+                HGr_move_int(3*(list-1)+1,num_move,j,icel_local)  = atmcls(ix,i)
+                HGr_move_int(3*(list-1)+2,num_move,j,icel_local)  = id_l2g(ix,i)
+                HGr_move_int(3*(list-1)+3,num_move,j,icel_local)  = &
+                     fepgrp(ix,i)
+              end do
+
+            else if (icel_bd /= 0) then
+
+              icel_bd = icel_bd + ncel_local
+              HGr_move(j,icel_bd) = HGr_move(j,icel_bd) + 1
+              num_move = HGr_move(j,icel_bd)
+
+              do list = 1, j+1
+                ix = HGr_bond_list(list,k,j,i)
+                hgr_move_real(9*(list-1)+1,num_move,j,icel_bd) = coord(1,ix,i)
+                hgr_move_real(9*(list-1)+2,num_move,j,icel_bd) = coord(2,ix,i)
+                hgr_move_real(9*(list-1)+3,num_move,j,icel_bd) = coord(3,ix,i)
+                hgr_move_real(9*(list-1)+4,num_move,j,icel_bd) = vel(1,ix,i)
+                hgr_move_real(9*(list-1)+5,num_move,j,icel_bd) = vel(2,ix,i)
+                hgr_move_real(9*(list-1)+6,num_move,j,icel_bd) = vel(3,ix,i)
+                hgr_move_real(9*(list-1)+7,num_move,j,icel_bd) = charge(ix,i)
+                hgr_move_real(9*(list-1)+8,num_move,j,icel_bd) = mass(ix,i)
+                HGr_move_real(9*(list-1)+9,num_move,j,icel_bd) = &
+                     HGr_bond_dist(list,k,j,i)
+                hgr_move_int(3*(list-1)+1,num_move,j,icel_bd)  = atmcls(ix,i)
+                hgr_move_int(3*(list-1)+2,num_move,j,icel_bd)  = id_l2g(ix,i)
+                hgr_move_int(3*(list-1)+3,num_move,j,icel_bd)  = fepgrp(ix,i)
+              end do
+            end if
+
+          else
+
+            hgr_stay(j,i) = hgr_stay(j,i) + 1
+            num_stay = hgr_stay(j,i)
+
+            do list = 1, j+1
+              ix = HGr_bond_list(list,k,j,i)
+              hgr_stay_real(9*(list-1)+1,num_stay,j,i) = coord(1,ix,i)
+              hgr_stay_real(9*(list-1)+2,num_stay,j,i) = coord(2,ix,i)
+              hgr_stay_real(9*(list-1)+3,num_stay,j,i) = coord(3,ix,i)
+              hgr_stay_real(9*(list-1)+4,num_stay,j,i) = vel(1,ix,i)
+              hgr_stay_real(9*(list-1)+5,num_stay,j,i) = vel(2,ix,i)
+              hgr_stay_real(9*(list-1)+6,num_stay,j,i) = vel(3,ix,i)
+              hgr_stay_real(9*(list-1)+7,num_stay,j,i) = charge(ix,i)
+              hgr_stay_real(9*(list-1)+8,num_stay,j,i) = mass(ix,i)
+              hgr_stay_real(9*(list-1)+9,num_stay,j,i) = &
+                   HGr_bond_dist(list,k,j,i)
+              hgr_stay_int (3*(list-1)+1,num_stay,j,i) = atmcls(ix,i)
+              hgr_stay_int (3*(list-1)+2,num_stay,j,i) = id_l2g(ix,i)
+              hgr_stay_int (3*(list-1)+3,num_stay,j,i) = fepgrp(ix,i)
+            end do
+
+          end if
+
+        end do
+      end do
+    end do
+
+    return
+
+  end subroutine update_outgoing_HGr_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_incoming_solute_fep
+  !> @brief        check solute particles incoming to each cell
+  !! @authors      NK, HO
+  !! @param[inout] domain : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_incoming_solute_fep(domain)
+
+    ! formal arguments
+    type(s_domain),  target, intent(inout) :: domain
+
+    ! local variables
+    integer                  :: i, j, k, ix, kx
+    logical                  :: insert
+
+    real(dp),        pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),        pointer :: charge(:,:)
+    real(dp),        pointer :: mass(:,:)
+    real(dp),        pointer :: buf_real(:,:,:)
+    integer,         pointer :: ncel_local, nsolute(:)
+    integer,         pointer :: atmcls(:,:), id_l2g(:,:), id_g2l(:,:)
+    integer,         pointer :: ptl_add(:), ptl_exit(:), ptlindex(:,:)
+    integer,         pointer :: buf_int(:,:,:)
+
+    ! FEP
+    integer,         pointer :: fepgrp(:,:)
+
+
+    ncel_local => domain%num_cell_local
+    nsolute    => domain%num_solute
+    coord      => domain%coord
+    velocity   => domain%velocity
+    charge     => domain%charge
+    mass       => domain%mass
+    atmcls     => domain%atom_cls_no
+    id_l2g     => domain%id_l2g
+    id_g2l     => domain%id_g2l
+    ptl_add    => domain%ptl_add
+    ptl_exit   => domain%ptl_exit
+    ptlindex   => domain%ptl_exit_index
+    buf_int    => domain%buf_integer
+    buf_real   => domain%buf_real
+
+    ! FEP
+    fepgrp     => domain%fepgrp
+
+
+    ! incoming particles
+    !
+    do i = 1, ncel_local
+
+#ifdef DEBUG
+      if (ptl_add(i)+nsolute(i)-ptl_exit(i) > MaxAtom) &
+        call error_msg('Debug: Update_Incoming_Solute> atom is exceed MaxAtom')
+#endif
+
+      ! when the number of coming particles is larger than that of outgoing ones
+      !
+      if (ptl_add(i) >= ptl_exit(i)) then
+
+        do k = 1, ptl_exit(i)
+          coord(1,ptlindex(k,i),i)    = buf_real(1,k,i)
+          coord(2,ptlindex(k,i),i)    = buf_real(2,k,i)
+          coord(3,ptlindex(k,i),i)    = buf_real(3,k,i)
+          velocity(1,ptlindex(k,i),i) = buf_real(4,k,i)
+          velocity(2,ptlindex(k,i),i) = buf_real(5,k,i)
+          velocity(3,ptlindex(k,i),i) = buf_real(6,k,i)
+          charge(ptlindex(k,i),i)     = buf_real(7,k,i)
+          mass(ptlindex(k,i),i)       = buf_real(8,k,i)
+          atmcls(ptlindex(k,i),i)     = buf_int (1,k,i)
+          id_l2g(ptlindex(k,i),i)     = buf_int (2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ptlindex(k,i)
+          fepgrp(ptlindex(k,i),i)     = buf_int(3,k,i)
+
+        end do
+
+        do k = ptl_exit(i)+1, ptl_add(i)
+          ix = k + nsolute(i) - ptl_exit(i)
+          coord(1,ix,i)               = buf_real(1,k,i)
+          coord(2,ix,i)               = buf_real(2,k,i)
+          coord(3,ix,i)               = buf_real(3,k,i)
+          velocity(1,ix,i)            = buf_real(4,k,i)
+          velocity(2,ix,i)            = buf_real(5,k,i)
+          velocity(3,ix,i)            = buf_real(6,k,i)
+          charge(ix,i)                = buf_real(7,k,i)
+          mass(ix,i)                  = buf_real(8,k,i)
+          atmcls(ix,i)                = buf_int (1,k,i)
+          id_l2g(ix,i)                = buf_int (2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ix
+          fepgrp(ix,i)                = buf_int (3,k,i)
+        end do
+
+        nsolute(i) = nsolute(i) + ptl_add(i) - ptl_exit(i)
+
+      ! when the number of coming particles is less than that of outgoing ones
+      !
+      else
+
+        do k = 1, ptl_add(i)
+          coord(1,ptlindex(k,i),i)    = buf_real(1,k,i)
+          coord(2,ptlindex(k,i),i)    = buf_real(2,k,i)
+          coord(3,ptlindex(k,i),i)    = buf_real(3,k,i)
+          velocity(1,ptlindex(k,i),i) = buf_real(4,k,i)
+          velocity(2,ptlindex(k,i),i) = buf_real(5,k,i)
+          velocity(3,ptlindex(k,i),i) = buf_real(6,k,i)
+          charge(ptlindex(k,i),i)     = buf_real(7,k,i)
+          mass(ptlindex(k,i),i)       = buf_real(8,k,i)
+          atmcls(ptlindex(k,i),i)     = buf_int (1,k,i)
+          id_l2g(ptlindex(k,i),i)     = buf_int (2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ptlindex(k,i)
+          fepgrp(ptlindex(k,i),i)     = buf_int (3,k,i)
+        end do
+
+        j = 0
+        ix = nsolute(i)
+        k = ptl_add(i) + 1
+
+        do while (j < (ptl_exit(i)-ptl_add(i)))
+
+          insert = .true.
+          do kx = k, ptl_exit(i)
+            if (ix == ptlindex(kx,i)) then
+              insert = .false.
+              j = j + 1
+              exit
+            end if
+          end do
+
+          if (insert) then
+            kx = ptlindex(k,i)
+            coord(1,kx,i)          = coord(1,ix,i)
+            coord(2,kx,i)          = coord(2,ix,i)
+            coord(3,kx,i)          = coord(3,ix,i)
+            velocity(1,kx,i)       = velocity(1,ix,i)
+            velocity(2,kx,i)       = velocity(2,ix,i)
+            velocity(3,kx,i)       = velocity(3,ix,i)
+            charge(kx,i)           = charge(ix,i)
+            mass(kx,i)             = mass(ix,i)
+            atmcls(kx,i)           = atmcls(ix,i)
+            id_l2g(kx,i)           = id_l2g(ix,i)
+            id_g2l(1,id_l2g(kx,i)) = i
+            id_g2l(2,id_l2g(kx,i)) = kx
+            fepgrp(kx,i)           = fepgrp(ix,i)
+
+            j = j + 1
+            k = k + 1
+          end if
+          ix = ix - 1
+
+        end do
+        nsolute(i) = nsolute(i) + ptl_add(i) - ptl_exit(i)
+
+      end if
+    end do
+
+    return
+
+  end subroutine update_incoming_solute_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_incoming_atom_fep
+  !> @brief        check particles (not bonded to hydrogen) incoming to each
+  !!               cell for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] constraints : constraints information
+  !! @param[inout] domain      : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_incoming_atom_fep(constraints, domain)
+
+    ! formal arguments
+    type(s_constraints), target, intent(inout) :: constraints
+    type(s_domain),      target, intent(inout) :: domain
+
+    ! local variables
+    integer                      :: i, j, k, ix, kx
+    logical                      :: insert
+
+    real(dp),         pointer    :: coord(:,:,:), velocity(:,:,:)
+    real(wp),         pointer    :: charge(:,:)
+    real(dp),         pointer    :: mass(:,:)
+    real(dp),         pointer    :: buf_real(:,:,:)
+    integer,          pointer    :: ncel_local, nsolute(:)
+    integer,          pointer    :: atmcls(:,:), id_l2g(:,:), id_g2l(:,:)
+    integer,          pointer    :: ptl_add(:), ptl_exit(:), ptlindex(:,:)
+    integer,          pointer    :: buf_int(:,:,:)
+
+    ! FEP
+    integer,          pointer    :: fepgrp(:,:)
+
+
+    nsolute    => constraints%No_HGr
+
+    ncel_local => domain%num_cell_local
+    coord      => domain%coord
+    velocity   => domain%velocity
+    charge     => domain%charge
+    mass       => domain%mass
+    atmcls     => domain%atom_cls_no
+    id_l2g     => domain%id_l2g
+    id_g2l     => domain%id_g2l
+    ptl_add    => domain%ptl_add
+    ptl_exit   => domain%ptl_exit
+    ptlindex   => domain%ptl_exit_index
+    buf_int    => domain%buf_integer
+    buf_real   => domain%buf_real
+
+    ! FEP
+    fepgrp     => domain%fepgrp
+
+
+    ! incoming particles
+    !
+    do i = 1, ncel_local
+
+#ifdef DEBUG
+      if (ptl_add(i)+nsolute(i)-ptl_exit(i) > MaxAtom) &
+        call error_msg('Debug: Update_Incoming_Atom> atom is exceed MaxAtom')
+#endif
+
+      ! when the number of coming particles is larger than that of outgoing ones
+      !
+      if (ptl_add(i) >= ptl_exit(i)) then
+
+        do k = 1, ptl_exit(i)
+          coord(1,ptlindex(k,i),i)    = buf_real(1,k,i)
+          coord(2,ptlindex(k,i),i)    = buf_real(2,k,i)
+          coord(3,ptlindex(k,i),i)    = buf_real(3,k,i)
+          velocity(1,ptlindex(k,i),i) = buf_real(4,k,i)
+          velocity(2,ptlindex(k,i),i) = buf_real(5,k,i)
+          velocity(3,ptlindex(k,i),i) = buf_real(6,k,i)
+          charge(ptlindex(k,i),i)     = buf_real(7,k,i)
+          mass(ptlindex(k,i),i)       = buf_real(8,k,i)
+          atmcls(ptlindex(k,i),i)     = buf_int(1,k,i)
+          id_l2g(ptlindex(k,i),i)     = buf_int(2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ptlindex(k,i)
+          fepgrp(ptlindex(k,i),i)     = buf_int(3,k,i)
+        end do
+
+        do k = ptl_exit(i)+1, ptl_add(i)
+          ix = k + nsolute(i) - ptl_exit(i)
+          coord(1,ix,i)               = buf_real(1,k,i)
+          coord(2,ix,i)               = buf_real(2,k,i)
+          coord(3,ix,i)               = buf_real(3,k,i)
+          velocity(1,ix,i)            = buf_real(4,k,i)
+          velocity(2,ix,i)            = buf_real(5,k,i)
+          velocity(3,ix,i)            = buf_real(6,k,i)
+          charge(ix,i)                = buf_real(7,k,i)
+          mass(ix,i)                  = buf_real(8,k,i)
+          atmcls(ix,i)                = buf_int (1,k,i)
+          id_l2g(ix,i)                = buf_int (2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ix
+          fepgrp(ix,i)                = buf_int (3,k,i)
+        end do
+        nsolute(i) = nsolute(i) + ptl_add(i) - ptl_exit(i)
+
+      ! when the number of coming particles is less than that of outgoing ones
+      !
+      else
+
+        do k = 1, ptl_add(i)
+          coord(1,ptlindex(k,i),i)    = buf_real(1,k,i)
+          coord(2,ptlindex(k,i),i)    = buf_real(2,k,i)
+          coord(3,ptlindex(k,i),i)    = buf_real(3,k,i)
+          velocity(1,ptlindex(k,i),i) = buf_real(4,k,i)
+          velocity(2,ptlindex(k,i),i) = buf_real(5,k,i)
+          velocity(3,ptlindex(k,i),i) = buf_real(6,k,i)
+          charge(ptlindex(k,i),i)     = buf_real(7,k,i)
+          mass(ptlindex(k,i),i)       = buf_real(8,k,i)
+          atmcls(ptlindex(k,i),i)     = buf_int (1,k,i)
+          id_l2g(ptlindex(k,i),i)     = buf_int (2,k,i)
+          id_g2l(1,buf_int(2,k,i))    = i
+          id_g2l(2,buf_int(2,k,i))    = ptlindex(k,i)
+          fepgrp(ptlindex(k,i),i)     = buf_int (3,k,i)
+        end do
+
+        j  = 0
+        ix = nsolute(i)
+        k  = ptl_add(i) + 1
+
+        do while (j < (ptl_exit(i)-ptl_add(i)))
+
+          insert = .true.
+
+          do kx = k, ptl_exit(i)
+            if (ix == ptlindex(kx,i)) then
+              insert = .false.
+              j = j + 1
+              exit
+            end if
+          end do
+
+          if (insert) then
+            kx = ptlindex(k,i)
+            coord(1,kx,i)          = coord(1,ix,i)
+            coord(2,kx,i)          = coord(2,ix,i)
+            coord(3,kx,i)          = coord(3,ix,i)
+            velocity(1,kx,i)       = velocity(1,ix,i)
+            velocity(2,kx,i)       = velocity(2,ix,i)
+            velocity(3,kx,i)       = velocity(3,ix,i)
+            charge(kx,i)           = charge(ix,i)
+            mass(kx,i)             = mass(ix,i)
+            atmcls(kx,i)           = atmcls(ix,i)
+            id_l2g(kx,i)           = id_l2g(ix,i)
+            id_g2l(1,id_l2g(kx,i)) = i
+            id_g2l(2,id_l2g(kx,i)) = kx
+            fepgrp(kx,i)           = fepgrp(ix,i)
+
+            j = j + 1
+            k = k + 1
+
+          end if
+          ix = ix - 1
+
+        end do
+        nsolute(i) = nsolute(i) + ptl_add(i) - ptl_exit(i)
+
+      end if
+    end do
+
+    return
+
+  end subroutine update_incoming_atom_fep
+
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_incoming_water_fep
+  !> @brief        check water particles incoming cells for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] domain   : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_incoming_water_fep(water_atom, domain)
+
+    ! formal arguments
+    integer,                 intent(in)    :: water_atom
+    type(s_domain),  target, intent(inout) :: domain
+
+    ! local variable
+    integer                  :: i, k, iwater, jwater, ix
+
+    real(dp),        pointer :: coord(:,:,:), velocity(:,:,:)
+    real(dp),        pointer :: water_move_real(:,:,:), water_stay_real(:,:,:)
+    real(wp),        pointer :: water_charge(:), water_mass(:)
+    real(wp),        pointer :: charge(:,:)
+    real(dp),        pointer :: mass(:,:)
+    integer,         pointer :: ncel_local
+    integer,         pointer :: nsolute(:), natom(:), nwater(:)
+    integer,         pointer :: water_list(:,:,:)
+    integer,         pointer :: id_l2g(:,:), id_g2l(:,:)
+    integer,         pointer :: water_move(:), water_stay(:)
+    integer,         pointer :: water_move_int(:,:,:), water_stay_int(:,:,:)
+    integer,         pointer :: water_atmcls(:), atmcls(:,:)
+
+    ! FEP
+    integer,         pointer :: fepgrp(:,:)
+
+
+    ncel_local      => domain%num_cell_local
+    nsolute         => domain%num_solute
+    nwater          => domain%num_water
+    natom           => domain%num_atom
+    water_list      => domain%water_list
+    coord           => domain%coord
+    velocity        => domain%velocity
+    charge          => domain%charge
+    mass            => domain%mass
+    atmcls          => domain%atom_cls_no
+    id_l2g          => domain%id_l2g
+    id_g2l          => domain%id_g2l
+    water_atmcls    => domain%water%atom_cls_no
+    water_charge    => domain%water%charge
+    water_mass      => domain%water%mass
+    water_move      => domain%water%move
+    water_stay      => domain%water%stay
+    water_move_real => domain%water%move_real
+    water_stay_real => domain%water%stay_real
+    water_move_int  => domain%water%move_integer
+    water_stay_int  => domain%water%stay_integer
+
+    ! FEP
+    fepgrp          => domain%fepgrp
+
+
+    do i = 1, ncel_local
+
+#ifdef DEBUG
+      if (water_stay(i)+water_move(i) > MaxWater) then
+        call error_msg('Debug: Update_Incoming_Water> water is exceed MaxWater')
+      end if
+#endif
+
+      do iwater = 1, water_stay(i)
+        do k = 1, water_atom
+          water_list(k,iwater,i) = nsolute(i) + water_atom*(iwater-1) + k
+          ix = water_list(k,iwater,i)
+
+          coord(1,ix,i)          = water_stay_real(6*(k-1)+1,iwater,i)
+          coord(2,ix,i)          = water_stay_real(6*(k-1)+2,iwater,i)
+          coord(3,ix,i)          = water_stay_real(6*(k-1)+3,iwater,i)
+          velocity(1,ix,i)       = water_stay_real(6*(k-1)+4,iwater,i)
+          velocity(2,ix,i)       = water_stay_real(6*(k-1)+5,iwater,i)
+          velocity(3,ix,i)       = water_stay_real(6*(k-1)+6,iwater,i)
+          id_l2g(ix,i)           = water_stay_int (2*(k-1)+1,iwater,i)
+          id_g2l(1,id_l2g(ix,i)) = i
+          id_g2l(2,id_l2g(ix,i)) = ix
+          charge(ix,i)           = water_charge(k)
+          mass(ix,i)             = water_mass(k)
+          atmcls(ix,i)           = water_atmcls(k)
+          fepgrp(ix,i)           = water_stay_int (2*(k-1)+2,iwater,i)
+        end do
+      end do
+
+      do iwater = 1, water_move(i)
+        jwater = iwater + water_stay(i)
+        do k = 1, water_atom
+          water_list(k,jwater,i) = nsolute(i) + water_atom*(jwater-1) + k
+          ix = water_list(k,jwater,i)
+          coord(1,ix,i)          = water_move_real(6*(k-1)+1,iwater,i)
+          coord(2,ix,i)          = water_move_real(6*(k-1)+2,iwater,i)
+          coord(3,ix,i)          = water_move_real(6*(k-1)+3,iwater,i)
+          velocity(1,ix,i)       = water_move_real(6*(k-1)+4,iwater,i)
+          velocity(2,ix,i)       = water_move_real(6*(k-1)+5,iwater,i)
+          velocity(3,ix,i)       = water_move_real(6*(k-1)+6,iwater,i)
+          id_l2g(ix,i)           = water_move_int (2*(k-1)+1,iwater,i)
+          id_g2l(1,id_l2g(ix,i)) = i
+          id_g2l(2,id_l2g(ix,i)) = ix
+          charge(ix,i)           = water_charge(k)
+          mass(ix,i)             = water_mass(k)
+          atmcls(ix,i)           = water_atmcls(k)
+          fepgrp(ix,i)           = water_move_int (2*(k-1)+2,iwater,i)
+        end do
+      end do
+
+      nwater(i) = water_stay(i) + water_move(i)
+      natom(i)  = nsolute(i) + water_atom*nwater(i)
+    end do
+
+    return
+
+  end subroutine update_incoming_water_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_incoming_HGr_fep
+  !> @brief        check hydrogen-bonded particles incoming cells
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] constraints : constraints information
+  !! @param[inout] domain      : domain information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_incoming_HGr_fep(constraints, domain)
+
+    ! formal variable
+    type(s_constraints), target, intent(inout)  :: constraints
+    type(s_domain),      target, intent(inout)  :: domain
+
+    ! local variable
+    integer                      :: i, j, k, k1, list, ix, connect
+    integer                      :: num_atom
+
+    real(dp),         pointer    :: coord(:,:,:), vel(:,:,:)
+    real(dp),         pointer    :: hgr_move_real(:,:,:,:)
+    real(dp),         pointer    :: hgr_stay_real(:,:,:,:)
+    real(wp),         pointer    :: charge(:,:)
+    real(dp),         pointer    :: mass(:,:)
+    real(dp),         pointer    :: HGr_bond_dist(:,:,:,:)
+    integer,          pointer    :: ncel_local
+    integer,          pointer    :: nsolute(:)
+    integer,          pointer    :: id_l2g(:,:), id_g2l(:,:), atmcls(:,:)
+    integer,          pointer    :: No_HGr(:), HGr_local(:,:)
+    integer,          pointer    :: HGr_bond_list(:,:,:,:)
+    integer,          pointer    :: HGr_move(:,:), HGr_stay(:,:)
+    integer,          pointer    :: HGr_move_int(:,:,:,:), HGr_stay_int(:,:,:,:)
+
+    ! FEP
+    integer,          pointer    :: fepgrp(:,:)
+
+
+    No_HGr        => constraints%no_hgr
+    HGr_local     => constraints%HGr_local
+    HGr_bond_list => constraints%HGr_bond_list
+    HGr_move      => constraints%HGr_move
+    HGr_stay      => constraints%HGr_stay
+    HGr_bond_dist => constraints%HGr_bond_dist
+    HGr_move_real => constraints%HGr_move_real
+    HGr_stay_real => constraints%HGr_stay_real
+    HGr_move_int  => constraints%HGr_move_int
+    HGr_stay_int  => constraints%HGr_stay_int
+    connect       =  constraints%connect
+
+    ncel_local    => domain%num_cell_local
+    nsolute       => domain%num_solute
+    coord         => domain%coord
+    vel           => domain%velocity
+    charge        => domain%charge
+    mass          => domain%mass
+    atmcls        => domain%atom_cls_no
+    id_l2g        => domain%id_l2g
+    id_g2l        => domain%id_g2l
+
+    ! FEP
+    fepgrp        => domain%fepgrp
+
+
+    do i = 1, ncel_local
+
+      num_atom = No_HGr(i)
+
+      do j = 1, connect
+
+#ifdef DEBUG
+        if (HGr_stay(j,i)+Hgr_move(j,i) > HGroupMax) then
+          call error_msg('Debug: Update_Incoming_HGr> HGr is exceed HGroupMax')
+        end if
+#endif
+
+        do k = 1, HGr_stay(j,i)
+          do list = 1, j+1
+            num_atom = num_atom + 1
+            HGr_bond_list(list,k,j,i) = num_atom
+            ix = num_atom
+            coord(1,ix,i)             = HGr_stay_real(9*(list-1)+1,k,j,i)
+            coord(2,ix,i)             = HGr_stay_real(9*(list-1)+2,k,j,i)
+            coord(3,ix,i)             = HGr_stay_real(9*(list-1)+3,k,j,i)
+            vel(1,ix,i)               = HGr_stay_real(9*(list-1)+4,k,j,i)
+            vel(2,ix,i)               = HGr_stay_real(9*(list-1)+5,k,j,i)
+            vel(3,ix,i)               = HGr_stay_real(9*(list-1)+6,k,j,i)
+            charge(ix,i)              = HGr_stay_real(9*(list-1)+7,k,j,i)
+            mass(ix,i)                = HGr_stay_real(9*(list-1)+8,k,j,i)
+            HGr_bond_dist(list,k,j,i) = HGr_stay_real(9*(list-1)+9,k,j,i)
+            atmcls(ix,i)              = HGr_stay_int (3*(list-1)+1,k,j,i)
+            id_l2g(ix,i)              = HGr_stay_int (3*(list-1)+2,k,j,i)
+            fepgrp(ix,i)              = HGr_stay_int (3*(list-1)+3,k,j,i)
+            id_g2l(1,id_l2g(ix,i))    = i
+            id_g2l(2,id_l2g(ix,i))    = ix
+          end do
+        end do
+
+        do k = 1, HGr_move(j,i)
+          k1 = k + HGr_stay(j,i)
+          do list = 1, j+1
+            num_atom = num_atom + 1
+            HGr_bond_list(list,k1,j,i) = num_atom
+            ix = num_atom
+            coord(1,ix,i)             = HGr_move_real(9*(list-1)+1,k,j,i)
+            coord(2,ix,i)             = HGr_move_real(9*(list-1)+2,k,j,i)
+            coord(3,ix,i)             = HGr_move_real(9*(list-1)+3,k,j,i)
+            vel(1,ix,i)               = HGr_move_real(9*(list-1)+4,k,j,i)
+            vel(2,ix,i)               = HGr_move_real(9*(list-1)+5,k,j,i)
+            vel(3,ix,i)               = HGr_move_real(9*(list-1)+6,k,j,i)
+            charge(ix,i)              = HGr_move_real(9*(list-1)+7,k,j,i)
+            mass(ix,i)                = HGr_move_real(9*(list-1)+8,k,j,i)
+            HGr_bond_dist(list,k1,j,i)= HGr_move_real(9*(list-1)+9,k,j,i)
+            atmcls(ix,i)              = HGr_move_int (3*(list-1)+1,k,j,i)
+            id_l2g(ix,i)              = HGr_move_int (3*(list-1)+2,k,j,i)
+            id_g2l(1,id_l2g(ix,i))    = i
+            id_g2l(2,id_l2g(ix,i))    = ix
+            fepgrp(ix,i)              = HGr_move_int (3*(list-1)+3,k,j,i)
+          end do
+        end do
+
+        HGr_local(j,i) = HGr_stay(j,i) + HGr_move(j,i)
+
+      end do
+
+      nsolute(i) = num_atom
+
+    end do
+
+    return
+
+  end subroutine update_incoming_HGr_fep
+
 end module sp_migration_mod

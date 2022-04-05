@@ -105,6 +105,9 @@ module fileio_par_mod
   integer,      private, parameter :: IPRE_READ     = 1
   integer,      private, parameter :: IREAD         = 2
 
+  ! local variables
+  logical,                 private :: vervose = .true. 
+
   ! subroutines
   public  :: input_par
   public  :: output_par
@@ -158,7 +161,7 @@ contains
     ! local variables
     type(s_par)              :: par0
     integer                  :: file, i
-    character(100)           :: filename
+    character(MaxFilename)   :: filename
 
 
     call init_par(par)
@@ -188,7 +191,7 @@ contains
 
     end do
 
-    if (main_rank) then
+    if (main_rank .and. vervose) then
       write(MsgOut,'(A)') 'Input_Par> Summary of Parfile'
       write(MsgOut,'(A20,I10,A20,I10)')               &
            '  num_bonds       = ', par%num_bonds,     & 
@@ -202,6 +205,7 @@ contains
       write(MsgOut,'(A20,I10)')                       & 
            '  num_cmap_terms  = ', par%num_cmaps
       write(MSgOut,'(A)') ' '
+      vervose = .false.
     end if
 
     return
@@ -2135,7 +2139,7 @@ contains
         if (par0%bond_atom_cls(1,i) /= par%bond_atom_cls(1,j) .or. &
             par0%bond_atom_cls(2,i) /= par%bond_atom_cls(2,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(5a)') ' Merge_Par> WARNING: BOND: Multiple definition: "', &
           trim(par%bond_atom_cls(1,j)), '"-"', &
           trim(par%bond_atom_cls(2,j)), '"'
@@ -2164,7 +2168,7 @@ contains
             par0%angl_atom_cls(2,i) /= par%angl_atom_cls(2,j) .or. &
             par0%angl_atom_cls(3,i) /= par%angl_atom_cls(3,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(7a)') ' Merge_Par> WARNING: ANGL: Multiple definition: "', &
           trim(par%angl_atom_cls(1,j)), '"-"', &
           trim(par%angl_atom_cls(2,j)), '"-"', &
@@ -2197,7 +2201,7 @@ contains
             par0%dihe_atom_cls(3,i) /= par%dihe_atom_cls(3,j) .or. &
             par0%dihe_atom_cls(4,i) /= par%dihe_atom_cls(4,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(9a)') ' Merge_Par> WARNING: DIHE: Multiple definition: "', &
           trim(par%dihe_atom_cls(1,j)), '"-"', &
           trim(par%dihe_atom_cls(2,j)), '"-"', &
@@ -2230,7 +2234,7 @@ contains
             par0%impr_atom_cls(3,i) /= par%impr_atom_cls(3,j) .or. &
             par0%impr_atom_cls(4,i) /= par%impr_atom_cls(4,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(9a)') ' Merge_Par> WARNING: IMPR: Multiple definition: "', &
           trim(par%impr_atom_cls(1,j)), '"-"', &
           trim(par%impr_atom_cls(2,j)), '"-"', &
@@ -2260,7 +2264,7 @@ contains
       do j = 1, par%num_atom_cls
         if (par0%nonb_atom_cls(i) /= par%nonb_atom_cls(j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(3a)') ' Merge_Par> WARNING: NONB: Multiple definition: "', &
           trim(par%nonb_atom_cls(j)), '"'
         exit
@@ -2291,7 +2295,7 @@ contains
         if (par0%nbfi_atom_cls(1,i) /= par%nbfi_atom_cls(1,j) .or. &
             par0%nbfi_atom_cls(2,i) /= par%nbfi_atom_cls(2,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(5a)') ' Merge_Par> WARNING: NBFIX: Multiple definition: "',&
           trim(par%nbfi_atom_cls(1,j)), '"-"', &
           trim(par%nbfi_atom_cls(2,j)), '"'
@@ -2327,7 +2331,7 @@ contains
             par0%cmap_atom_cls(7,i) /= par%cmap_atom_cls(7,j) .or. &
             par0%cmap_atom_cls(8,i) /= par%cmap_atom_cls(8,j)) &
           cycle
-        if (main_rank) &
+        if (main_rank .and. vervose) &
           write(MsgOut,'(16a)')' Merge_Par> WARNING: CMAP: Multiple definition: "', &
           trim(par%cmap_atom_cls(1,j)), '","', &
           trim(par%cmap_atom_cls(2,j)), '","', &
@@ -2472,14 +2476,14 @@ contains
       return
 
     if (.not. present(top)) then
-      if (main_rank) &
+      if (main_rank .and. vervose) &
         write(MsgOut,'(a)') &
         'Resolve_Wildcard> WARNING: WildCard must be resolved.'
       return
     end if
 
     ! resolve wild-card
-    if (main_rank) &
+    if (main_rank .and. vervose) &
       write(MsgOut,'(a)') 'Resolve_Wildcard> '
 
     call alloc_par(par0, ParNbon, top%num_atom_cls)

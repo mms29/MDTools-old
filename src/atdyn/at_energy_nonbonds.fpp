@@ -64,7 +64,7 @@ contains
     type(s_pairlist),        intent(in)    :: pairlist
     logical,                 intent(in)    :: nonb_ene
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eelec
     real(wp),                intent(inout) :: evdw
@@ -131,7 +131,7 @@ contains
     type(s_boundary),        intent(in)    :: boundary
     logical,                 intent(in)    :: nonb_ene
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eelec
     real(wp),                intent(inout) :: evdw
@@ -202,7 +202,7 @@ contains
     logical,                 intent(in)    :: nonb_ene
     logical,                 intent(in)    :: nonb_limiter
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: eelec
     real(wp),                intent(inout) :: evdw
@@ -230,7 +230,7 @@ contains
 
       else
         if (nonb_ene) then
-       
+      
           call compute_energy_nonbond_table_linear( &
                                     enefunc, molecule, pairlist, &
                                     boundary, coord, force, virial, &

@@ -29,6 +29,7 @@ module at_remd_str_mod
     integer,              allocatable :: solute_list(:)
 
     logical                           :: sw_charge
+    integer                           :: num_mixed_three
     real(wp),             allocatable :: charge_org(:)
 
     logical                           :: sw_bonds
@@ -100,6 +101,7 @@ module at_remd_str_mod
     integer                           :: exchange_period
     integer                           :: iseed
     logical                           :: equilibration_only
+    logical                           :: rest_mixed_three_atoms
     integer,              allocatable :: types(:)
     integer,              allocatable :: nreplicas(:)
     integer,              allocatable :: repid2parmsetid(:)
@@ -116,6 +118,8 @@ module at_remd_str_mod
     real(wp),             allocatable :: dparameters(:,:)
     real(wp),             allocatable :: rest_constants(:,:)
     real(wp),             allocatable :: rest_reference(:,:)
+    logical,              allocatable :: rest_caging(:,:)
+    real(wp),             allocatable :: rest_flat_radius(:,:)
     real(wp),             allocatable :: potential_energy(:)
     real(wp),             allocatable :: restraint_energy_0(:)
     real(wp),             allocatable :: restraint_energy_1(:)
@@ -265,19 +269,25 @@ contains
                    remd%umbrid2funclist,                  &
                    remd%rest_constants,                   &
                    remd%rest_reference,                   &
+                   remd%rest_caging,                      &
+                   remd%rest_flat_radius,                 &
                    stat = dealloc_stat)
       end if
 
       allocate(remd%umbrid2numfuncs(var_size1),            &
                remd%umbrid2funclist(var_size1,var_size2),  &
-               remd%rest_constants(var_size1,var_size2),   &
-               remd%rest_reference(var_size1,var_size2),   &
+               remd%rest_constants(var_size1,var_size3),   &
+               remd%rest_reference(var_size1,var_size3),   &
+               remd%rest_caging(var_size1,var_size3),      &
+               remd%rest_flat_radius(var_size1,var_size3), &
                stat = alloc_stat)
 
       remd%umbrid2numfuncs(1:var_size1)               = 0
       remd%umbrid2funclist(1:var_size1,1:var_size2)   = 0
-      remd%rest_constants(1:var_size1,1:var_size2)    = 0_wp
-      remd%rest_reference(1:var_size1,1:var_size2)    = 0_wp
+      remd%rest_constants(1:var_size1,1:var_size3)    = 0_wp
+      remd%rest_reference(1:var_size1,1:var_size3)    = 0_wp
+      remd%rest_caging(1:var_size1,1:var_size3)       = .false.
+      remd%rest_flat_radius(1:var_size1,1:var_size3)  = 0_wp
 
     case default
 

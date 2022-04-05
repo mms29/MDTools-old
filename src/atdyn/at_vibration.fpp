@@ -21,11 +21,13 @@ module at_vibration_mod
   use at_pairlist_str_mod
   use at_vibration_str_mod
   use at_energy_mod
+  use at_input_mod
   use at_output_mod
   use at_qmmm_mod
   use molecules_str_mod
   use fileio_mod
   use fileio_control_mod
+  use fileio_minfo_mod
   use select_mod
   use select_atoms_mod
   use select_atoms_str_mod
@@ -33,7 +35,7 @@ module at_vibration_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -49,12 +51,9 @@ module at_vibration_mod
     character(256)   :: vibatm_select_index = ''
     character(256)   :: output_minfo_atm    = ''
     character(256)   :: minfo_folder        = 'minfo.files'
-    real(wp)         :: diff_stepsize       = 0.001_wp
+    real(wp)         :: diff_stepsize       = 0.01_wp
     character(256)   :: gridfile            = ''
     character(256)   :: datafile            = ''
-!   obsolent options
-    character(256)   :: gridfolderID        = 'a'
-    logical          :: dryrun              = .false.
 !    real(wp)         :: cutoff              = -1.0
 
   end type s_vib_info
@@ -66,9 +65,13 @@ module at_vibration_mod
   private :: setup_vibatoms
   public  :: run_vib
   private :: harmonic_analysis
+  private :: calc_hessian
+  private :: normal_mode
+  private :: match_vibatom
   private :: diagonalize
   private :: print_minfo
   private :: print_minfo_grad
+  private :: read_minfo_grad
   private :: calc_gridpoints
 
 contains
@@ -108,12 +111,9 @@ contains
         write(MsgOut,'(A)') 'vibatm_select_index = 1           # atoms subject to vib analysis'
         write(MsgOut,'(A)') 'output_minfo_atm    = 2           # atoms punched to a minfo file'
         write(MsgOut,'(A)') 'minfo_folder        = minfo.files # a folder where minfo files are created'
-        write(MsgOut,'(A)') '# diff_stepsize     = 0.001       # displacement for numerical diff.'
+        write(MsgOut,'(A)') '# diff_stepsize     = 0.01        # displacement for numerical diff.'
         write(MsgOut,'(A)') '# gridfile          = grid.xyz    # the xyz file containing coordinates of grid points'
         write(MsgOut,'(A)') '# datafile          = grid.dat    # the output file for grid data'
-        ! obsolent
-        !write(MsgOut,'(A)') '# gridfolderID      = a           # ID of a folder to store the grid point data'
-        !write(MsgOut,'(A)') '# dryrun            = false     # if true, only generate input files and exit'
         !write(MsgOut,'(A)') 'cutoff              = -1.0      # cutoff distance (in Angs) for Hessian evaluation.'
         write(MsgOut,'(A)') ' '
 
@@ -167,6 +167,7 @@ contains
     type(s_vib_info),        intent(inout) :: vib_info
 
     ! local
+    integer :: idx
     logical :: found_error
 
 
@@ -193,10 +194,6 @@ contains
                                vib_info%gridfile)
     call read_ctrlfile_string (handle, Section, 'datafile',             &
                                vib_info%datafile)
-!    call read_ctrlfile_string (handle, Section, 'gridfolderID',         &
-!                               vib_info%gridfolderID)
-!    call read_ctrlfile_logical(handle, Section, 'dryrun',               &
-!                               vib_info%dryrun)
 
     call end_ctrlfile_section(handle)
 
@@ -212,7 +209,10 @@ contains
     case (RunModeGRID)
       ! Generate Grid-PES
       if (vib_info%gridfile == '') vib_info%gridfile = 'makeGrid.xyz'
-      if (vib_info%datafile == '') vib_info%datafile = 'makeGrid.dat'
+      if (vib_info%datafile == '') then
+        idx=index(vib_info%gridfile,'.xyz')
+        vib_info%datafile = vib_info%gridfile(1:idx-1)//'.dat'
+      end if
 
     end select
 
@@ -245,8 +245,6 @@ contains
 
         write(MsgOut,'(A,A)')    &
           '  gridfile            = ', trim(vib_info%gridfile)
-!        write(MsgOut,'(A,A10)')  &
-!          '  gridfolderID        = ', trim(vib_info%gridfolderID)
 
       case (RunModeGRID)
 
@@ -254,15 +252,8 @@ contains
           '  gridfile            = ', trim(vib_info%gridfile)
         write(MsgOut,'(A,A)')    &
           '  datafile            = ', trim(vib_info%datafile)
-!        write(MsgOut,'(A,A10)')  &
-!          '  gridfolderID        = ', trim(vib_info%gridfolderID)
 
       end select
-
-!      if (vib_info%dryrun) then
-!        write(MsgOut, '(A)')     &
-!          '  dryrun              =        yes'
-!      end if
 
       write(MsgOut,'(A)') ' '
 
@@ -277,20 +268,24 @@ contains
   !  Subroutine    setup_vibration
   !> @brief        setup vibration information
   !> @authors      KY
+  !! @param[in]    inp_info  : INPUT section in control parameters
   !! @param[in]    vib_info  : VIBRATION section in control parameters
   !! @param[in]    sel_info  : SELECTION section in control parameters
-  !! @param[in]    molecule  : molecular information
+  !! @param[inout] molecule  : molecular information
   !! @param[in]    qmmm      : QM/MM information
   !! @param[out]   vibration : vibration information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_vibration(vib_info, sel_info, molecule, qmmm, vibration)
+  subroutine setup_vibration(inp_info, vib_info, sel_info, &
+                             molecule, coord, qmmm, vibration)
 
     ! formal arguments
+    type(s_inp_info),        intent(in)    :: inp_info
     type(s_vib_info),        intent(in)    :: vib_info
     type(s_sel_info),        intent(in)    :: sel_info
-    type(s_molecule),        intent(in)    :: molecule
+    type(s_molecule),        intent(inout) :: molecule
+    real(wp),                intent(in)    :: coord(:,:)
     type(s_qmmm),            intent(inout) :: qmmm
     type(s_vibration),       intent(inout) :: vibration
 
@@ -319,10 +314,29 @@ contains
 
     vibration%gridfile         = vib_info%gridfile
     vibration%datafile         = vib_info%datafile
-    vibration%gridfolderID     = vib_info%gridfolderID
-    vibration%dryrun           = vib_info%dryrun
-    if(qmmm%do_qmmm .and. vib_info%dryrun) then
-      qmmm%dryrun = .true.
+
+    if (inp_info%minfofile /= '') &
+      call read_minfo(inp_info%minfofile, vibration%minfo_in, molecule, coord)
+
+    if(qmmm%do_qmmm .and. qmmm%qmmaxtrial > 0 .and. &
+      (vib_info%runmode == RunModeHARM .or. vib_info%runmode == RunModeQFF)) then
+
+      if(main_rank) then
+        write(MsgOut,'(A)') 'Setup_Vibration> '
+        write(MsgOut,'(A,i4)') &
+          '  WARNING: qmmaxtrial in [QMMM] is non-zero: qmmaxtrial = ', &
+          qmmm%qmmaxtrial
+        write(MsgOut,'(A)') &
+          '  WARNING: QM retry causes problems in numerical differentiations, and thus'
+        write(MsgOut,'(A)') &
+          '  WARNING: not recommended. If you encounter SCF convergence problems,'
+        write(MsgOut,'(A)') &
+          '  WARNING: try instead with increased SCF maximum iteration in a QM input.'
+        write(MsgOut,'(A,i4)') &
+          '  WARNING: qmmaxtrial is reset to zero.'
+        write(MsgOut,*)
+      end if
+      qmmm%qmmaxtrial = 0
     endif
 
   end subroutine setup_vibration
@@ -576,43 +590,14 @@ contains
     type(s_boundary),          intent(inout) :: boundary
 
     ! local variables
-    integer               :: i, j, k, i1, j1, k1, k2, nat, nat3, iatom
-    integer               :: count, icount, ncolomn, nc
-    real(wp)              :: energy_ref, energy1, energy2, rmsg, delta, x0
-    real(wp)              :: dipole_ref(3), dipole1(3), dipole2(3)
-    real(wp), allocatable :: grad1(:), grad2(:), sq_mass3(:),   &
-                             hessian(:,:), hess_pack(:), hess_mw_pack(:),  &
-                             dipole_derivative(:,:), dd_mw(:,:), dd2(:,:), &
-                             infrared(:)
-    real(wp), pointer     :: coord(:,:), mass(:)
-    integer , pointer     :: vibatom_id(:)
-    real(wp), allocatable :: grad_ref(:), vec(:,:), omega(:)
-    integer               :: replicaid, ierr
+    integer :: nat, nat3
+    real(wp)               :: energy
+    real(wp), allocatable  :: grad(:)
+    real(wp), allocatable  :: hessian(:,:)
+    real(wp), allocatable  :: dipole(:)
+    real(wp), allocatable  :: dipole_derivative(:,:)
 
-    character(256) :: folder, minfo_folder, basename, fname
-    character      :: num*5
-    character(1)   :: xyz(3)
-    logical        :: savefile, ex
-
-    ! use pointers
-    !
-    nat        =  vibration%vib_natoms
-    vibatom_id => vibration%vibatom_id
-    coord      => dynvars%coord
-    mass       => molecule%mass
-
-    ! allocate local variables
-    nat3 = nat*3
-    allocate(grad_ref(nat3), grad1(nat3), grad2(nat3), hessian(nat3,nat3))
-    allocate(dipole_derivative(3,nat3))
-
-    ! replica id
-    replicaid = my_country_no + 1
-
-    ! for print 
-    xyz(1) = 'X'
-    xyz(2) = 'Y'
-    xyz(3) = 'Z'
+    integer   :: i, iatom
 
     ! Print message
     if(main_rank) then
@@ -620,211 +605,340 @@ contains
       write(MsgOut,*)
 
       write(MsgOut,'(''  Cartesian coordinates of atoms for vib. analysis'')')
-      do i = 1, nat
-        iatom = vibatom_id(i)
+      do i = 1, vibration%vib_natoms
+        iatom = vibration%vibatom_id(i)
         write(MsgOut,'(2x,i4,2x,i9,x,a4,x,i6,x,a4,x,a6,4x,3f18.10)') &
           i, iatom, molecule%segment_name(iatom), molecule%residue_no(iatom), &
           molecule%residue_name(iatom), molecule%atom_name(iatom), &
-          coord(1:3,iatom)
+          dynvars%coord(1:3,iatom)
       end do
       write(MsgOut,*)
     end if
 
-    if(enefunc%qmmm%do_qmmm) then
-      folder   = 'qmmm_vib'
-      icount = 0
+    nat  = vibration%vib_natoms
+    nat3 = nat*3
+    allocate(grad(nat3))
+    allocate(hessian(nat3,nat3))
+    allocate(dipole(3))
+    allocate(dipole_derivative(3,nat3))
+
+    call calc_hessian(molecule, enefunc, dynvars, vibration, &
+                      output, pairlist, boundary,            &
+                      nat, energy, grad, hessian, dipole, dipole_derivative)
+
+    call normal_mode(molecule, dynvars, vibration, &
+                      nat, energy, grad, hessian, dipole, dipole_derivative)
+
+    deallocate(grad, hessian, dipole, dipole_derivative)
+
+    return
+
+
+  end subroutine harmonic_analysis
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    calc_hessian
+  !> @brief        Calculate Hessian matrix by numerical differentiations
+  !> @authors      KY
+  !! @param[inout] molecule  : molecule information
+  !! @param[inout] enefunc   : potential energy functions information
+  !! @param[inout] dynvars   : dynamic variables information
+  !! @param[inout] vibration : vibration information
+  !! @param[inout] output    : output information
+  !! @param[inout] pairlist  : non-bond pair list information
+  !! @param[inout] boundary  : boundary conditions information
+  !! @param[in]    nat         : number of atoms
+  !! @param[in]    energy      : total energy at the current geometry
+  !! @param[in]    grad(nat3)  : gradient
+  !! @param[in]    hessian(nat3, nat3) : Hessian matrix
+  !! @param[in]    dipole(3)   : dipole moment
+  !! @param[in]    dipole_derv(3,nat3) : dipole moment
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine calc_hessian(molecule, enefunc, dynvars, vibration, output,  &
+      pairlist, boundary, nat, energy, grad, hessian, dipole, dipole_derv)
+
+    ! formal arguments
+    type(s_molecule),  target, intent(inout) :: molecule
+    type(s_enefunc),           intent(inout) :: enefunc
+    type(s_dynvars),   target, intent(inout) :: dynvars
+    type(s_vibration), target, intent(inout) :: vibration
+    type(s_output),            intent(inout) :: output
+    type(s_pairlist),          intent(inout) :: pairlist
+    type(s_boundary),          intent(inout) :: boundary
+
+    integer  :: nat
+    real(wp) :: energy
+    real(wp) :: grad(nat*3)
+    real(wp) :: hessian(nat*3,nat*3)
+    real(wp) :: dipole(3)
+    real(wp) :: dipole_derv(3,nat*3)
+
+    ! local variables
+    integer :: nreplica, replicaid
+    integer :: nat3, nat_calc, ngrid
+    integer :: count
+    integer :: icyc, istart0, istart, iend
+    integer :: icalc, ist1, ist2, isiz1, isiz2
+    integer :: iatom, ixyz
+    integer :: i, j, ij, n, ierr
+    integer :: i1, i2, k1, k2
+
+    real(wp), pointer      :: coord(:,:), mass(:)
+
+    real(wp), allocatable  :: energy_all(:),   recv_energy(:)
+    real(wp), allocatable  :: grad_all(:,:),   recv_grad(:,:)
+    real(wp), allocatable  :: dipole_all(:,:), recv_dipole(:,:)
+    real(wp), allocatable  :: hess_tmp(:,:), dd_tmp(:,:)
+    integer,  allocatable  :: vibatom_calc_id(:)
+    logical,  allocatable  :: vibatom_calc(:)
+
+    character(1)           :: xyz(3)
+    character(MaxFilename) :: fname
+    logical                :: ex
+
+    real(wp)  :: rmsg
+    real(wp)  :: delta, x0
+
+    ! use pointers
+    coord => dynvars%coord
+    mass  => molecule%mass
+
+    ! replica 
+    nreplica  = vibration%nreplica
+    replicaid = my_country_no + 1
+
+    ! setup vibatoms to calc. the gradient
+    allocate(vibatom_calc_id(nat), vibatom_calc(nat))
+    vibatom_calc_id = vibration%vibatom_id
+    vibatom_calc    = .true.
+    nat_calc        = nat
+
+    if(vibration%minfo_in%nat > 0) then
+      call match_vibatom(vibration%minfo_in, &
+                         nat_calc, vibatom_calc_id, hessian, dipole_derv)
+      if (nat_calc < nat) then
+        vibatom_calc = .false.
+        do i = 1, nat_calc
+          do j = 1, nat
+            if (vibration%vibatom_id(j) == vibatom_calc_id(i)) then
+              vibatom_calc(j) = .true.
+              exit
+            end if
+          end do
+        end do
+        !dbg write(MsgOut,'("nat_calc = ",i5)') nat_calc
+        !dbg write(MsgOut,'(i5)') vibatom_calc_id(1:nat_calc)
+        !dbg write(MsgOut,'(l5)') vibatom_calc
+      end if
     end if
 
-    ! create a folder to save minfo files
-    minfo_folder = vibration%minfo_folder
-    call system('mkdir -p '//trim(minfo_folder)//' >& /dev/null')
+    ! number of grid points
+    ngrid           = nat_calc*6 + 1
 
-    ! Generate Hessian matrix by numerical differentiations of gradients
-    !
+    nat3 = nat*3
+    allocate(energy_all(0:ngrid-1))
+    allocate(grad_all(nat3,0:ngrid-1))
+    allocate(dipole_all(3,0:ngrid-1))
+
+    ! for print 
+    xyz(1) = 'X'
+    xyz(2) = 'Y'
+    xyz(3) = 'Z'
+
+    ! initialize
+    fname        = ""
+
+    ! create a folder to save minfo files
+    call system('mkdir -p '//trim(vibration%minfo_folder)//' > /dev/null 2>&1')
+
+    ! read minfo files 
+    istart0 = -1
+    do icyc = 0, ngrid-1
+
+      call setaddress(icyc, vibration%minfo_folder, iatom, ixyz, fname)
+      inquire(file=trim(fname), exist = ex)
+      if (ex) then
+        call read_minfo_grad(fname, nat, energy_all(icyc), &
+                                         grad_all(:,icyc), &
+                                         dipole_all(:,icyc))
+      else
+        istart0 = icyc
+        exit
+      end if
+
+    end do
+
+    if (istart0 < 0) then
+      ! all grid points are calcualted
+      goto 1000
+    end if
+
     if(main_rank) then
       write(MsgOut,'(''  Generate Hessian matrix by num. diff. of gradients  '')')
       write(MsgOut,'(''    Loop over atoms'')')
     end if
 
+#ifdef HAVE_MPI_GENESIS
+    ! parallelize over replica
+    i = ngrid - istart0
+    j = mod(i, nreplica)
+    if (j == 0) then
+      i = i/nreplica
+      istart = istart0 + i * (replicaid - 1)
+      iend   = istart  + i - 1
+
+    else
+      i = (i-j)/nreplica
+      j = nreplica - j
+      if (replicaid <= j) then
+        istart = istart0 + i * (replicaid -1)
+        iend   = istart  + i
+      else
+        istart = istart0 + i*j + (i+1) * (replicaid -j-1)
+        iend   = istart  + i
+      end if
+
+    end if
+#else
+    iend = ngrid-1
+#endif
+
+    !dbg write(MsgOut,'("replica = ",i4,", istart = ",i4,", iend = ",i4)') &
+    !dbg   replicaid, istart, iend
+
+    ! now compute_energy over grid points
     count = 0
     dynvars%step = count
+    do icyc = istart, iend
 
-    ! ------------------------------------------------------------
-    ! Energy and gradient at the current geometry using replica1
+      call setaddress(icyc, vibration%minfo_folder, iatom, ixyz, fname)
 
-    if(replicaid == 1) then
-      write(num,'(i5.5)') count
-      basename = 'vib'//num
-      fname = trim(minfo_folder)//'/'//trim(basename)
+      if (icyc /= 0) then
+        delta = vibration%diff_stepsize/sqrt(mass(iatom))
+        x0 = coord(ixyz,iatom)
+        if (mod(icyc, 2) == 1) then
+          coord(ixyz,iatom) = x0 + delta
+        else
+          coord(ixyz,iatom) = x0 - delta
+        end if
+      end if
 
-      inquire(file=trim(fname)//'.minfo', exist = ex)
-      if (ex) then
-        call read_minfo_grad(fname, nat, energy_ref, grad_ref, dipole_ref)
-        dynvars%energy%total = energy_ref * CONV_UNIT_ENE
-        k1 = 1
-        do i1 = 1, nat
-          do j1 = 1, 3
-            dynvars%force(j1,vibatom_id(i1)) = -grad_ref(k1) * CONV_UNIT_FORCE
-            k1 = k1 + 1
-          end do
-        end do
-        enefunc%qmmm%qm_dipole = dipole_ref
+      call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
+                          .false.,                &
+                          dynvars%coord,          &
+                          dynvars%trans,          &
+                          dynvars%coord_pbc,      &
+                          dynvars%energy,         &
+                          dynvars%temporary,      &
+                          dynvars%force,          &
+                          dynvars%force_omp,      &
+                          dynvars%virial,         &
+                          dynvars%virial_extern)
 
-      else
-        call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
-                            .false.,                &
-                            dynvars%coord,          &
-                            dynvars%energy,         &
-                            dynvars%temporary,      &
-                            dynvars%force,          &
-                            dynvars%virial,         &
-                            dynvars%virial_extern)
-
-        if(replica_main_rank) &
+      ! print
+      !
+      if (replica_main_rank) then
+        if (icyc == 0) then
           write(MsgOut,'(6x,"Done for    0   input",7x,"replicaID = ",i5, &
                          6x,"energy = ",f20.6)') &
                 replicaid, dynvars%energy%total 
-
-        call output_vib(output, molecule, enefunc, vibration, boundary, dynvars)
-
-        energy_ref =  dynvars%energy%total / CONV_UNIT_ENE
-
-        k1 = 1
-        do i1 = 1, nat
-          do j1 = 1, 3
-            grad_ref(k1) = -dynvars%force(j1,vibatom_id(i1)) / CONV_UNIT_FORCE
-            k1 = k1 + 1
-          end do
-        end do
-        dipole_ref = enefunc%qmmm%qm_dipole
-
-        call print_minfo_grad(fname, nat, energy_ref, grad_ref, dipole_ref)
-
+        else
+          write(MsgOut,'(6x,"Done for ",i4,x,a6,"+",a1,6x,"replicaID = ",i5)') &
+                icyc, molecule%atom_name(iatom), xyz(ixyz), replicaid
+        end if
       end if
+      call output_vib(output, molecule, enefunc, vibration, boundary, dynvars)
 
-      rmsg = 0.0_wp
+      ! increment
+      !
+      if (icyc /= 0) coord(ixyz,iatom) = x0
+      count = count + 1
+      dynvars%step = count
+
+      ! set energy, grad, and dipole, and print minfo
+      !
+      energy_all(icyc) =  dynvars%energy%total / CONV_UNIT_ENE
+      ij = 1
       do i = 1, nat
-        iatom = vibatom_id(i)
-        do j = 1,3
-           rmsg = rmsg + dynvars%force(j,iatom)*dynvars%force(j,iatom)
+        do j = 1, 3
+          grad_all(ij,icyc) = -dynvars%force(j,vibration%vibatom_id(i)) / CONV_UNIT_FORCE
+          ij = ij + 1
         end do
       end do
-      rmsg = sqrt(rmsg/real(nat*3))
+      dipole_all(:,icyc) = enefunc%qmmm%qm_dipole
 
-    end if
+      call print_minfo_grad(fname, nat, energy_all(icyc), grad_all(:,icyc), dipole_all(:,icyc))
 
-    k = 1
-    do i = 1, nat
-      iatom = vibatom_id(i)
-      delta = vibration%diff_stepsize/sqrt(mass(iatom))
-
-      do j = 1, 3
-
-        x0 = coord(j,iatom)
-
-        ! ------------------------------------
-        ! Compute the energy / force of +delta
-        count = count + 1
-
-        if (mod(count,vibration%nreplica) == replicaid-1) then
-
-          dynvars%step = count
-          coord(j,iatom) = x0 + delta
-  
-          write(num,'(i5.5)') count
-          basename = 'vib'//num
-          fname = trim(minfo_folder)//'/'//trim(basename)
-  
-          inquire(file=trim(fname)//'.minfo', exist = ex)
-          if (.not. ex) then
-            call compute_energy(molecule, enefunc, pairlist, boundary,  &
-                              .true.,                &
-                              .false.,               &
-                              dynvars%coord,         &
-                              dynvars%energy,        &
-                              dynvars%temporary,     &
-                              dynvars%force,         &
-                              dynvars%virial,        &
-                              dynvars%virial_extern)
-  
-            if(replica_main_rank) &
-              write(MsgOut,'(6x,"Done for ",i4,x,a6,"+",a1,6x,"replicaID = ",i5)') &
-                    i, molecule%atom_name(iatom), xyz(j), replicaid
-
-            call output_vib(output, molecule, enefunc, vibration, boundary, dynvars)
-
-            energy1 =  dynvars%energy%total / CONV_UNIT_ENE
-            k1 = 1
-            do i1 = 1, nat
-              do j1 = 1, 3
-                grad1(k1) = -dynvars%force(j1,vibatom_id(i1)) / CONV_UNIT_FORCE
-                k1 = k1 + 1
-              end do
-            end do
-            dipole1 = enefunc%qmmm%qm_dipole
-  
-            call print_minfo_grad(fname, nat, energy1, grad1, dipole1)
-  
-          end if
-        end if
-
-        ! ------------------------------------
-        ! Compute the energy / force of -delta
-        !
-        count = count + 1
-
-        if (mod(count,vibration%nreplica) == replicaid-1) then
-
-          dynvars%step = count
-          coord(j,iatom) = x0 - delta
-  
-          write(num,'(i5.5)') count
-          basename = 'vib'//num
-          fname = trim(minfo_folder)//'/'//trim(basename)
-  
-          inquire(file=trim(fname)//'.minfo', exist = ex)
-          if (.not. ex) then
-            call compute_energy(molecule, enefunc, pairlist, boundary,  &
-                              .true.,                &
-                              .false.,               &
-                              dynvars%coord,         &
-                              dynvars%energy,        &
-                              dynvars%temporary,     &
-                              dynvars%force,         &
-                              dynvars%virial,        &
-                              dynvars%virial_extern)
-  
-            if(replica_main_rank) &
-              write(MsgOut,'(6x,"Done for ",i4,x,a6,"-",a1,6x,"replicaID = ",i5)') &
-                    i, molecule%atom_name(iatom), xyz(j), replicaid
-
-            call output_vib(output, molecule, enefunc, vibration, boundary, dynvars)
-  
-            energy2 =  dynvars%energy%total / CONV_UNIT_ENE
-            k1 = 1
-            do i1 = 1, nat
-              do j1 = 1, 3
-                grad2(k1) = -dynvars%force(j1,vibatom_id(i1)) / CONV_UNIT_FORCE
-                k1 = k1 + 1
-              end do
-            end do
-            dipole2 = enefunc%qmmm%qm_dipole
-  
-            call print_minfo_grad(fname, nat, energy2, grad2, dipole2)
-  
-          end if
-        end if
-
-        coord(j,iatom) = x0
-
-        k = k + 1
-
-      end do
     end do
 
-#ifdef MPI
-    call mpi_barrier(mpi_comm_world, ierr)
+#ifdef HAVE_MPI_GENESIS
+    icalc = iend - istart + 1
+    allocate(recv_energy(0:icalc*nreplica-1))
+    allocate(recv_grad(nat3,0:icalc*nreplica-1))
+    allocate(recv_dipole(3,0:icalc*nreplica-1))
+
+    call mpi_allgather(energy_all(istart), icalc, mpi_wp_real, &
+                           recv_energy(0), icalc, mpi_wp_real, &
+                           mpi_comm_airplane, ierr)
+    call mpi_allgather(grad_all(1,istart), icalc*nat3, mpi_wp_real, &
+                           recv_grad(1,0), icalc*nat3, mpi_wp_real, &
+                           mpi_comm_airplane, ierr)
+    call mpi_allgather(dipole_all(1,istart), icalc*3, mpi_wp_real, &
+                           recv_dipole(1,0), icalc*3, mpi_wp_real, &
+                           mpi_comm_airplane, ierr)
+
+    j = mod((ngrid - istart0), nreplica)
+    if (j == 0) then
+      energy_all(istart0:)   = recv_energy
+      grad_all(:,istart0:)   = recv_grad
+      dipole_all(:,istart0:) = recv_dipole
+
+    else
+      j = nreplica - j
+
+      isiz1 = icalc
+      isiz2 = icalc - 1
+
+      ist1 = 0
+      ist2 = istart0
+      do n = 1, j
+        energy_all(ist2:ist2+isiz2-1) = recv_energy(ist1:ist1+isiz1-1)
+        grad_all(:,ist2:ist2+isiz2-1) = recv_grad(:,ist1:ist1+isiz1-1)
+        dipole_all(:,ist2:ist2+isiz2-1) = recv_dipole(:,ist1:ist1+isiz1-1)
+        ist1 = ist1 + isiz1
+        ist2 = ist2 + isiz2
+      end do 
+
+      isiz2 = icalc
+      do n = j + 1, nreplica
+        energy_all(ist2:ist2+isiz2-1) = recv_energy(ist1:ist1+isiz1-1)
+        grad_all(:,ist2:ist2+isiz2-1) = recv_grad(:,ist1:ist1+isiz1-1)
+        dipole_all(:,ist2:ist2+isiz2-1) = recv_dipole(:,ist1:ist1+isiz1-1)
+        ist1 = ist1 + isiz1
+        ist2 = ist2 + isiz2
+      end do 
+    end if
+
+    deallocate(recv_energy, recv_grad, recv_dipole)
+
 #endif
+
+    1000 continue
+
+    ! RMS grad at the current geometry
+    !
+    rmsg = 0.0_wp
+    ij   = 0
+    do i = 1, nat
+      do j = 1,3
+         ij = ij + 1
+         rmsg = rmsg + grad_all(ij,0)*grad_all(ij,0) * CONV_UNIT_FORCE * CONV_UNIT_FORCE
+      end do
+    end do
+    rmsg = sqrt(rmsg/dble(nat3))
 
     if(main_rank) then
       write(MsgOut,*)
@@ -840,78 +954,221 @@ contains
         write(MsgOut,'(4x,40(''=''))')
       end if
       write(MsgOut,*)
+      write(MsgOut,*)
     end if
 
-    if(vibration%dryrun) then
-      deallocate(grad_ref, grad1, grad2, hessian, dipole_derivative)
-      return
-    endif
+    ! Now get all return values
+    !
+    energy = energy_all(0)
+    grad   = grad_all(:,0)
+    dipole = dipole_all(:,0)
 
-    ! Now calculate the Hessian and Dipole deriv.
-    if (replicaid == 1) then
-      count = 0
-      k = 1
-      do i = 1, nat
-        iatom = vibatom_id(i)
-        delta = vibration%diff_stepsize/sqrt(mass(iatom))
+    allocate(hess_tmp(nat3, nat_calc*3), dd_tmp(3, nat_calc*3))
+
+    do icyc = 1, ngrid-1, 2
+      call setaddress(icyc, vibration%minfo_folder, iatom, ixyz, fname)
+      delta = vibration%diff_stepsize/sqrt(mass(iatom))
+
+      i = (icyc+1)/2
+      hess_tmp(:,i) = (grad_all(:,icyc) - grad_all(:,icyc+1))   &
+                      / delta*HALF * CONV_UNIT_LEN
+      dd_tmp(:,i)   = (dipole_all(:,icyc) - dipole_all(:,icyc+1)) &
+                      / delta*HALF * CONV_UNIT_LEN
+
+    end do
+
+    if (nat == nat_calc) then
+      hessian     = hess_tmp
+      dipole_derv = dd_tmp
+
+    else
+
+      ! merge the calculataed hessian/dd with the exsiting one
+      do i1 = 1, nat
+        if (.not. vibatom_calc(i1)) cycle
+
+        do i = 1, nat_calc
+          if (vibatom_calc_id(i) == vibration%vibatom_id(i1)) then
+            i2 = i
+            exit
+          end if
+        end do
+        k1 = (i1-1)*3 + 1
+        k2 = (i2-1)*3 + 1
 
         do j = 1, 3
 
-          ! ------------------------------------
-          ! Compute the energy / force of +delta
-          count = count + 1
+          hessian(:,k1) = hess_tmp(:,k2)
+          dipole_derv(:,k1) = dd_tmp(:,k2)
 
-          write(num,'(i5.5)') count
-          basename = 'vib'//num
-          fname = trim(minfo_folder)//'/'//trim(basename)
-          call read_minfo_grad(fname, nat, energy1, grad1, dipole1)
-
-          ! ------------------------------------
-          ! Compute the energy / force of -delta
-          !
-          count = count + 1
-
-          write(num,'(i5.5)') count
-          basename = 'vib'//num
-          fname = trim(minfo_folder)//'/'//trim(basename)
-          call read_minfo_grad(fname, nat, energy2, grad2, dipole2)
-
-          ! Calculate the Hessian matrix and dipole derivatives
-          hessian(:,k) = (grad1 - grad2)/delta*HALF * CONV_UNIT_LEN
-          dipole_derivative(:,k) = (dipole1 - dipole2)/delta*HALF * CONV_UNIT_LEN
-
-          k = k + 1
+          k1 = k1 + 1
+          k2 = k2 + 1
 
         end do
       end do
+
+      do i = 1, nat
+        if (vibatom_calc(i)) cycle
+        k1 = (i-1)*3 + 1
+
+        do j = 1, nat
+          if (.not. vibatom_calc(j)) cycle
+          k2 = (j-1)*3 + 1
+
+          hessian(k2,k1:k1+2) = hessian(k1:k1+2,k2)
+          hessian(k2+1,k1:k1+2) = hessian(k1:k1+2,k2+1)
+          hessian(k2+2,k1:k1+2) = hessian(k1:k1+2,k2+2)
+
+        end do
+      end do
+
     end if
 
-    if(main_rank) write(MsgOut,*)
+    ! Symmetrize the Hessian matrix 
+    do k1 = 1, nat3
+      do k2 = 1, k1-1
+         hessian(k2,k1) = (hessian(k2,k1) + hessian(k1,k2))*HALF
+         hessian(k1,k2) = hessian(k2,k1)
+      end do
+    end do
 
-#ifdef MPI
-    call mpi_bcast(hessian, nat3*nat3,        &
-                     mpi_wp_real, 0, mpi_comm_world, ierror)
-    call mpi_bcast(dipole_derivative, 3*nat3, &
-                     mpi_wp_real, 0, mpi_comm_world, ierror)
-#endif
+    deallocate(hess_tmp, dd_tmp)
+    deallocate(vibatom_calc_id, vibatom_calc)
+    deallocate(energy_all, grad_all, dipole_all)
 
-    ! Symmetrize and pack the Hessian matrix 
+    !dbg if (main_rank) then
+    !dbg   write(MsgOut,'("Hessian")')
+    !dbg   do i = 1, nat3
+    !dbg     write(MsgOut,*)
+    !dbg     write(MsgOut,'(10e15.6)') hessian(:,i)
+    !dbg   end do
+    !dbg end if
+
+    contains
+
+    subroutine setaddress(icyc, minfo_folder, iatom, ixyz, fname)
+
+    integer :: icyc, iatom, ixyz
+    character(MaxFilename) :: minfo_folder, fname
+
+    integer :: m, ivib
+    character(MaxFilename) :: basename
+    character(10)          :: c_iatom
+
+      if (icyc == 0) then
+
+        ! -------------------------------------------
+        ! energy and gradient at the current geometry
+
+        fname = trim(minfo_folder)//'/eq.minfo'
+
+      else 
+
+        ! -------------------------------------------
+        ! energy and gradient at +/- delta
+
+        m = mod(icyc, 6)
+        if (m == 0) then
+          ivib = icyc/6
+        else
+          ivib = (icyc-m)/6+1
+        end if
+        iatom = vibatom_calc_id(ivib)
+        write(c_iatom,'(i0)') iatom
+        basename = trim(minfo_folder)//"/"//trim(c_iatom)//"_"// &
+                   trim(molecule%atom_name(iatom))
+
+        if (m == 1 .or. m == 2) then
+          ixyz = 1
+        else if (m == 3 .or. m == 4) then
+          ixyz = 2
+        else
+          ixyz = 3
+        end if
+
+        if (mod(icyc, 2) == 1) then
+          ! + delta
+          fname = trim(basename)//"+"//xyz(ixyz)//".minfo"
+        else
+          ! - delta
+          fname = trim(basename)//"-"//xyz(ixyz)//".minfo"
+        end if
+
+      end if
+ 
+    end subroutine
+
+
+  end subroutine calc_hessian
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    normal_mode
+  !> @brief        Carry out normal mode analysis
+  !> @authors      KY
+  !! @param[in]    molecule  : molecule information
+  !! @param[in]    dynvars   : dynamic variables information
+  !! @param[in]    vibration : vibration information
+  !! @param[in]    nat         : number of atoms
+  !! @param[in]    energy      : total energy at the current geometry
+  !! @param[in]    grad(nat3)  : gradient
+  !! @param[in]    hessian(nat3, nat3) : Hessian matrix
+  !! @param[in]    dipole(3)   : dipole moment
+  !! @param[in]    dipole_derv(3,nat3) : dipole moment
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine normal_mode(molecule, dynvars, vibration, &
+                         nat, energy, grad, hessian, dipole, dipole_derv)
+
+    ! formal arguments
+    type(s_molecule),  intent(inout) :: molecule
+    type(s_dynvars),   intent(inout) :: dynvars
+    type(s_vibration), intent(inout) :: vibration
+
+    integer  :: nat
+    real(wp) :: energy
+    real(wp) :: grad(nat*3)
+    real(wp) :: hessian(nat*3,nat*3)
+    real(wp) :: dipole(3)
+    real(wp) :: dipole_derv(3,nat*3)
+
+    ! local variables
+    integer  :: nat3
+    integer  :: i, j, ij, k, i1, j1, k1, k2
+    integer  :: ncolomn, nc, iatom
+    real(wp), allocatable :: hess_pack(:), hess_mw_pack(:)
+    real(wp), allocatable :: dd_mw(:,:)
+    real(wp), allocatable :: sq_mass3(:)
+    real(wp), allocatable :: vec(:,:), omega(:)
+    real(wp), allocatable :: dd2(:,:), infrared(:)
+
+    character(1)           :: xyz(3)
+
+    nat3 = nat*3
+
+    ! for print 
+    xyz(1) = 'X'
+    xyz(2) = 'Y'
+    xyz(3) = 'Z'
+
+    ! Pack the Hessian matrix 
     allocate(hess_pack(nat3*(nat3+1)/2))
     k = 1
     do k1 = 1, nat3
       do k2 = 1, k1
-         hess_pack(k) = (hessian(k2,k1) + hessian(k1,k2))*HALF
+         hess_pack(k) = hessian(k2,k1)
          k = k + 1
       end do
     end do
 
     ! Mass-weight the Hessian matrix and dipole derivatives
     allocate(hess_mw_pack(nat3*(nat3+1)/2), dd_mw(3,nat3), sq_mass3(nat3))
-    k = 1
+    ij = 1
     do i = 1, nat
       do j = 1, 3
-         sq_mass3(k) = sqrt(mass(vibatom_id(i))*ELMASS)
-         k = k + 1
+         sq_mass3(ij) = sqrt(molecule%mass(vibration%vibatom_id(i))*ELMASS)
+         ij = ij + 1
       end do
     end do
 
@@ -924,7 +1181,7 @@ contains
     end do
 
     do k = 1, nat3
-      dd_mw(:,k) = dipole_derivative(:,k) / sq_mass3(k)
+      dd_mw(:,k) = dipole_derv(:,k) / sq_mass3(k)
     end do
 
     allocate(vec(nat3,nat3), omega(nat3))
@@ -933,9 +1190,9 @@ contains
 
     do k = 1, nat3
       if(omega(k) > 0.0_wp) then
-        omega(k) = sqrt( omega(k)) * HARTREE_WAVENUM
+        omega(k) = sqrt(abs(omega(k))) * HARTREE_WAVENUM
       else
-        omega(k) =-sqrt(-omega(k)) * HARTREE_WAVENUM
+        omega(k) =-sqrt(abs(omega(k))) * HARTREE_WAVENUM
       endif
     end do
 
@@ -985,7 +1242,7 @@ contains
 
         k1 = 1
         do i1 = 1, nat
-          iatom = vibatom_id(i1)
+          iatom = vibration%vibatom_id(i1)
           do j1 = 1, 3
             write(MsgOut,'(6x,i4,x,a6,x,a1,$)') i1,molecule%atom_name(iatom),xyz(j1)
             do j = k, k + ncolomn - 1
@@ -1021,7 +1278,7 @@ contains
 
         k1 = 1
         do i1 = 1, nat
-          iatom = vibatom_id(i1)
+          iatom = vibration%vibatom_id(i1)
           do j1 = 1, 3
             write(MsgOut,'(6x,i4,x,a6,x,a1,$)') i1,molecule%atom_name(iatom),xyz(j1)
             do j = k, nat3
@@ -1034,19 +1291,88 @@ contains
 
         write(MsgOut,*)
       end if
+
+      call print_minfo(vibration, molecule, dynvars, nat, energy, grad, &
+                     hess_pack, dipole, dipole_derv, omega, vec)
+
+
     end if
 
-    if(main_rank) &
-      call print_minfo(vibration, molecule, dynvars, nat, energy_ref, grad_ref, &
-                       hess_pack, dipole_ref, dipole_derivative, omega, vec)
-
-    deallocate(hess_pack, hess_mw_pack, dd_mw, dd2, infrared)
-    deallocate(grad_ref, grad1, grad2, hessian, dipole_derivative)
+    deallocate(hess_pack, hess_mw_pack, sq_mass3)
     deallocate(vec, omega)
+    deallocate(dd_mw, dd2, infrared)
 
     return
 
-  end subroutine harmonic_analysis
+  end subroutine normal_mode
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    match_vibatom
+  !> @brief        check the match between old and new vibatom
+  !! @authors      KY
+  !! @param[in]    minfo_in            : data of existing minfo from the input
+  !! @param[inout] nat                 : number of atoms
+  !! @param[inout] vibatom_id(nat)     : ID of vibatom
+  !! @param[inout] hessian(nat3,nat3)  : Hessian matrix
+  !! @param[inout] dipole_derv(3,nat3) : Dipole derivatives
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine match_vibatom(minfo_in , nat, vibatom_id, hessian, dipole_derv)
+
+    ! formal arguments
+    type(s_minfo), target, intent(in) :: minfo_in
+    integer,       intent(inout) :: nat, vibatom_id(nat)
+    real(wp),      intent(inout) :: hessian(nat*3, nat*3)
+    real(wp),      intent(inout) :: dipole_derv(3, nat*3)
+
+    integer,  pointer  :: vibatom_in_id(:)
+    integer :: nat_in, tmp(nat)
+    integer :: i, j, k, ncalc
+    logical :: found
+    real(wp), allocatable :: hess_in(:,:)
+
+    vibatom_in_id => minfo_in%vibatom_id
+    nat_in = minfo_in%nat
+
+    allocate(hess_in(nat_in*3, nat_in*3))
+    ! unpack Hessian
+    k = 0
+    do i = 1, nat_in*3
+    do j = 1, i
+       k = k + 1
+       hess_in(j,i) = minfo_in%hessian(k)
+       hess_in(i,j) = hess_in(j,i)
+    end do
+    end do
+
+    tmp = vibatom_id
+
+    ncalc = 0
+    do i = 1, nat
+
+      found = .false.
+      do j = 1, nat_in
+        if (tmp(i) == vibatom_in_id(j)) then
+          found = .true.
+          hessian((i-1)*3+1:i*3,:) = hess_in((j-1)*3+1:j*3,:)
+          hessian(:,(i-1)*3+1:i*3) = hess_in(:,(j-1)*3+1:j*3)
+          dipole_derv(:,(i-1)*3+1:i*3) = minfo_in%dipole_derv(:,(j-1)*3+1:j*3)
+          exit
+        end if 
+      end do
+
+      if (.not. found) then
+        ncalc = ncalc + 1
+        vibatom_id(ncalc) = tmp(i)
+      end if
+
+    end do
+
+    nat = ncalc
+
+  end subroutine match_vibatom
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1141,186 +1467,40 @@ contains
                      hess, dipole, dipole_derivative, omega, vec)
 
     ! formal arguments
-    type(s_vibration), target, intent(inout) :: vibration
+    type(s_vibration), target, intent(in)    :: vibration
     type(s_molecule),  target, intent(inout) :: molecule
-    type(s_dynvars),   target, intent(inout) :: dynvars
+    type(s_dynvars),   target, intent(in)    :: dynvars
 
-    integer :: nat
+    integer  :: nat
     real(wp) :: energy
-    real(wp) :: grad(3,nat), hess(nat*3*(nat*3+1)/2)
+    real(wp) :: grad(3*nat), hess(nat*3*(nat*3+1)/2)
     real(wp) :: dipole(3), dipole_derivative(3,nat*3)
     real(wp) :: omega(nat*3), vec(nat*3, nat*3)
 
-    ! local variables
-    real(wp), pointer     :: coord(:,:)
-    integer , pointer     :: vibatom_id(:)
+    ! local
+    type(s_minfo) :: minfo_out
 
-    integer               :: ifile
-    integer               :: i, j, k, iatom, ncolumn, isize
-    integer               :: atomic_no
-    real(wp)              :: mm_mass
-
-    integer               :: nd
-    integer, allocatable  :: domain_nat(:), domain_nf(:)
-    integer, allocatable  :: domain_idx(:,:)
-
-    ! use pointers
-    !
-    nat        =  vibration%vib_natoms
-    vibatom_id => vibration%vibatom_id
-    coord      => dynvars%coord
-
-    ifile   = 10
-    ncolumn = 5
-
-    call open_file(ifile, vibration%minfofile, IOFileOutputReplace)
-    write(ifile,'(''# minfo File version 2:'')')
-    write(ifile,'(''#'')')
-    write(ifile,'(''[ Atomic Data ]'')')
-    write(ifile,'(i5)') nat
-    do i = 1, nat
-      iatom = vibatom_id(i)
-      mm_mass = molecule%mass(iatom)
-      call qm_atomic_number(mm_mass, atomic_no)
-      write(ifile,'(a6,'', '',i4,'', '',f12.4,'', '',2(f17.10,'', ''),f17.10)') &
-        trim(molecule%atom_name(iatom)),  &
-        atomic_no,                  &
-        mm_mass,                    &
-        coord(:,iatom) / CONV_UNIT_LEN
-    end do
     if (vibration%minfo_natoms > 0) then 
-      write(ifile,'(i5)') vibration%minfo_natoms
-      do i = 1, vibration%minfo_natoms
-        iatom = vibration%minfoatom_id(i)
-        mm_mass = molecule%mass(iatom)
-        call qm_atomic_number(mm_mass, atomic_no)
-        write(ifile,'(a6,'', '',i4,'', '',f12.4,'', '',2(f17.10,'', ''),f17.10)') &
-          trim(molecule%atom_name(iatom)),  &
-          atomic_no,                  &
-          mm_mass,                    &
-          coord(:,iatom) / CONV_UNIT_LEN
-      end do
+      call init_minfo_atom(vibration%vib_natoms, minfo_out, vibration%minfo_natoms)
+      minfo_out%vibatom_id  = vibration%vibatom_id
+      minfo_out%subatom_id  = vibration%minfoatom_id
+    else
+      call init_minfo_atom(vibration%vib_natoms, minfo_out)
+      minfo_out%vibatom_id  = vibration%vibatom_id
     end if
-    write(ifile,*)
 
-    write(ifile,'(''[ Electronic Data ]'')')
-    write(ifile,'(''Energy'')')
-    write(ifile,'(f25.14)') energy
+    call init_minfo_elec(vibration%vib_natoms, minfo_out)
+    minfo_out%energy      = energy
+    minfo_out%gradient    = grad
+    minfo_out%hessian     = hess
+    minfo_out%dipole      = dipole
+    minfo_out%dipole_derv = dipole_derivative
 
-    write(ifile,'(''Gradient'')')
-    write(ifile,'(i5)') nat*3
-    k = 1
-    do i = 1, nat
-      do j = 1, 3
-        write(ifile,'(es15.8,$)') grad(j,i)
-        if(mod(k,ncolumn) == 0 .or. (i == nat .and. j == 3)) then
-          write(ifile,*)
-        else
-          write(ifile,'('', '',$)')
-        endif
-        k = k + 1
-      end do
-    end do
+    call init_minfo_vib(vibration%vib_natoms*3, minfo_out)
+    minfo_out%omega       = omega
+    minfo_out%vec         = vec
 
-    write(ifile,'(''Hessian'')')
-    isize = nat*3*(nat*3+1)/2
-    write(ifile,'(i0)') isize
-    do k = 1, isize
-      write(ifile,'(es15.8,$)') hess(k)
-      if(mod(k,ncolumn) == 0 .or. k == isize) then
-        write(ifile,*)
-      else
-        write(ifile,'('', '',$)')
-      endif
-    end do
-
-    write(ifile,'(''Dipole Moment'')')
-    isize = 3
-    write(ifile,'(i5)') isize
-    do k = 1, isize
-      write(ifile,'(es15.8,$)') dipole(k)
-      if(mod(k,ncolumn) == 0 .or. k == isize) then
-        write(ifile,*)
-      else
-        write(ifile,'('', '',$)')
-      endif
-    end do
-
-    write(ifile,'(''Dipole Derivative'')')
-    isize = 3*nat*3
-    write(ifile,'(i5)') isize
-    k = 1
-    do i = 1, nat*3
-      do j = 1, 3
-        write(ifile,'(es15.8,$)') dipole_derivative(j, i)
-        if(mod(k,ncolumn) == 0 .or. k == isize) then
-          write(ifile,*)
-        else
-          write(ifile,'('', '',$)')
-        endif
-        k = k + 1
-      end do
-    end do
-    write(ifile,*)
-
-    nd = 1
-    allocate(domain_nat(nd), domain_nf(nd), domain_idx(nat,nd))
-    domain_nat(1) = nat
-    domain_nf(1)  = nat*3
-    do i = 1, nat
-      domain_idx(i,1) = i
-    end do
-
-    write(ifile,'(''[ Vibrational Data ]'')')
-    write(ifile,'(''Number of Domain'')')
-    write(ifile,'(i4)') nd
-    do i = 1, nd
-      write(ifile,'(''Domain '',i4)') nd
-      write(ifile,'(''Atom Index'')')
-      isize = domain_nat(i)
-      write(ifile,'(i4)') isize
-      do j = 1, isize
-        write(ifile,'(i15,$)') domain_idx(j,i)
-        if(mod(j,ncolumn) == 0 .or. j == isize) then
-          write(ifile,*)
-        else
-          write(ifile,'('', '',$)')
-        endif
-      end do
-
-      write(ifile,'(''Local Normal modes'')')
-      write(ifile,'(''Vibrational Frequency'')')
-      isize = domain_nf(i)
-      write(ifile,'(i4)') isize
-      do j = 1, isize
-        write(ifile,'(es15.8,$)') omega(j)
-        if(mod(j,ncolumn) == 0 .or. j == isize) then
-          write(ifile,*)
-        else
-          write(ifile,'('', '',$)')
-        endif
-      end do
-
-      write(ifile,'(''Vibrational vector'')')
-      do j = 1, domain_nf(i)
-        write(ifile,'(''Mode '',i6)') j
-        isize = domain_nat(i)*3
-        write(ifile,'(i4)') isize
-        do k = 1, isize
-          write(ifile,'(es15.8,$)') vec(k,j)
-          if(mod(k,ncolumn) == 0 .or. k == isize) then
-            write(ifile,*)
-          else
-            write(ifile,'('', '',$)')
-          endif
-        end do
-      end do
-
-    end do
-
-    write(ifile,'(/)')
-
-    call close_file(ifile)
+    call output_minfo(vibration%minfofile, minfo_out, molecule, dynvars%coord)
 
   end subroutine print_minfo
 
@@ -1329,7 +1509,7 @@ contains
   !  Subroutine    print_minfo_grad
   !> @brief        print the information to minfo format
   !! @authors      KY
-  !! @param[in] basename : basename of the minfo file
+  !! @param[in] filename : filename of the minfo file
   !! @param[in] nat      : number of atoms for vibrational analysis
   !! @param[in] energy   : energy
   !! @param[in] grad     : gradient(3*nat)
@@ -1337,56 +1517,21 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine print_minfo_grad(basename, nat, energy, grad, dipole)
+  subroutine print_minfo_grad(filename, nat, energy, grad, dipole)
 
     ! formal arguments
-    character(256) :: basename
-    integer        :: nat
-    real(wp)       :: energy, grad(3,nat), dipole(3)
+    character(MaxFilename) :: filename
+    integer                :: nat
+    real(wp)               :: energy, grad(nat*3), dipole(3)
 
-    integer        :: ifile
-    integer        :: i, j, k, ncolumn, isize
+    ! local
+    type(s_minfo) :: minfo_out
 
-    ifile   = 10
-    ncolumn = 5
-
-    call open_file(ifile, trim(basename)//'.minfo', IOFileOutputNew)
-    write(ifile,'(''# minfo File version 2:'')')
-    write(ifile,'(''#'')')
-    write(ifile,'(''[ Electronic Data ]'')')
-    write(ifile,'(''Energy'')')
-    write(ifile,'(f25.14)') energy
-
-    write(ifile,'(''Gradient'')')
-    write(ifile,'(i5)') nat*3
-    k = 1
-    do i = 1, nat
-      do j = 1, 3
-        write(ifile,'(es15.8,$)') grad(j,i)
-        if(mod(k,ncolumn) == 0 .or. (i == nat .and. j == 3)) then
-          write(ifile,*)
-        else
-          write(ifile,'('', '',$)')
-        endif
-        k = k + 1
-      end do
-    end do
-
-    write(ifile,'(''Dipole Moment'')')
-    isize = 3
-    write(ifile,'(i5)') isize
-    do k = 1, isize
-      write(ifile,'(es15.8,$)') dipole(k)
-      if(mod(k,ncolumn) == 0 .or. k == isize) then
-        write(ifile,*)
-      else
-        write(ifile,'('', '',$)')
-      endif
-    end do
-
-    write(ifile,'(/)')
-
-    call close_file(ifile)
+    call init_minfo_elec(nat, minfo_out)
+    minfo_out%energy   = energy
+    minfo_out%gradient = grad
+    minfo_out%dipole   = dipole
+    call output_minfo(trim(filename), minfo_out)
 
   end subroutine print_minfo_grad
 
@@ -1396,7 +1541,7 @@ contains
   !  Subroutine    read_minfo_grad
   !> @brief        read the information to minfo format
   !! @authors      KY
-  !! @param[in]    basename : basename of the minfo file
+  !! @param[in]    filename : filename of the minfo file
   !! @param[in]    nat      : number of atoms for vibrational analysis
   !! @param[inout] energy   : energy
   !! @param[inout] grad     : gradient(3*nat)
@@ -1404,36 +1549,32 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine read_minfo_grad(basename, nat, energy, grad, dipole)
+  subroutine read_minfo_grad(filename, nat, energy, grad, dipole)
 
     ! formal arguments
-    character(256) :: basename
-    integer        :: nat
-    real(wp)       :: energy, grad(nat*3), dipole(3)
+    character(MaxFilename) :: filename
+    integer                :: nat
+    real(wp)               :: energy, grad(nat*3), dipole(3)
 
-    integer        :: ifile
-    integer        :: i, j, k, ncolumn, isize
+    ! local
+    type(s_minfo)  :: minfo_in
+    integer        :: nat_read
 
-    ifile   = 10
-    ncolumn = 5
+    call read_minfo(trim(filename), minfo_in)
+    nat_read = size(minfo_in%gradient)/3
+    if (nat_read /= nat .and. main_rank) then
+      write(MsgOut,'(3x,"Error while reading ",a)') trim(filename)
+      write(MsgOut,'(3x,"The number of vibatoms does not match")')
+      write(MsgOut,'(3x,"   Nat(input) = ",i8)') nat
+      write(MsgOut,'(3x,"   Nat(read ) = ",i8)') nat_read
+      write(MsgOut,*)
+      call error_msg()
+    end if
 
-    call open_file(ifile, trim(basename)//'.minfo', IOFileInput)
-    read(ifile,*)
-    read(ifile,*)
-    read(ifile,*)
-    read(ifile,*)
-    read(ifile,'(f20.14)') energy
-
-    read(ifile,*)
-    read(ifile,*)
-    read(ifile,*) grad(1:nat*3)
-
-    read(ifile,*)
-    read(ifile,*)
-    read(ifile,*) dipole(1:3)
-
-    call close_file(ifile)
-
+    energy = minfo_in%energy
+    grad   = minfo_in%gradient
+    dipole = minfo_in%dipole
+ 
   end subroutine read_minfo_grad
 
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -1469,10 +1610,10 @@ contains
     real(wp), pointer     :: coord(:,:)
     integer , pointer     :: vibatom_id(:)
 
-    character(256) :: folder, minfo_folder, datafile, basename, fname, line
+    character(MaxFilename) :: folder, minfo_folder, datafile, basename, fname
+    character(MaxLine)     :: line
     character(4)   :: fid, fnum, label
     character(7)   :: num
-    logical        :: savefile
     integer        :: icount, count, replicaid
 
     integer        :: ifile, idatafile
@@ -1492,7 +1633,6 @@ contains
 
     if(qmmm%do_qmmm) then
       icount        = 0
-      folder        = 'qmmm_grid_'//trim(vibration%gridfolderID)
       qmmm%ene_only = vibration%grid_ene_only
     endif
 
@@ -1510,9 +1650,9 @@ contains
 
     else
       ! create a folder to save minfo files
-      minfo_folder = 'minfo.files'
+      minfo_folder = vibration%minfo_folder
       if(main_rank) then
-        call system('mkdir -p '//trim(minfo_folder)//' >& /dev/null')
+        call system('mkdir -p '//trim(minfo_folder)//' > /dev/null 2>&1')
       end if
 
       if(main_rank) &
@@ -1554,7 +1694,8 @@ contains
                 endif 
               end do
            10 continue
-              close(idatafile)
+              !close(idatafile)
+              call close_file(idatafile)
             end if
     
           else
@@ -1574,46 +1715,47 @@ contains
                           .true., &
                           .false.,               &
                           dynvars%coord,         &
+                          dynvars%trans,         &
+                          dynvars%coord_pbc,     &
                           dynvars%energy,        &
                           dynvars%temporary,     &
                           dynvars%force,         &
+                          dynvars%force_omp,     &
                           dynvars%virial,        &
                           dynvars%virial_extern)
 
 
-        if (.not. vibration%dryrun) then
-          energy =  dynvars%energy%total / CONV_UNIT_ENE
-          do i = 1, nat
-            do j = 1, 3
-              grad(j,i) = -dynvars%force(j,vibatom_id(i)) / CONV_UNIT_FORCE
-            end do
+        energy =  dynvars%energy%total / CONV_UNIT_ENE
+        do i = 1, nat
+          do j = 1, 3
+            grad(j,i) = -dynvars%force(j,vibatom_id(i)) / CONV_UNIT_FORCE
           end do
-          dipole = qmmm%qm_dipole
+        end do
+        dipole = qmmm%qm_dipole
 
-          if (replica_main_rank) then
-            write(MsgOut,'(6x,"Done for ",a30," :",4x,"replicaID = ",i5)') &
-                  trim(basename), replicaid
+        if (replica_main_rank) then
+          write(MsgOut,'(6x,"Done for ",a30," :",4x,"replicaID = ",i5)') &
+                trim(basename), replicaid
 
-            if (vibration%grid_ene_only) then
-              if (qmmm%qmmm_error) then
-                energy = 0.0_wp
-                dipole = 0.0_wp
-              end if
+          if (vibration%grid_ene_only) then
+            if (qmmm%qmmm_error) then
+              energy = 0.0_wp
+              dipole = 0.0_wp
+            end if
 
-              idatafile = get_unit_no()
-              fname     = trim(datafile)
-              open(idatafile, file=trim(fname), status='unknown', access='append')
-              write(idatafile,'(a,'', '',f25.13,'', '',2(es16.9,'',''),es16.9)') &
-                    trim(basename), energy, dipole
-              close(idatafile)
-              
-            else
-              fname = trim(minfo_folder)//'/'//trim(basename)
-              call print_minfo_grad(fname, nat, energy, grad, dipole)
+            fname = trim(datafile)
+            call open_file(idatafile, trim(fname), IOFileOutputAppend)
+            write(idatafile,'(a,'', '',f25.13,'', '',2(es16.9,'',''),es16.9)') &
+                  trim(basename), energy, dipole
+            call close_file(idatafile)
+            
+          else
+            fname = trim(minfo_folder)//'/'//trim(basename)//'.minfo'
+            call print_minfo_grad(fname, nat, energy, grad, dipole)
 
-            endif
           endif
         endif
+
       endif
 
     end do
@@ -1621,14 +1763,14 @@ contains
  20 continue
     call close_file(ifile)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_barrier(mpi_comm_world, ierr)
 #endif
 
     ! combine the grid data to one file
     if (vibration%grid_ene_only .and. main_rank) then
       
-      call open_file(ifile, trim(vibration%datafile), IOFileOutputReplace)
+      call open_file(ifile, trim(vibration%datafile), IOFileOutputAppend)
 
       do i = 1, vibration%nreplica
 
@@ -1643,7 +1785,7 @@ contains
         end do
      30 continue
 
-        close(idatafile,status='delete')
+        call close_file(idatafile,'delete')
 
       end do
 

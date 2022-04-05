@@ -14,8 +14,10 @@
 
 module at_vibration_str_mod
 
+  use fileio_minfo_mod
   use messages_mod
   use constants_mod
+  use string_mod
 
   implicit none
   private
@@ -27,17 +29,16 @@ module at_vibration_str_mod
     integer, allocatable   :: vibatom_id(:)
     integer                :: minfo_natoms
     integer, allocatable   :: minfoatom_id(:)
-    character(256)         :: minfofile
-    character(256)         :: minfo_folder
+    character(MaxFilename) :: minfofile
+    character(MaxFilename) :: minfo_folder
     real(wp)               :: diff_stepsize
     real(wp)               :: cutoff
+    type(s_minfo)          :: minfo_in
 
     logical                :: gengrid
     logical                :: grid_ene_only
-    character(256)         :: gridfile
-    character(256)         :: datafile
-    character(256)         :: gridfolderID
-    logical                :: dryrun
+    character(MaxFilename) :: gridfile
+    character(MaxFilename) :: datafile
   end type s_vibration
 
   ! parameters

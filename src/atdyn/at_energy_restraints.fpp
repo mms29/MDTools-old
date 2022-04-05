@@ -27,7 +27,7 @@ module at_energy_restraints_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -45,6 +45,7 @@ module at_energy_restraints_mod
   private :: compute_energy_pc_restraint
   private :: compute_energy_repulsive_restraint
   private :: compute_energy_flatbottom_restraint
+  private :: compute_energy_rg_restraint
  
 contains
 
@@ -67,7 +68,6 @@ contains
   subroutine compute_energy_restraint(enefunc, boundary, coord, force, virial, &
                                       virial_ext, energy)
 
-    ! formal arguments
     type(s_enefunc),  target, intent(inout) :: enefunc
     type(s_boundary),         intent(in)    :: boundary
     real(wp),                 intent(in)    :: coord(:,:)
@@ -110,6 +110,8 @@ contains
     return
 
   end subroutine compute_energy_restraint
+
+!!!develop
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -196,6 +198,12 @@ contains
       !
       call compute_energy_experimental_restraint &
         (enefunc, coord, inum, calc_force, force, virial, eneval, cv)
+
+    case (RestraintsFuncRG:RestraintsFuncRGWOMASS)
+
+      call compute_energy_rg_restraint &
+        (enefunc, coord, inum, calc_force, force, virial, eneval, cv)
+
 
     case (RestraintsFuncREPUL:RestraintsFuncREPULCOM)
 
@@ -284,7 +292,7 @@ contains
     ierr  = 0
 
     if (enefunc%rpath_flag .and. enefunc%rpath_pos_func .gt. 0 ) then
-      fit_work(:,:)=0.0_wp
+      if (allocated(enefunc%fit_work)) fit_work(:,:)=0.0_wp
       rot_matrix(:,:)=0.0_wp
       rot_matrix(1,1)=1.0_wp
       rot_matrix(2,2)=1.0_wp
@@ -1516,6 +1524,152 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine  compute_energy_rg_restraint
+  !> @brief      calculate rg restraint energy and forces
+  !! @authors    MK
+  !! @param[inout]  enefunc : potential energy functions [str]
+  !! @param[in]  coord      : coordinates of target systems [dble]
+  !! @param[in]  inum       : coordinates of target systems [dble]
+  !! @param[in]  calc_force : coordinates of target systems [dble]
+  !! @param[out] force      : forces of target systems [dble]
+  !! @param[out] virial     : of target systems [dble]
+  !! @param[out] eneval     : energy of target systems [dble]
+  !! @param[out] cv         : Rg [dble]
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine compute_energy_rg_restraint(enefunc, coord, inum, calc_force, &
+                                         force, virial, eneval, cv)
+
+    ! formal arguments
+    type(s_enefunc), target, intent(inout) :: enefunc
+    real(wp),                intent(in)    :: coord(:,:)
+    integer,                 intent(in)    :: inum
+    logical,                 intent(in)    :: calc_force
+    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: virial(3,3)
+    real(wp),                intent(out)   :: eneval
+    real(wp),                intent(out)   :: cv
+
+    !! local variables
+    integer                                :: igrp
+    integer                                :: natmgrp
+    integer                                :: iatm, iexpo
+    integer                                :: i, j, k
+    real(wp)                               :: com(3)
+    real(wp)                               :: const, ref
+    real(wp)                               :: msd, rg, rg_dif, vtmp
+    real(wp)                               :: coef_force, local_coef
+    real(wp)                               :: dcom(3), work(3)
+    logical                                :: caging
+    real(wp)                               :: flat_rad
+
+    !! pointers
+    integer,                       pointer :: numatoms(:)
+    integer,                       pointer :: grplist(:,:)
+    integer,                       pointer :: atmlist(:,:)
+    integer,                       pointer :: kind(:)
+    integer,                       pointer :: expo(:)
+    ! mass / total mass (of group)
+    real(wp),                      pointer :: masscoef(:,:)
+    real(wp),                      pointer :: masstmp(:)
+
+    grplist  => enefunc%restraint_grouplist
+    numatoms => enefunc%restraint_numatoms
+    atmlist  => enefunc%restraint_atomlist
+    kind     => enefunc%restraint_kind
+    masscoef => enefunc%restraint_masscoef
+    masstmp  => enefunc%restraint_masstmp
+    expo     => enefunc%restraint_exponent_func
+
+    igrp    = grplist(1,inum)
+    natmgrp = numatoms(igrp)
+    iexpo   = expo(inum)
+
+    const    = enefunc%restraint_const(1,inum)
+    ref      = enefunc%restraint_ref(1,inum)
+    caging   = enefunc%restraint_caging(inum)
+    flat_rad = enefunc%restraint_flat_radius(inum)
+
+    do i = 1, natmgrp
+      iatm = atmlist(i,igrp)
+      if ( kind(inum) == RestraintsFuncRGWOMASS ) then
+        masstmp(iatm) = 1.0_wp / real(natmgrp,wp)
+      else
+        masstmp(iatm) = masscoef(i,igrp)
+      end if
+    end do
+
+    ! calculate center of mass (or geometric center)
+    com(1:3) = 0.0_wp
+    do i = 1, natmgrp
+      iatm = atmlist(i,grplist(1,inum))
+      com(1:3) = com(1:3) + masstmp(iatm) * coord(1:3,iatm)
+    end do
+
+    ! get Rg
+    rg = 0.0_wp
+    do i = 1, natmgrp
+      iatm = atmlist(i,grplist(1,inum))
+      msd = ( coord(1,iatm) - com(1) ) ** 2 + &
+            ( coord(2,iatm) - com(2) ) ** 2 + &
+            ( coord(3,iatm) - com(3) ) ** 2
+      rg = rg + masstmp(iatm) * msd
+    end do
+    rg = sqrt( rg )
+    cv = rg ! for output
+
+    ! set constraint index
+    if ( rg < ref .and. caging ) then
+      eneval = 0.0_wp
+      return
+    end if
+
+    ! energy
+    rg_dif = rg - ref
+    if ( abs(rg_dif) < flat_rad ) then
+      eneval = 0.0_wp
+      return
+    end if
+    if ( rg_dif < 0.0_wp ) then
+      rg_dif = rg_dif + flat_rad
+    else
+      rg_dif = rg_dif - flat_rad
+    end if
+    eneval = const * ( rg_dif ** iexpo )
+
+    ! force
+    if ( rg < 1.0e-10_wp ) then
+      coef_force = 0.0_wp
+    else
+      coef_force = const * real(iexpo,wp) * ( rg_dif ** ( iexpo - 1 ) ) / rg
+    endif
+
+    if ( calc_force ) then
+      do i = 1, natmgrp
+        iatm = atmlist(i,grplist(1,inum))
+        local_coef = coef_force * ( 1.0_wp - masstmp(iatm) ) * masstmp(iatm)
+        dcom(1:3) = coord(1:3,iatm) - com(1:3)
+        work(1:3) = local_coef * dcom(1:3)
+        force(1:3,iatm) = force(1:3,iatm) - work(1:3)
+        ! virial
+        do j = 1, 3
+          do k = j+1, 3
+            vtmp = -dcom(k) * work(j)
+            virial(k,j) = virial(k,j) + vtmp
+            virial(j,k) = virial(j,k) + vtmp
+          end do
+          vtmp = -dcom(j) * work(j)
+          virial(j,j) = virial(j,j) + vtmp
+        end do
+      end do
+    end if
+
+    return
+
+  end subroutine compute_energy_rg_restraint
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    compute_energy_repulsive_restraint
   !> @brief        calculate repulsive restraint energy
   !! @authors      HO
@@ -1569,7 +1723,7 @@ contains
     integer,         pointer :: expo(:)
 
 
-    funcgrp  => enefunc%restraint_funcgrp 
+    funcgrp  => enefunc%restraint_funcgrp
     expo     => enefunc%restraint_exponent_func
     grplist  => enefunc%restraint_grouplist
     numatoms => enefunc%restraint_numatoms
@@ -1899,7 +2053,7 @@ contains
         grad_coef(idist) = 0.0_wp
       end if
     end do
-   
+
     if (calc_force) then
       idist = 0
       do id1 = 1, numgrp

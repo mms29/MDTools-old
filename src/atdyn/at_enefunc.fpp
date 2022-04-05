@@ -24,12 +24,14 @@ module at_enefunc_mod
   use at_enefunc_str_mod
   use at_energy_str_mod
   use at_boundary_str_mod
+  use at_boundary_mod
   use molecules_str_mod
   use select_mod
   use select_atoms_mod
   use select_atoms_str_mod
   use fitting_mod
   use fitting_str_mod
+  use fileio_table_mod
   use fileio_grotop_mod
   use fileio_prmtop_mod
   use fileio_par_mod
@@ -47,36 +49,29 @@ module at_enefunc_mod
   public  :: setup_fitting_atdyn
   private :: setup_enefunc_dispcorr
   private :: setup_enefunc_fit_refcoord
-  private :: remove_fixatm
-  private :: remove_fixatm_bond
-  private :: remove_fixatm_angl
-  private :: remove_fixatm_urey
-  private :: remove_fixatm_dihe
-  private :: remove_fixatm_rb_dihe
-  private :: remove_fixatm_impr
-  private :: remove_fixatm_cmap
 
 contains
 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    define_enefunc
-  !> @brief        a driver subroutine for defining potential energy functions
-  !! @authors      TM, CK
-  !! @param[in]    ene_info   : ENERGY section control parameters
-  !! @param[in]    boundary   : boundary conditions information
-  !! @param[in]    par        : CHARMM PAR information
-  !! @param[in]    gpr        : GO model parameter information
-  !! @param[in]    prmtop     : AMBER parameter topology information
-  !! @param[in]    grotop     : GROMACS parameter topology information
-  !! @param[in]    molecule   : molecule information
-  !! @param[in]    restraints : restraints information
-  !! @param[out]   enefunc    : structure of enefunc
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!  !
+!  !  Subroutine    define_enefunc
+!  !> @brief        a driver subroutine for defining potential energy functions
+!  !! @authors      TM, CK
+!  !! @param[in]    ene_info   : ENERGY section control parameters
+!  !! @param[in]    boundary   : boundary conditions information
+!  !! @param[in]    par        : CHARMM PAR information
+!  !! @param[in]    gpr        : GO model parameter information
+!  !! @param[in]    prmtop     : AMBER parameter topology information
+!  !! @param[in]    grotop     : GROMACS parameter topology information
+!  !! @param[in]    table      : loolup table information
+!  !! @param[in]    molecule   : molecule information
+!  !! @param[in]    restraints : restraints information
+!  !! @param[out]   enefunc    : structure of enefunc
+!  !
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!
   subroutine define_enefunc(ene_info, boundary, par, gpr, prmtop, grotop, eef1,&
-                            molecule, restraints, enefunc)
+                            table, molecule, restraints, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info 
@@ -86,58 +81,72 @@ contains
     type(s_prmtop),          intent(in)    :: prmtop
     type(s_grotop),          intent(in)    :: grotop
     type(s_eef1),            intent(in)    :: eef1
+    type(s_table),           intent(in)    :: table
     type(s_molecule),        intent(in)    :: molecule
     type(s_restraints),      intent(in)    :: restraints
     type(s_enefunc),         intent(inout) :: enefunc
 
-
     call init_enefunc(enefunc)
 
 
-    enefunc%forcefield      = ene_info%forcefield
-    enefunc%output_style    = ene_info%output_style
-
-    enefunc%switchdist      = ene_info%switchdist
-    enefunc%cutoffdist      = ene_info%cutoffdist
-    enefunc%pairlistdist    = ene_info%pairlistdist
-    enefunc%dielec_const    = ene_info%dielec_const
-    enefunc%force_switch    = ene_info%vdw_force_switch
-    enefunc%vdw_shift       = ene_info%vdw_shift
-    enefunc%dispersion_corr = ene_info%dispersion_corr
-    enefunc%nonb_limiter    = ene_info%nonb_limiter
-    enefunc%contact_check   = ene_info%contact_check
-    enefunc%minimum_contact = ene_info%minimum_contact
-
+    enefunc%forcefield       = ene_info%forcefield
+    enefunc%output_style     = ene_info%output_style
+                             
+    enefunc%switchdist       = ene_info%switchdist
+    enefunc%cutoffdist       = ene_info%cutoffdist
+    enefunc%pairlistdist     = ene_info%pairlistdist
+    enefunc%go_electrostatic = ene_info%go_electrostatic
+    enefunc%dielec_const     = ene_info%dielec_const
+    enefunc%debye            = ene_info%debye
+    enefunc%force_switch     = ene_info%vdw_force_switch
+    enefunc%vdw_shift        = ene_info%vdw_shift
+    enefunc%dispersion_corr  = ene_info%dispersion_corr
+    enefunc%nonb_limiter     = ene_info%nonb_limiter
+    enefunc%contact_check    = ene_info%contact_check
+    enefunc%minimum_contact  = ene_info%minimum_contact
 
     if (par%num_bonds > 0) then
+      if (ene_info%forcefield /= ForcefieldCHARMM .and.       &
+          ene_info%forcefield /= ForcefieldCHARMM19 .and.     &
+          ene_info%forcefield /= ForcefieldKBGO) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
 
       call define_enefunc_charmm &
-                         (ene_info, boundary, par, eef1, molecule, &
+                         (ene_info, boundary, par, eef1, table, molecule, &
                           restraints, enefunc)
 
     else if (gpr%num_bonds > 0) then
+      if (ene_info%forcefield /= ForcefieldAAGO .and.         &
+          ene_info%forcefield /= ForcefieldCAGO .and.         &
+          ene_info%forcefield /= ForcefieldKBGO) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
 
       call define_enefunc_go &
                          (ene_info, gpr, molecule, restraints, enefunc)
 
     else if (prmtop%num_atoms > 0) then
+      if (ene_info%forcefield /= ForcefieldAMBER) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
 
       call define_enefunc_amber &
-                          (ene_info, boundary, prmtop, molecule, &
+                          (ene_info, boundary, prmtop, table, molecule, &
                            restraints, enefunc)
 
     else if (grotop%num_atomtypes > 0) then
+      if (ene_info%forcefield /= ForcefieldGROAMBER .and.      &
+          ene_info%forcefield /= ForcefieldGROMARTINI .and.    &
+          ene_info%forcefield /= ForcefieldAAGO .and.          &
+          ene_info%forcefield /= ForcefieldKBGO .and.          &
+          ene_info%forcefield /= ForcefieldCAGO .and.          &
+          ene_info%forcefield /= ForcefieldSOFT .and.          &
+          ene_info%forcefield /= ForcefieldRESIDCG) &
+        call error_msg('Define_Enefunc> ERROR: Bad combination between the input files and force field type (see Chapter "INPUT SECTION" in the user manual).')
 
       call define_enefunc_gromacs &
-                          (ene_info, boundary, grotop, molecule, &
+                          (ene_info, boundary, grotop, table, molecule, &
                            restraints, enefunc)
 
     end if
-
-    ! remove functions for fixed atoms
-    !
-    if (boundary%num_fixatm > 0) &
-      call remove_fixatm(boundary, enefunc)
 
     ! dispersion correction
     !
@@ -616,693 +625,5 @@ contains
     return
 
   end subroutine setup_enefunc_fit_refcoord
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm
-  !> @brief        remove potential functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! bond
-    !
-    if (enefunc%num_bonds > 0) &
-      call remove_fixatm_bond(boundary, enefunc)
-
-    ! angle
-    !
-    if (enefunc%num_angles > 0) &
-      call remove_fixatm_angl(boundary, enefunc)
-
-    ! Urey-Bradley
-    !
-    if (enefunc%num_ureys > 0) &
-      call remove_fixatm_urey(boundary, enefunc)
-
-    ! dihedral
-    !
-    if (enefunc%num_dihedrals > 0) &
-      call remove_fixatm_dihe(boundary, enefunc)
-
-    ! RB dihedral
-    !
-    if (enefunc%num_rb_dihedrals > 0) &
-      call remove_fixatm_rb_dihe(boundary, enefunc)
-
-    ! improper
-    !
-    if (enefunc%num_impropers > 0) &
-      call remove_fixatm_impr(boundary, enefunc)
-
-    ! cmap
-    !
-    if (enefunc%num_cmaps > 0) &
-      call remove_fixatm_cmap(boundary, enefunc)
-
-    if (main_rank) then
-
-      write(MsgOut,'(A)') &
-           'Remove_Fixatm> Modified Interactions'
-      write(MsgOut,'(A20,I10,A20,I10)')                         &
-           '  bond_ene        = ', enefunc%num_bonds,           &
-           '  angle_ene       = ', enefunc%num_angles
-      if (enefunc%num_ureys > 0)   &
-        write(MsgOut,'(A20,I10)')  &
-           '  urey_ene        = ', enefunc%num_ureys
-      write(MsgOut,'(A20,I10,A20,I10)')                         &
-           '  torsion_ene     = ', enefunc%num_dihedrals,       &
-           '  improper_ene    = ', enefunc%num_impropers
-      if (enefunc%num_rb_dihedrals > 0) &
-        write(MsgOut,'(A20,I10)')       &
-           '  rb_dihed_ene    = ', enefunc%num_rb_dihedrals
-      !write(MsgOut,'(A20,I10)')                                 &
-      !     '  cmap_ene        = ', enefunc%num_cmaps
-      write(MsgOut,'(A)') ' '
-    end if
-
-  end subroutine remove_fixatm
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_bond
-  !> @brief        remove bond functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_bond(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: nbonds, nbonds_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
-    integer,   allocatable   :: temp_list(:,:)
-
-    nbonds = enefunc%num_bonds
-
-    ! count the number of bonds including fixed atoms
-    !
-    found = 0
-    do i = 1, nbonds
-      if (boundary%fixatm(enefunc%bond_list(1,i)) .and. &
-          boundary%fixatm(enefunc%bond_list(2,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-    nbonds_new = nbonds - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_fc(nbonds), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_r0(nbonds), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(2,nbonds), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_fc   = enefunc%bond_force_const
-    temp_r0   = enefunc%bond_dist_min
-    temp_list = enefunc%bond_list
-
-    ! re-allocate EneFuncBond
-    !
-    call dealloc_enefunc(enefunc, EneFuncBond)
-
-    enefunc%num_bonds = nbonds_new
-    call alloc_enefunc(enefunc, EneFuncBond, nbonds_new)
-
-    ! modify enefunc%bond
-    !
-    found = 0
-    do i = 1, nbonds
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)))) then
-        found = found + 1
-        enefunc%bond_force_const(found) = temp_fc(i)
-        enefunc%bond_dist_min(found)    = temp_r0(i)
-        enefunc%bond_list(:,found)      = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_bonds, istart, iend)
-    enefunc%istart_bond = istart
-    enefunc%iend_bond   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_fc, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_r0, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_bond
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_angl
-  !> @brief        remove angle and UB functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_angl(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: nangles, nangles_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
-    integer,   allocatable   :: temp_list(:,:)
-
-    nangles = enefunc%num_angles
-
-    ! count the number of angles including fixed atoms
-    !
-    found = 0
-    do i = 1, nangles
-      if (boundary%fixatm(enefunc%angl_list(1,i)) .and. &
-          boundary%fixatm(enefunc%angl_list(2,i)) .and. &
-          boundary%fixatm(enefunc%angl_list(3,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-
-    nangles_new = nangles - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_fc(nangles), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_r0(nangles), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(3,nangles), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_fc   = enefunc%angl_force_const
-    temp_r0   = enefunc%angl_theta_min
-    temp_list = enefunc%angl_list
-
-    ! re-allocate EneFuncAngl
-    !
-    call dealloc_enefunc(enefunc, EneFuncAngl)
-
-    enefunc%num_angles = nangles_new
-    call alloc_enefunc(enefunc, EneFuncAngl, nangles_new)
-
-    ! modify enefunc%angle
-    !
-    found = 0
-    do i = 1, nangles
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)) .and. &
-                 boundary%fixatm(temp_list(3,i)))) then
-        found = found + 1
-        enefunc%angl_force_const(found) = temp_fc(i)
-        enefunc%angl_theta_min(found)   = temp_r0(i)
-        enefunc%angl_list(:,found)      = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_angles, istart, iend)
-    enefunc%istart_angle = istart
-    enefunc%iend_angle   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_fc, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_r0, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_angl
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_urey
-  !> @brief        remove Urey-Bradley functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_urey(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: nureys, nureys_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
-    integer,   allocatable   :: temp_list(:,:)
-
-    nureys = enefunc%num_ureys
-
-    ! count the number of ureys including fixed atoms
-    !
-    found = 0
-    do i = 1, nureys
-      if (boundary%fixatm(enefunc%urey_list(1,i)) .and. &
-          boundary%fixatm(enefunc%urey_list(2,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-
-    nureys_new = nureys - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_fc(nureys), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_r0(nureys), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(3,nureys), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_fc   = enefunc%urey_force_const
-    temp_r0   = enefunc%urey_rmin
-    temp_list = enefunc%urey_list
-
-    ! re-allocate EneFuncUrey
-    !
-    call dealloc_enefunc(enefunc, EneFuncUrey)
-
-    enefunc%num_ureys = nureys_new
-    call alloc_enefunc(enefunc, EneFuncUrey, nureys_new)
-
-    ! modify enefunc%urey
-    !
-    found = 0
-    do i = 1, nureys
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)))) then
-        found = found + 1
-        enefunc%urey_force_const(found) = temp_fc(i)
-        enefunc%urey_rmin(found)        = temp_r0(i)
-        enefunc%urey_list(:,found)      = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_ureys, istart, iend)
-    enefunc%istart_urey = istart
-    enefunc%iend_urey   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_fc, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_r0, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_urey
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_dihe
-  !> @brief        remove dihedral functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_dihe(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: ndihedrals, ndihedrals_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_fc(:), temp_phase(:)
-    real(wp),  allocatable   :: temp_scee(:), temp_scnb(:)
-    integer,   allocatable   :: temp_list(:,:), temp_period(:)
-
-    ndihedrals = enefunc%num_dihedrals
-
-    ! count the number of dihedrals including fixed atoms
-    !
-    found = 0
-    do i = 1, ndihedrals
-      if (boundary%fixatm(enefunc%dihe_list(1,i)) .and. &
-          boundary%fixatm(enefunc%dihe_list(2,i)) .and. &
-          boundary%fixatm(enefunc%dihe_list(3,i)) .and. &
-          boundary%fixatm(enefunc%dihe_list(4,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-
-    ndihedrals_new = ndihedrals - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_fc(ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_phase(ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_scee(ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_scnb(ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_period(ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(4,ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_fc     = enefunc%dihe_force_const
-    temp_phase  = enefunc%dihe_phase
-    temp_scee   = enefunc%dihe_scee
-    temp_scnb   = enefunc%dihe_scnb
-    temp_period = enefunc%dihe_periodicity
-    temp_list   = enefunc%dihe_list
-
-    ! re-allocate EneFuncDihe
-    !
-    call dealloc_enefunc(enefunc, EneFuncDihe)
-
-    enefunc%num_dihedrals = ndihedrals_new
-    call alloc_enefunc(enefunc, EneFuncDihe, ndihedrals_new)
-
-    ! modify enefunc%dihe
-    !
-    found = 0
-    do i = 1, ndihedrals
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)) .and. &
-                 boundary%fixatm(temp_list(3,i)) .and. &
-                 boundary%fixatm(temp_list(4,i)))) then
-        found = found + 1
-        enefunc%dihe_force_const(found) = temp_fc(i)
-        enefunc%dihe_phase(found)       = temp_phase(i)
-        enefunc%dihe_scee(found)        = temp_scee(i)
-        enefunc%dihe_scnb(found)        = temp_scnb(i)
-        enefunc%dihe_periodicity(found) = temp_period(i)
-        enefunc%dihe_list(:,found)      = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_dihedrals, istart, iend)
-    enefunc%istart_dihedral = istart
-    enefunc%iend_dihedral   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_fc, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_phase, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_scee, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_scnb, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_period, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_dihe
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_rb_dihe
-  !> @brief        remove RB dihedral functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_rb_dihe(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: ndihedrals, ndihedrals_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_c(:,:)
-    integer,   allocatable   :: temp_list(:,:)
-
-    ndihedrals = enefunc%num_rb_dihedrals
-
-    ! count the number of RB dihedrals including fixed atoms
-    !
-    found = 0
-    do i = 1, ndihedrals
-      if (boundary%fixatm(enefunc%rb_dihe_list(1,i)) .and. &
-          boundary%fixatm(enefunc%rb_dihe_list(2,i)) .and. &
-          boundary%fixatm(enefunc%rb_dihe_list(3,i)) .and. &
-          boundary%fixatm(enefunc%rb_dihe_list(4,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-
-    ndihedrals_new = ndihedrals - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_c(6,ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(4,ndihedrals), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_c    = enefunc%rb_dihe_c
-    temp_list = enefunc%rb_dihe_list
-
-    ! re-allocate EneFuncRBDihe
-    !
-    call dealloc_enefunc(enefunc, EneFuncRBDihe)
-
-    enefunc%num_rb_dihedrals = ndihedrals_new
-    call alloc_enefunc(enefunc, EneFuncRBDihe, ndihedrals_new)
-
-    ! modify RB enefunc%dihe
-    !
-    found = 0
-    do i = 1, ndihedrals
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)) .and. &
-                 boundary%fixatm(temp_list(3,i)) .and. &
-                 boundary%fixatm(temp_list(4,i)))) then
-        found = found + 1
-        enefunc%rb_dihe_c(:,found)    = temp_c(:,i)
-        enefunc%rb_dihe_list(:,found) = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_rb_dihedrals, istart, iend)
-    enefunc%istart_rb_dihed = istart
-    enefunc%iend_rb_dihed   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_c, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_rb_dihe
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_impr
-  !> @brief        remove improper functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_impr(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: nimpropers, nimpropers_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_fc(:), temp_phase(:)
-    integer,   allocatable   :: temp_list(:,:), temp_period(:)
-
-    nimpropers = enefunc%num_impropers
-
-    ! count the number of impropers including fixed atoms
-    !
-    found = 0
-    do i = 1, nimpropers
-      if (boundary%fixatm(enefunc%impr_list(1,i)) .and. &
-          boundary%fixatm(enefunc%impr_list(2,i)) .and. &
-          boundary%fixatm(enefunc%impr_list(3,i)) .and. &
-          boundary%fixatm(enefunc%impr_list(4,i)))      &
-        found = found + 1
-    end do
-
-    if (found == 0) return
-
-    nimpropers_new = nimpropers - found
-
-    ! copy information from enefunc to temp array
-    !
-    allocate(temp_fc(nimpropers), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_period(nimpropers), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_phase(nimpropers), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-    allocate(temp_list(4,nimpropers), stat=alloc_stat)
-    if (alloc_stat /= 0) call error_msg_alloc
-
-    temp_fc     = enefunc%impr_force_const
-    temp_period = enefunc%impr_periodicity
-    temp_phase  = enefunc%impr_phase
-    temp_list   = enefunc%impr_list
-
-    ! re-allocate EneFuncDihe
-    !
-    call dealloc_enefunc(enefunc, EneFuncImpr)
-
-    enefunc%num_impropers = nimpropers_new
-    call alloc_enefunc(enefunc, EneFuncImpr, nimpropers_new)
-
-    ! modify enefunc%dihe
-    !
-    found = 0
-    do i = 1, nimpropers
-      if (.not. (boundary%fixatm(temp_list(1,i)) .and. &
-                 boundary%fixatm(temp_list(2,i)) .and. &
-                 boundary%fixatm(temp_list(3,i)) .and. &
-                 boundary%fixatm(temp_list(4,i)))) then
-        found = found + 1
-        enefunc%impr_force_const(found) = temp_fc(i)
-        enefunc%impr_periodicity(found) = temp_period(i)
-        enefunc%impr_phase(found)       = temp_phase(i)
-        enefunc%impr_list(:,found)      = temp_list(:,i)
-      end if
-
-    end do
-
-    ! re-setup loop index
-    !
-    call get_loop_index(enefunc%num_impropers, istart, iend)
-    enefunc%istart_improper = istart
-    enefunc%iend_improper   = iend
-
-    ! deallocate temp array
-    !
-    deallocate(temp_fc, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_period, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_phase, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-    deallocate(temp_list, stat=dealloc_stat)
-    if (dealloc_stat /= 0) call error_msg_dealloc
-
-  end subroutine remove_fixatm_impr
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    remove_fixatm_cmap
-  !> @brief        remove CMAP functions for fixed atoms
-  !! @authors      KY
-  !! @param[in]    boundary : boundary conditions information
-  !! @param[inout] enefunc  : energy potential functions information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine remove_fixatm_cmap(boundary, enefunc)
-
-    ! formal arguments
-    type(s_boundary),        intent(in)    :: boundary
-    type(s_enefunc),         intent(inout) :: enefunc
-
-    ! local variables
-    integer    :: i, j, k
-    integer    :: ncmaps, ncmaps_new
-    integer    :: found
-    integer    :: istart, iend
-    integer    :: alloc_stat, dealloc_stat
-
-    real(wp),  allocatable   :: temp_force(:,:,:), temp_coef(:,:,:,:,:)
-    integer,   allocatable   :: temp_list(:,:), temp_res(:), temp_type(:)
-
-    ! TODO
-
-  end subroutine remove_fixatm_cmap
 
 end module at_enefunc_mod

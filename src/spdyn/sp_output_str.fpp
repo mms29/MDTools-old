@@ -32,6 +32,9 @@ module sp_output_str_mod
     integer                :: rpathunit
     integer                :: mfrcunit
     integer                :: gamdunit
+    integer                :: rpathlogunit
+    !FEP
+    integer                :: fepunit
 
     character(MaxFilename) :: logfile
     character(MaxFilename) :: dcdfile
@@ -43,6 +46,9 @@ module sp_output_str_mod
     character(MaxFilename) :: rpathfile
     character(MaxFilename) :: mfrcfile
     character(MaxFilename) :: gamdfile
+    !FEP
+    character(MaxFilename) :: fepfile
+    character(MaxFilename) :: rpathlogfile
 
     logical                :: out_dcd_header    = .true.
     logical                :: out_dcdvel_header = .true.
@@ -57,7 +63,10 @@ module sp_output_str_mod
     logical                :: rpathout   = .false.
     logical                :: mfrcout    = .false.
     logical                :: gamdout    = .false.
-                    
+    logical                :: rpathlogout= .false.
+    !FEP
+    logical                :: fepout     = .false.
+
     logical                :: replica    = .false.
     logical                :: rpath      = .false.
 

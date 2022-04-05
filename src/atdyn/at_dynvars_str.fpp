@@ -18,6 +18,7 @@ module at_dynvars_str_mod
   use at_energy_str_mod
   use messages_mod
   use constants_mod
+  use mpi_parallel_mod
 
   implicit none
   private
@@ -27,17 +28,24 @@ module at_dynvars_str_mod
     type(s_energy)                :: energy
 
     real(wp),         allocatable :: coord(:,:)
+    real(wp),         allocatable :: trans(:,:)
+    real(wp),         allocatable :: coord_pbc(:,:)
     real(wp),         allocatable :: coord_ref(:,:)
     real(wp),         allocatable :: velocity(:,:)
     real(wp),         allocatable :: velocity_ref(:,:)
     real(wp),         allocatable :: force(:,:)
-    real(wp),         allocatable :: random_force(:,:)
+    real(wp),         allocatable :: force_omp(:,:,:)
+    real(wp),         allocatable :: random_force(:,:), random_force1(:,:)
     real(wp),         allocatable :: temporary(:,:)
     real(wp)                      :: virial(3,3)
     real(wp)                      :: virial_const(3,3)
     real(wp)                      :: virial_extern(3,3)
 
     integer                       :: step
+    integer                       :: iterations
+    integer                       :: istart_atom, iend_atom
+    integer,          allocatable :: recv_count(:)
+    integer,          allocatable :: displs(:)
     real(wp)                      :: time
     real(wp)                      :: total_pene
     real(wp)                      :: total_kene
@@ -102,6 +110,7 @@ contains
     dynvars%virial_extern(1:3,1:3)     = 0.0_wp
 
     dynvars%step                       = 0
+    dynvars%iterations                 = 0
     dynvars%time                       = 0.0_wp
     dynvars%total_pene                 = 0.0_wp
     dynvars%total_kene                 = 0.0_wp
@@ -146,12 +155,13 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine alloc_dynvars(dynvars, variable, var_size)
+  subroutine alloc_dynvars(dynvars, variable, var_size, var_size1)
 
     ! formal arguments
     type(s_dynvars),         intent(inout) :: dynvars
     integer,                 intent(in)    :: variable
     integer,                 intent(in)    :: var_size
+    integer, optional,       intent(in)    :: var_size1
 
     ! local variables
     integer                  :: alloc_stat
@@ -170,7 +180,9 @@ contains
       if (allocated(dynvars%coord)) then
         if (size(dynvars%coord(1,:)) == var_size) return
         deallocate(dynvars%coord,        &
+                   dynvars%coord_pbc,    &
                    dynvars%force,        &
+                   dynvars%force_omp,    &
                    dynvars%velocity,     &
                    dynvars%velocity_ref, &
                    dynvars%coord_ref,    &
@@ -178,16 +190,22 @@ contains
                    stat = dealloc_stat)
       end if
 
-      allocate(dynvars%coord(3,var_size),        &
-               dynvars%force(3,var_size),        &
-               dynvars%velocity(3,var_size),     &
-               dynvars%velocity_ref(3,var_size), &
-               dynvars%coord_ref(3,var_size),    &
-               dynvars%temporary(3,var_size),    &
+      allocate(dynvars%coord(3,var_size),              &
+               dynvars%trans(3,var_size),              &
+               dynvars%coord_pbc(3,var_size),          &
+               dynvars%force(3,var_size),              &
+               dynvars%force_omp(3,var_size,nthread),  &
+               dynvars%velocity(3,var_size),           &
+               dynvars%velocity_ref(3,var_size),       &
+               dynvars%coord_ref(3,var_size),          &
+               dynvars%temporary(3,var_size),          &
                stat = alloc_stat)
 
       dynvars%coord       (1:3,1:var_size) = 0.0_wp
+      dynvars%trans       (1:3,1:var_size) = 0.0_wp
+      dynvars%coord_pbc   (1:3,1:var_size) = 0.0_wp
       dynvars%force       (1:3,1:var_size) = 0.0_wp
+      dynvars%force_omp   (1:3,1:var_size,1:nthread) = 0.0_wp
       dynvars%velocity    (1:3,1:var_size) = 0.0_wp
       dynvars%velocity_ref(1:3,1:var_size) = 0.0_wp
       dynvars%coord_ref   (1:3,1:var_size) = 0.0_wp
@@ -198,13 +216,15 @@ contains
       if (allocated(dynvars%random_force)) then
         if (size(dynvars%random_force(1,:)) == var_size) return
         deallocate(dynvars%random_force,         &
+                   dynvars%random_force1,        &
                    stat = dealloc_stat)
       end if
 
-      allocate(dynvars%random_force(3,var_size), &
+      allocate(dynvars%random_force(3,var_size),              &
+               dynvars%random_force1(3,var_size/var_size1+1), &
                stat = alloc_stat)
 
-      dynvars%random_force(1:3,1:var_size) = 0.0_wp
+      dynvars%random_force (1:3,1:var_size) = 0.0_wp
 
     case default
 
@@ -249,7 +269,9 @@ contains
 
       if (allocated(dynvars%coord)) then
         deallocate (dynvars%coord,        &
+                    dynvars%coord_pbc,    &
                     dynvars%force,        &
+                    dynvars%force_omp,    &
                     dynvars%velocity,     &
                     dynvars%velocity_ref, &
                     dynvars%coord_ref,    &

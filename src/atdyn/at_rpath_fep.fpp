@@ -38,7 +38,7 @@ module at_rpath_fep_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -134,7 +134,6 @@ contains
     !
     replicaid = my_country_no + 1
 
-    rpath%is_qmcharge = .false.
     if (.not. rstmep%restart) &
       call error_msg("Setup_Rpath_FEP> rstmep is needed for FEP.")
     if (rstmep%mep_natoms /= rpath%mep_natoms) &
@@ -148,14 +147,13 @@ contains
           call error_msg("Setup_Rpath_FEP> QM charges needed for esp_energy &
                          &and/or esp_md are not found in rstmep!") 
 
-        rpath%is_qmcharge            = .true.
         rpath%qm_charge(:,replicaid) = rstmep%qm_charge
         rpath%qm_energy(replicaid)   = rstmep%qm_energy
       end if
 
     end if 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! broadcast rpath information
     do i = 1, rpath%nreplica
       call mpi_bcast(rpath%mep_coord(1,i), rpath%dimension, mpi_wp_real, & 
@@ -259,6 +257,165 @@ contains
     real(wp)                  :: dene_qm
     real(wp),     allocatable :: work(:,:)
 
+
+    ! Open output files
+    !
+    call open_output(output)
+    DynvarsOut = output%logunit
+
+    ! update boundary and pairlist
+    !
+    if (enefunc%forcefield == ForcefieldRESIDCG) then
+      call update_boundary_cg(enefunc%cg_pairlistdist_ele, &
+          enefunc%cg_pairlistdist_126,                     &
+          enefunc%cg_pairlistdist_PWMcos,                  &
+          enefunc%cg_pairlistdist_DNAbp,                   &
+          enefunc%cg_pairlistdist_exv,                     &
+          boundary)
+    else
+      call update_boundary(enefunc%table%table,               &
+          enefunc%pairlistdist,                               &
+          boundary)
+    end if
+    if (real_calc) then
+      pairlist%allocation = .true.
+      call update_pairlist(enefunc, boundary, dynvars%coord, dynvars%trans, &
+                           dynvars%coord_pbc, pairlist)
+    end if
+
+    if (rpath%esp_energy .or. rpath%esp_md) then
+      replicaid = my_country_no + 1
+      enefunc%qmmm%qm_charge = rpath%qm_charge(:,replicaid) 
+    end if
+
+    !---------
+    ! MD step
+    do n = 1, rpath%ncycle
+      if (.not. rpath%equilibration_only) &
+        rpath%num_fep = rpath%num_fep + 1
+
+      dynamics%istart_step  = (n-1)*rpath%fep_period + 1
+      dynamics%iend_step    =  n   *rpath%fep_period
+      dynamics%initial_time = dynvars%time
+
+      ! MD main loop
+      if (rpath%esp_md) then
+        enefunc%qmmm%qm_classical = .true.
+      else
+        enefunc%qmmm%qm_classical = .false.
+        if(rpath%equilibration_only) then
+          write(enefunc%qmmm%qmindex,'("equ",i0)') n
+        else
+          write(enefunc%qmmm%qmindex,'("fep",i0)') n
+        end if
+      end if
+      if (dynamics%integrator == IntegratorLEAP) then
+        call leapfrog_dynamics(output, molecule, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble)
+                               
+      else if (dynamics%integrator == IntegratorVVER) then
+        call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble)
+      end if
+      if (.not. rpath%esp_md) enefunc%qmmm%qmindex = ''
+
+      if (rpath%equilibration_only) then
+        ! output restart
+        call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                          boundary, rpath)
+
+      else
+        ! calc FEP energies
+        call calc_fep(molecule, enefunc, dynvars, rpath, pairlist, &
+                      boundary, ensemble)
+
+        ! output restart
+        call output_rpath(output, molecule, enefunc, dynamics, dynvars, &
+                          boundary, rpath)
+
+        ! print summary
+        allocate(work(rpath%nreplica,3))
+     
+        ! Forward
+#ifdef HAVE_MPI_GENESIS
+        call mpi_gather(rpath%dfene_f, 1, mpi_wp_real, work(1,1), 1, &
+                        mpi_wp_real, 0, mpi_comm_airplane, ierror)
+#endif
+        work(1,2) = 0.0_wp
+        do i = 2, rpath%nreplica
+          work(i,2) = work(i-1,2) + work(i-1,1)
+        end do
+
+        !dbg  if(main_rank) then
+        !dbg    do i = 1, rpath%nreplica
+        !dbg      write(MsgOut,'(2F20.10)') work(i,1), work(i,2)
+        !dbg    end do
+        !dbg    write(MsgOut,*)
+        !dbg end if
+
+        ! Backward
+#ifdef HAVE_MPI_GENESIS
+        call mpi_gather(rpath%dfene_b, 1, mpi_wp_real, work(1,1), 1, &
+                        mpi_wp_real, 0, mpi_comm_airplane, ierror)
+#endif
+        work(1,3) = 0.0_wp
+        do i = 2, rpath%nreplica
+          work(i,3) = work(i-1,3) - work(i,1)
+        end do
+
+        !dbg if(main_rank) then
+        !dbg   do i = 1, rpath%nreplica
+        !dbg     write(MsgOut,'(2F20.10)') work(i,1), work(i,3)
+        !dbg   end do
+        !dbg end if
+
+        if (main_rank) then
+          write(MsgOut, '("Rpath_FEP> FEP iteration: ",i8)') rpath%num_fep
+          write(MsgOut, '(/," +++ QM/MM-FEP summary +++")')
+
+          if (rpath%esp_energy) then
+            write(MsgOut, '(/,"Image ", &
+                              "   dEqm     (kcal/mol)", &
+                              "   dFqmmm_f (kcal/mol)", &
+                              "   dFqmmm_b (kcal/mol)"  &
+                              "   dF_f     (kcal/mol)", &
+                              "   dF_b     (kcal/mol)")')
+            write(MsgOut, '(116("-"))')
+            do i = 1, rpath%nreplica
+
+              dene_qm = rpath%qm_energy(i) - rpath%qm_energy(1)
+              write(MsgOut, '(i5,X,5F22.10)') i, dene_qm, work(i,2), work(i,3), &
+                                      dene_qm + work(i,2), dene_qm + work(i,3)
+            end do
+            write(MsgOut, '(116("-"),/)')
+
+          else
+            write(MsgOut, '(/,"Image ", &
+                              "   dF_f     (kcal/mol)", &
+                              "   dF_b     (kcal/mol)")')
+            write(MsgOut, '(50("-"))')
+            do i = 1, rpath%nreplica
+
+              write(MsgOut, '(i5,X,2F22.10)') i, work(i,2), work(i,3)
+            end do
+            write(MsgOut, '(50("-"),/)')
+
+          end if
+
+        end if
+     
+        deallocate(work)
+
+        !dbg call mpi_barrier(mpi_comm_world, ierr)
+        !dbg call mpi_abort(mpi_comm_world, errorcode, ierr)
+
+      endif
+
+    end do
+
+    ! close output files
+    !
+    call close_output(output)
 
     return
 
@@ -377,7 +534,8 @@ contains
         coord(1:3,iatom) = rpath%mep_coord(ii+1:ii+3,repID)
         ii = ii + 3
       end do
-      call update_pairlist(enefunc, boundary, coord, pairlist)
+      call update_pairlist(enefunc, boundary, coord, dynvars%trans, &
+          dynvars%coord_pbc, pairlist)
 
       if (qmmm%do_qmmm) then
         ene_only_org  = qmmm%ene_only
@@ -406,9 +564,12 @@ contains
       call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                           enefunc%nonb_limiter,  &
                           dynvars%coord,         &
+                          dynvars%trans,         &
+                          dynvars%coord_pbc,     &
                           dynvars%energy,        &
                           dynvars%temporary,     &
                           dynvars%force,         &
+                          dynvars%force_omp,     &
                           dynvars%virial,        &
                           dynvars%virial_extern)
 

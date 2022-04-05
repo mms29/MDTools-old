@@ -41,7 +41,10 @@ module sp_dynamics_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+  use sp_alchemy_mod
+  use sp_alchemy_str_mod
+  use sp_fep_utils_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -80,6 +83,13 @@ module sp_dynamics_mod
     logical          :: steered_md        =  .false.
     real(wp)         :: initial_rmsd     =  0.0_wp
     real(wp)         :: final_rmsd       =  0.0_wp
+
+    ! box size change for CG
+    logical          :: shrink_box       = .false.
+    integer          :: shrink_period    =     0
+    real(wp)         :: dbox_x           =   0.0_wp
+    real(wp)         :: dbox_y           =   0.0_wp
+    real(wp)         :: dbox_z           =   0.0_wp
   end type s_dyn_info
 
   ! subroutines
@@ -88,6 +98,9 @@ module sp_dynamics_mod
   public  :: setup_dynamics
   public  :: setup_dynamics_pio
   public  :: run_md
+  ! FEP
+  public  :: setup_dynamics_fep
+  public  :: run_md_fep
 
 contains
 
@@ -230,6 +243,18 @@ contains
     call read_ctrlfile_real   (handle, Section, 'final_rmsd',    &
                                dyn_info%final_rmsd)
 
+    ! box size change for CSSB
+    call read_ctrlfile_logical(handle, Section, 'shrink_box',     &
+                               dyn_info%shrink_box)
+    call read_ctrlfile_integer(handle, Section, 'shrink_period',  &
+                               dyn_info%shrink_period)
+    call read_ctrlfile_real   (handle, Section, 'dbox_x',  &
+                               dyn_info%dbox_x)
+    call read_ctrlfile_real   (handle, Section, 'dbox_y',  &
+                               dyn_info%dbox_y)
+    call read_ctrlfile_real   (handle, Section, 'dbox_z',  &
+                               dyn_info%dbox_z)
+
     call end_ctrlfile_section(handle)
 
 
@@ -304,6 +329,21 @@ contains
         write(MsgOut,'(A)') '  steered_md      =         no'
       end if
 
+      ! box size change for CSSB
+      if (dyn_info%shrink_box) then
+        write(MsgOut,'(A)') '  shrink_box      =        yes'
+        write(MsgOut,'(A,I10)') &
+              '  shrink_period   = ', dyn_info%shrink_period
+        write(MsgOut,'(A,F10.3)') &
+              '  dbox_x          = ', dyn_info%dbox_x
+        write(MsgOut,'(A,F10.3)') &
+              '  dbox_y          = ', dyn_info%dbox_y
+        write(MsgOut,'(A,F10.3)') &
+              '  dbox_z          = ', dyn_info%dbox_z
+      else
+        write(MsgOut,'(A)') '  shrink_box      =         no'
+      end if
+
       write(MsgOut,'(A)') ' '
 
     end if
@@ -311,50 +351,50 @@ contains
 
     ! error check
     !
-    if (dyn_info%crdout_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%crdout_period) /= 0) then
+    if (dyn_info%crdout_period > 0) then
+       if (mod(dyn_info%nsteps, dyn_info%crdout_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in crdout_period'//&
         '  mod(nsteps, crdout_period) is not ZERO')
     end if
 
-    if (dyn_info%velout_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%velout_period) /= 0) then
+    if (dyn_info%velout_period > 0) then
+      if (mod(dyn_info%nsteps, dyn_info%velout_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in velout_period'//&
         '  mod(nsteps, velout_period) is not ZERO')
     end if
 
-    if (dyn_info%eneout_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%eneout_period) /= 0) then
+    if (dyn_info%eneout_period > 0) then
+       if (mod(dyn_info%nsteps, dyn_info%eneout_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in eneout_period'//&
         '  mod(nsteps, eneout_period) is not ZERO')
     end if
 
-    if (dyn_info%rstout_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%rstout_period) /= 0) then
+    if (dyn_info%rstout_period > 0) then
+      if (mod(dyn_info%nsteps, dyn_info%rstout_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in rstout_period'//&
         '  mod(nsteps, rstout_period) is not ZERO')
     end if
 
-    if (dyn_info%stoptr_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%stoptr_period) /= 0) then
+    if (dyn_info%stoptr_period > 0) then
+      if (mod(dyn_info%nsteps, dyn_info%stoptr_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in stoptr_period'//&
         '  mod(nsteps, stoptr_period) is not ZERO')
     end if
 
-    if (dyn_info%nbupdate_period > 0 .and.                      &
-        mod(dyn_info%nsteps, dyn_info%nbupdate_period) /= 0) then
+    if (dyn_info%nbupdate_period > 0) then
+      if (mod(dyn_info%nsteps, dyn_info%nbupdate_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in nbupdate_period'//&
         '  mod(nsteps, nbupdate_period) is not ZERO')
     end if
 
-    if (dyn_info%anneal_period > 0 .and.                        &
-        mod(dyn_info%nsteps, dyn_info%anneal_period) /= 0) then
+    if (dyn_info%anneal_period > 0) then
+      if (mod(dyn_info%nsteps, dyn_info%anneal_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in anneal_period'//&
         '  mod(nsteps, anneal_period) is not ZERO')
@@ -366,35 +406,58 @@ contains
         '  annealing = YES, but anneal_period is <= ZERO')
     end if
 
+    ! CSSB case
+    if (dyn_info%shrink_box) then
+      if (mod(dyn_info%shrink_period, dyn_info%nbupdate_period) /=0) then
+        call error_msg('Read_Ctrl_Dynamics> '//                    &
+                       'mod(shrink_period, nbupdate_period) is not ZERO')
+      end if
+
+      if (dyn_info%annealing) then
+        call error_msg('Read_Ctrl_Dynamics>'//                    &
+                       'annealing and shrink_md are not set at the same time')
+      end if
+
+      if (dyn_info%target_md) then
+        call error_msg('Read_Ctrl_Dynamics>'//                    &
+                       'target_md and shrink_md are not set at the same time')
+      end if
+
+      if (dyn_info%steered_md) then
+        call error_msg('Read_Ctrl_Dynamics>'//                    &
+                       'steered_md and shrink_md are not set at the same time')
+      end if
+    end if
+
     if (dyn_info%annealing .and. dyn_info%integrator /= IntegratorLEAP) then
       call error_msg( &
         'Read_Ctrl_Dynamics> annealing is allowed only with leapfrog '//&
         ' in spdyn')
     end if
 
-    if (dyn_info%crdout_period > 0 .and.                        &
-        mod(dyn_info%crdout_period,dyn_info%nbupdate_period) /= 0) then
+    if (dyn_info%crdout_period > 0) then
+      if (mod(dyn_info%crdout_period,dyn_info%nbupdate_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in crdout_period or nbupdate_period'//&
         '  mod(crdout_period,nbupdate_period) is not ZERO')
     end if
 
-    if (dyn_info%elec_long_period > 0 .and.                        &
-        mod(dyn_info%nbupdate_period,dyn_info%elec_long_period) /= 0) then
+    if (dyn_info%elec_long_period > 0) then
+      if (mod(dyn_info%nbupdate_period,dyn_info%elec_long_period) /= 0) &
       call error_msg( &
         'Read_Ctrl_Dynamics> Error in elec_long_period or nbupdate_period'//&
         '  mod(nbupdate_period,elec_long_period) is not ZERO')
     end if
 
-    if (dyn_info%elec_long_period > 0 .and. .not. dyn_info%xi_respa .and.  &
-        mod(dyn_info%thermo_period,dyn_info%elec_long_period) /= 0) then
+    if (dyn_info%elec_long_period > 0 .and. .not. dyn_info%xi_respa) then
+      if (mod(dyn_info%thermo_period,dyn_info%elec_long_period) /= 0) &
       call error_msg( &
        'Read_Ctrl_Dynamics> Error in elec_long_period or thermostat_period'//&
        '  mod(thermostat_period,elec_long_period) is not ZERO')
     end if
 
-    if (dyn_info%elec_long_period > 0 .and. .not. dyn_info%xi_respa .and.  &
-        mod(dyn_info%baro_period,dyn_info%thermo_period) /= 0) then
+    if (dyn_info%elec_long_period > 0 .and. dyn_info%thermo_period > 0 .and. .not. dyn_info%xi_respa) then
+        if (mod(dyn_info%baro_period,dyn_info%thermo_period) /= 0) &
       call error_msg( &
        'Read_Ctrl_Dynamics> Error in thermostat_period or barostat_period'//&
        '  mod(barostat_period,thermostat_period) is not ZERO')
@@ -459,6 +522,12 @@ contains
     dynamics%steered_md        = dyn_info%steered_md
     dynamics%initial_rmsd      = dyn_info%initial_rmsd
     dynamics%final_rmsd        = dyn_info%final_rmsd
+    dynamics%shrink_box        = dyn_info%shrink_box
+    dynamics%shrink_period     = dyn_info%shrink_period
+    dynamics%dbox_x            = dyn_info%dbox_x
+    dynamics%dbox_y            = dyn_info%dbox_y
+    dynamics%dbox_z            = dyn_info%dbox_z
+
 
     iseed          = dyn_info%iseed
     iseed_init_vel = iseed
@@ -466,7 +535,7 @@ contains
       dynamics%iseed_read=.true.
       if (main_rank) &
         call random_seed_initial_time(iseed)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_bcast(iseed, 1, mpi_integer, 0, mpi_comm_country, ierror)
 #endif
       iseed_init_vel = iseed
@@ -635,7 +704,7 @@ contains
     if (dyn_info%iseed == -1) then
       if (main_rank) &
         call random_seed_initial_time(iseed)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_bcast(iseed, 1, mpi_integer, 0, mpi_comm_country, ierror)
 #endif
       iseed_init_vel = iseed
@@ -736,5 +805,306 @@ contains
     return
 
   end subroutine run_md
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_dynamics_fep
+  !> @brief        setup dynamics information for FEP
+  !> @authors      HO
+  !! @param[in]    dyn_info   : DYNAMICS  section control parameters information
+  !! @param[in]    bound_info : BOUNDARY  section control parameters information
+  !! @param[in]    res_info   : RESTRAINT section control parameters information
+  !! @param[in]    alch_info  : ALCHEMY section control parameters information
+  !! @param[inout] molecule   : molecule information
+  !! @param[inout] dynamics   : dynamics information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_dynamics_fep(dyn_info, bound_info, res_info, alch_info, &
+                                molecule, dynamics)
+
+    ! formal arguments
+    type(s_dyn_info),        intent(in)    :: dyn_info
+    type(s_boundary_info),   intent(in)    :: bound_info
+    type(s_res_info),        intent(in)    :: res_info
+    type(s_alch_info),       intent(in)    :: alch_info
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_dynamics),        intent(inout) :: dynamics
+
+    ! local variables
+    integer                  :: i
+    integer                  :: ierror, iseed, iseed_init_vel
+
+
+    ! initialize variables in dynamics
+    !
+    call init_dynamics(dynamics)
+
+    ! setup variables
+    !
+    dynamics%integrator        = dyn_info%integrator
+    dynamics%timestep          = dyn_info%timestep
+    dynamics%crdout_period     = dyn_info%crdout_period
+    dynamics%velout_period     = dyn_info%velout_period
+    dynamics%eneout_period     = dyn_info%eneout_period
+    dynamics%rstout_period     = dyn_info%rstout_period
+    dynamics%stoptr_period     = dyn_info%stoptr_period
+    dynamics%nbupdate_period   = dyn_info%nbupdate_period
+    dynamics%elec_long_period  = dyn_info%elec_long_period
+    dynamics%initial_time      = dyn_info%initial_time
+    dynamics%xi_respa          = dyn_info%xi_respa
+    dynamics%xo_respa          = .not.(dynamics%xi_respa)
+    dynamics%verbose           = dyn_info%verbose
+    dynamics%thermo_period     = dyn_info%thermo_period
+    dynamics%baro_period       = dyn_info%baro_period  
+    dynamics%istart_step       = 1
+    dynamics%iend_step         = dynamics%nsteps
+    dynamics%target_md         = dyn_info%target_md
+    dynamics%steered_md        = dyn_info%steered_md
+    dynamics%initial_rmsd      = dyn_info%initial_rmsd
+    dynamics%final_rmsd        = dyn_info%final_rmsd
+
+    ! FEP
+    dynamics%fepout_period     = alch_info%fepout_period
+    dynamics%equilsteps        = alch_info%equilsteps
+    dynamics%nsteps            = dyn_info%nsteps + alch_info%equilsteps
+    if (mod(alch_info%fepout_period,dynamics%eneout_period) /= 0) then
+      call error_msg('Setup_Dynamics> mod(fepout_period,eneout_period)'//&
+        ' must be zero)')
+    end if
+
+    iseed          = dyn_info%iseed
+    iseed_init_vel = iseed
+    if (dyn_info%iseed == -1) then
+      dynamics%iseed_read=.true.
+      if (main_rank) &
+        call random_seed_initial_time(iseed)
+#ifdef HAVE_MPI_GENESIS
+      call mpi_bcast(iseed, 1, mpi_integer, 0, mpi_comm_country, ierror)
+#endif
+      iseed_init_vel = iseed
+      iseed = iseed + my_country_rank
+    end if
+    dynamics%iseed = iseed + 1000 * my_country_no
+
+    dynamics%iseed_init_velocity = iseed_init_vel + 1000 * my_country_no
+
+    if (bound_info%type == BoundaryTypePBC) then
+      dynamics%stop_com_translation = .true.
+      dynamics%stop_com_rotation    = .false.
+    else if (bound_info%type == BoundaryTypeNOBC) then
+      dynamics%stop_com_translation = .true.
+      dynamics%stop_com_rotation    = .true.
+    end if
+
+    do i = 1, res_info%nfunctions
+      if (res_info%function(i) == RestraintsFuncPOSI .or. &
+          res_info%function(i) == RestraintsFuncEM) then
+        dynamics%stop_com_translation = .false.
+        dynamics%stop_com_rotation    = .false.
+      end if
+    end do
+
+
+    ! update number of degrees of freedom
+    !
+    if (dynamics%stop_com_translation) then
+
+      if (main_rank)  then
+        write(MsgOut,'(a)') &
+        'Setup_Dynamics> Subtract 3 translational degrees of freedom'
+        write(MsgOut,'(a)') ' '
+      endif
+
+      call update_num_deg_freedom('After removing translation', &
+                                  -3, molecule%num_deg_freedom)
+
+    end if
+
+    if (dynamics%stop_com_rotation) then
+
+      if (main_rank)  then
+        write(MsgOut,'(a)') &
+        'Setup_Dynamics> Subtract 3 rotational degrees of freedom'
+        write(MsgOut,'(a)') ' '
+      endif
+
+      call update_num_deg_freedom('After removing rotation', &
+                                  -3, molecule%num_deg_freedom)
+
+    end if
+
+    ! simulated annealing MD
+    !
+    dynamics%annealing     = dyn_info%annealing
+    dynamics%anneal_period = dyn_info%anneal_period
+    dynamics%dtemperature  = dyn_info%dtemperature
+
+
+    ! setup random system
+    !
+    call random_init(dynamics%iseed)
+
+    return
+
+  end subroutine setup_dynamics_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    run_md_fep
+  !> @brief        perform MD simulation for FEP
+  !! @authors      HO
+  !! @param[inout] output      : output information
+  !! @param[inout] domain      : domain information
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions
+  !! @param[inout] dynvars     : dynamic variables
+  !! @param[inout] dynamics    : dynamics information
+  !! @param[inout] pairlist    : non-bond pair list
+  !! @param[inout] boundary    : boundary condition
+  !! @param[inout] constraints : bond constraints
+  !! @param[inout] ensemble    : ensemble information
+  !! @param[inout] comm        : information of communication
+  !! @param[inout] alchemy     : information of alchemy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine run_md_fep(output, domain, molecule, enefunc, dynvars, dynamics, &
+                    pairlist, boundary, constraints, ensemble, comm, remd,    &
+                    alchemy)
+    ! formal arguments
+    type(s_output),           intent(inout) :: output
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_molecule), target, intent(inout) :: molecule !TODO
+    type(s_enefunc),          intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_dynamics),         intent(inout) :: dynamics
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_constraints),      intent(inout) :: constraints
+    type(s_ensemble),         intent(inout) :: ensemble
+    type(s_comm),             intent(inout) :: comm
+    type(s_remd),             intent(inout) :: remd
+    type(s_alchemy),  target, intent(inout) :: alchemy
+
+    ! local variables
+    integer              :: i, num_windows
+    integer, allocatable :: window_no(:)
+    integer, pointer     :: lambid
+
+    lambid => alchemy%lambid
+
+    if (dynamics%target_md) then
+      enefunc%restraint_rmsd_target = .true.
+    else
+      enefunc%restraint_rmsd_target = .false.
+    end if
+
+    allocate(window_no(alchemy%num_fep_windows))
+
+    ! Set window indices and number of windows
+    !
+    if (enefunc%fep_direction == FEP_Bothsides) then
+      num_windows = alchemy%num_fep_windows
+      do i = 1, alchemy%num_fep_windows
+        window_no(i) = i
+      end do
+    else if (enefunc%fep_direction == FEP_Forward) then
+      num_windows = alchemy%num_fep_windows - 1
+      do i = 1, alchemy%num_fep_windows
+        window_no(i) = i
+      end do
+    else if (enefunc%fep_direction == FEP_Reverse) then
+      num_windows = alchemy%num_fep_windows - 1
+      do i = 1, alchemy%num_fep_windows
+        window_no(i) = alchemy%num_fep_windows - i + 1
+      end do
+    end if
+
+    ! open output files
+    !
+    call open_output(output)
+
+
+    ! Loop changing lambda value
+    !
+    do i = 1, num_windows
+
+      ! Set lambda values
+      !
+      lambid = window_no(i)
+      enefunc%lambljA   = alchemy%lambljA(lambid)
+      enefunc%lambljB   = alchemy%lambljB(lambid)
+      enefunc%lambelA   = alchemy%lambelA(lambid)
+      enefunc%lambelB   = alchemy%lambelB(lambid)
+      enefunc%lambbondA = alchemy%lambbondA(lambid)
+      enefunc%lambbondB = alchemy%lambbondB(lambid)
+      enefunc%lambrest  = alchemy%lambrest(lambid)
+
+      ! Make table of lambda and softcore in FEP
+      call set_lambda_table_fep(enefunc)
+
+      ! Initialize MD time step and output title
+      !
+      dynamics%initial_time = dynvars%time
+      dynamics%istart_step  = 1 + (i-1)*dynamics%nsteps
+      dynamics%iend_step    = i*dynamics%nsteps
+      dynamics%equilsteps   = alchemy%equilsteps + (i-1)*dynamics%nsteps
+
+      ! If single lambda calculation at state ref_lambid,
+      ! other lambda values are skipped.
+      if (alchemy%fep_md_type == FEP_Single) then
+        if (i /= alchemy%ref_lambid) then
+          cycle
+        else
+          dynamics%istart_step  = 1
+          dynamics%iend_step    = dynamics%nsteps
+          dynamics%equilsteps   = alchemy%equilsteps
+        end if
+      end if
+
+      ! Output FEP window index
+      !
+      if (main_rank) then
+        write(MsgOut,'(a,i8)') "FEP window index ", lambid
+        write(output%fepunit,'(a,i8)') '# FEP window index ', lambid
+      end if
+
+
+      ! MD main loop
+      !
+      select case (dynamics%integrator)
+
+      case (IntegratorLEAP)
+
+        call leapfrog_dynamics_fep(output, domain, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble, comm,&
+                               remd, alchemy)
+
+      case (IntegratorVVER)
+
+        call vverlet_dynamics_fep (output, domain, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble, comm,&
+                               remd, alchemy)
+
+      case (IntegratorVRES)
+
+        call vverlet_respa_dynamics_fep (output, domain, enefunc, dynvars, dynamics, &
+                               pairlist, boundary, constraints, ensemble, comm, remd,&
+                               alchemy)
+
+      end select
+
+    end do
+
+    ! close output files
+    !
+    call close_output(output)
+
+    deallocate(window_no)
+
+    return
+
+  end subroutine run_md_fep
 
 end module sp_dynamics_mod

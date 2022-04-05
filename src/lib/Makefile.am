@@ -26,6 +26,8 @@ lib_a_SOURCES = \
 	ffte_pzfft3dv.fpp \
 	ffte_pdzfft3d.fpp \
 	ffte_pzdfft3d.fpp \
+	ffte_dzfft3d.fpp \
+	ffte_zdfft3d.fpp \
 	fft3d.fpp \
 	fileio.fpp \
 	fileio_control.fpp \
@@ -47,8 +49,11 @@ lib_a_SOURCES = \
 	fileio_mode.fpp \
 	fileio_eef1.fpp \
 	fileio_sit.fpp \
+	fileio_mrc.fpp \
 	fileio_localres.fpp \
 	fileio_rstmep.fpp \
+	fileio_morph.fpp \
+	fileio_table.fpp \
 	fileio_spot.fpp \
 	hardwareinfo.fpp \
 	dSFMT/dSFMT.c \
@@ -77,7 +82,10 @@ lib_a_SOURCES = \
 	select_contacts.fpp \
 	select_atoms.fpp \
 	select.fpp \
+	getopt.fpp \
 	fitting.fpp \
+	fileio_minfo.fpp \
+	structure_check.fpp \
 	ffte_param.h
 
 EXTRA_DIST = \
@@ -85,6 +93,8 @@ EXTRA_DIST = \
 
 SUFFIXES = .fpp .c .f
 DEPENDS	= Makefile.depends
+
+CLEANFILES = $(noinst_LIBRARIES) $(lib_a_OBJECTS) *.f90 *~ *.mod
 
 ffte_kernel.o : ffte_kernel.fpp
 if USEKCOMP
@@ -113,9 +123,6 @@ endif
 
 lib.a : $(lib_a_OBJECTS)
 	$(AR) $(ARFLAGS) cr $(noinst_LIBRARIES) $(lib_a_OBJECTS)
-
-clean:
-	rm -f $(noinst_LIBRARIES) $(lib_a_OBJECTS) *.f90 *~ *.mod
 
 depend: clean_depend
 	python ../../fortdep.py *.fpp > $(DEPENDS)

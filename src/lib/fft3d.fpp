@@ -16,7 +16,7 @@ module fft3d_mod
 
   use constants_mod
   use timers_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -164,7 +164,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(qdfyxz, nlocalx1*nlocaly*nlocalz,         &
                        mpi_wp_complex, qdfyxz_work,              &
                        nlocalx1*nlocaly*nlocalz, mpi_wp_complex, &
@@ -243,7 +243,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(qdfzyx, nlocalx1*nlocaly*nlocalz,         &
                        mpi_wp_complex, qdfzyx_work,              &
                        nlocalx1*nlocaly*nlocalz, mpi_wp_complex, &
@@ -430,7 +430,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(qdfzyx, nlocalx1*nlocaly*nlocalz,         &
                        mpi_wp_complex, qdfzyx_work,              &
                        nlocalx1*nlocaly*nlocalz, mpi_wp_complex, &
@@ -505,7 +505,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(qdfyxz, nlocalx1*nlocaly*nlocalz,         &
                        mpi_wp_complex, qdfyxz_work,              &
                        nlocalx1*nlocaly*nlocalz, mpi_wp_complex, &
@@ -750,7 +750,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz_work(1,1,1,1), &
                       nlocalx1*nlocaly*niz, mpi_wp_complex, &
                       qdfyxz, &
@@ -758,7 +758,7 @@ contains
                       grid_commx, ierror)
 #endif
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz, &
                       nlocalx1*nlocaly*nlocalz/nprocy, mpi_wp_complex, &
                       qdfyxz_work, &
@@ -845,7 +845,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz2, &
                       nlocaly*nlocalx1*niz, mpi_wp_complex, &
                       qdfyxz,  &
@@ -867,7 +867,7 @@ contains
 
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfzxy, &
                       nlocalx1*nlocaly*nlocalz/nprocz,mpi_wp_complex, &
                       qdfzxy_work, &
@@ -1137,7 +1137,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(c_work1, nlocaly*nix1*niz, mpi_wp_complex, &
                       c_work2, nlocaly*nix1*niz, mpi_wp_complex, &
                       grid_commxy, ierror)
@@ -1269,7 +1269,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(c_work2, &
                       nix1*nprocy*nlocaly*nlocalz/nprocz, &
                       mpi_wp_complex, &
@@ -1446,7 +1446,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfzxy_work, &
                       nlocalz*nlocalx1*niy, mpi_wp_complex, &
                       qdfzxy, &
@@ -1468,7 +1468,7 @@ contains
 
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz, &
                       nlocalx1*nlocaly*nlocalz/nprocy, mpi_wp_complex, &
                       qdfyxz_work, &
@@ -1554,7 +1554,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz_work, &
                       nlocaly*nlocalx1*niz, mpi_wp_complex, &
                       qdfyxz, &
@@ -1562,7 +1562,7 @@ contains
                       grid_commy, ierror)
 #endif
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz, &
                       nlocalx1*nlocaly*nlocalz/nprocx, mpi_wp_complex, &
                       qdfyxz_work, &
@@ -1655,7 +1655,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdf, &
                       nlocalx*nlocaly*niz, mpi_wp_real, &
                       qdf_real, &
@@ -1771,7 +1771,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(c_work1, &
                       nix1*nprocy*nlocaly*nlocalz/nprocz, &
                       mpi_wp_complex, &
@@ -1911,7 +1911,7 @@ contains
 
     !$omp barrier 
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(c_work1, nlocaly*nix1*niz, mpi_wp_complex, &
                       c_work2, nlocaly*nix1*niz, mpi_wp_complex, &
                       grid_commxy, ierror)
@@ -2072,7 +2072,7 @@ contains
  
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdf,                             &
                      nlocalx*nlocaly*niz, mpi_wp_real, &
                      qdf_real,                         &
@@ -2174,7 +2174,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz, &
                       nlocalx1*nlocaly*nlocalz/nprocy, mpi_wp_complex, &
                       qdfyxz_work, &
@@ -2226,7 +2226,7 @@ contains
 
     !$omp barrier
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz2, &
                       nlocaly*nlocalx1*niz, mpi_wp_complex, &
                       qdfyxz, &
@@ -2246,7 +2246,7 @@ contains
     end do
 
     !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfzxy, &
                       nlocalx1*nlocaly*nlocalz/nprocz, mpi_wp_complex, &
                       qdfzxy_work, &
@@ -2384,7 +2384,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfzxy_work, &
                       nlocalz*nlocalx1*niy, mpi_wp_complex, &
                       qdfzxy, &
@@ -2406,7 +2406,7 @@ contains
 
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz, &
                       nlocalx1*nlocaly*nlocalz/nprocy, mpi_wp_complex, &
                       qdfyxz_work, &
@@ -2463,7 +2463,7 @@ contains
     !$omp barrier
     !$omp master
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_alltoall(qdfyxz_work, &
                       nlocaly*nlocalx1*niz, mpi_wp_complex, &
                       qdfyxz, &

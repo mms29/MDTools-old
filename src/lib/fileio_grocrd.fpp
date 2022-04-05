@@ -302,7 +302,7 @@ contains
     type(s_grocrd),          intent(inout) :: grocrd
 
     ! local variables
-    integer                  :: i, j, num_atoms
+    integer                  :: i, j, num_atoms, k
     character(MaxLine)       :: line
     character(5)             :: atom_name
     character(5)             :: resi_name
@@ -314,14 +314,28 @@ contains
     call alloc_grocrd(grocrd, GroCRDAtom, num_atoms)
 
     do i = 1, num_atoms
-      read(file,'(i5,a5,a5,i5,3f8.3,3f8.3)') &
+!      read(file,'(i5,a5,a5,i5,3f8.3,3f8.3)') &
+      read(file, '(a)') line
+      read(line(1:20), '(i5,a5,a5,i5)') &
            grocrd%residue_no(i), &
            resi_name, &
            atom_name, &
-           grocrd%atom_no(i), &
+           grocrd%atom_no(i)
+      k = split_num(line(21:))
+      if (k == 3) then
+        read(line(21:),*) &
+           (grocrd%atom_coord(j,i),j=1,3) 
+      else if (k == 6) then
+        read(line(21:),*) &
            (grocrd%atom_coord(j,i),j=1,3), &
            (grocrd%atom_velocity(j,i),j=1,3)
-
+      else
+        call error_msg(" ")
+      end if
+!      read(file,*) &
+!           (grocrd%atom_coord(j,i),j=1,3), &
+!           (grocrd%atom_velocity(j,i),j=1,3)
+!
       read(resi_name,*) grocrd%residue_name(i)
       read(atom_name,*) grocrd%atom_name(i)
     end do

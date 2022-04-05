@@ -94,7 +94,7 @@ contains
         write(MsgOut,'(A)') '# control parameters in mbar_analysis'
         write(MsgOut,'(A)') ' '
          
-        call show_ctrl_input ('psf,prmtop,ambcrd,grotop,grocrd,pdb,DCD,CV')
+        call show_ctrl_input ('psf,prmtop,ambcrd,grotop,grocrd,pdb,DCD,CV,target')
         call show_ctrl_output('fene,pmf,WEIGHT')
         call show_ctrl_option
 

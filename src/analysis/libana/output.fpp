@@ -20,6 +20,7 @@ module output_mod
   use fileio_mod
   use string_mod
   use messages_mod
+  use getopt_mod
   use mpi_parallel_mod
 
   implicit none
@@ -43,10 +44,12 @@ module output_mod
     character(MaxFilename) :: gprfile      = ''
     character(MaxFilename) :: grotopfile   = ''
     character(MaxFilename) :: grocrdfile   = ''
+    character(MaxFilename) :: grocrd_tgtfile   = ''
     character(MaxFilename) :: hb_listfile  = ''
     character(MaxFilename) :: indexfile    = ''
     character(MaxFilename) :: logfile      = ''
     character(MaxFilename) :: mapfile      = ''
+    character(MaxFilename) :: morphfile    = ''
     character(MaxFilename) :: msdfile      = ''
     character(MaxFilename) :: outfile      = ''
     character(MaxFilename) :: parfile      = ''
@@ -55,6 +58,7 @@ module output_mod
     character(MaxFilename) :: pdbfile      = ''
     character(MaxFilename) :: pdb_avefile  = ''
     character(MaxFilename) :: pdb_aftfile  = ''
+    character(MaxFilename) :: pdb_tgtfile  = ''
     character(MaxFilename) :: pmffile      = ''
     character(MaxFilename) :: pmlfile      = ''
     character(MaxFilename) :: prjfile      = ''
@@ -67,6 +71,7 @@ module output_mod
     character(MaxFilename) :: rmsfile      = ''
     character(MaxFilename) :: rgfile       = ''
     character(MaxFilename) :: rstfile      = ''
+    character(MaxFilename) :: tblfile      = ''
     character(MaxFilename) :: txtfile      = ''
     character(MaxFilename) :: topfile      = ''
     character(MaxFilename) :: torfile      = ''
@@ -76,6 +81,7 @@ module output_mod
     character(MaxFilename) :: vcvfile      = ''
     character(MaxFilename) :: vecfile      = ''
     character(MaxFilename) :: velfile      = ''
+    character(MaxFilename) :: voronoifile  = ''
     character(MaxFilename) :: vmdfile      = ''
     character(MaxFilename) :: weightfile   = ''
     character(MaxFilename) :: xscfile      = ''
@@ -87,6 +93,7 @@ module output_mod
   ! subroutines
   public  :: show_ctrl_output
   public  :: read_ctrl_output
+  public  :: parse_ctrl_output
   public  :: setup_output
 
 contains
@@ -201,6 +208,9 @@ contains
       if (toks(i) == 'par') &
         write(MsgOut,'(A)') 'parfile        = output.par      # parameter file'
 
+      if (toks(i) == 'grocrd_tgt') &
+        write(MsgOut,'(A)') 'grocrd_tgtfile  = output.grocrd   # GROMACS coordinate file'
+
       if (toks(i) == 'pathcv') &
         write(MsgOut,'(A)') 'pathcvfile     = output.pathcv   # PATH CV file'
 
@@ -215,6 +225,9 @@ contains
 
       if (toks(i) == 'PDB') &
         write(MsgOut,'(A)') '# pdbfile      = output_{}.pdb   # PDB files'
+
+      if (toks(i) == 'pdb_tgt') &
+        write(MsgOut,'(A)') 'pdb_tgtfile    = output.pdb      # PDB file (Morphing)'
 
       if (toks(i) == 'pdb_ave') &
         write(MsgOut,'(A)') 'pdb_avefile    = output_ave.pdb  # PDB file (Averaged coordinates of analysis atoms)'
@@ -258,6 +271,9 @@ contains
       if (toks(i) == 'rst') &
         write(MsgOut,'(A)') 'rstfile        = output.rst      # restart file'
 
+      if (toks(i) == 'RST') &
+        write(MsgOut,'(A)') '# rstfile        = output{}.rst    # restart file'
+
       if (toks(i) == 'txt') &
         write(MsgOut,'(A)') 'txtfile        = output.txt      # text file'
 
@@ -297,6 +313,12 @@ contains
       if (toks(i) == 'vel') &
         write(MsgOut,'(A)') 'velfile        = output.vel      # velocity restart file'
 
+      if (toks(i) == 'voronoi') &
+        write(MsgOut,'(A)') 'voronoifile    = output.voronoi  # vorinoi file'
+
+      if (toks(i) == 'VORONOI') &
+        write(MsgOut,'(A)') '# voronoifile    = output{}.voronoi# vorinoi file'
+
       if (toks(i) == 'vmd') &
         write(MsgOut,'(A)') 'vmdfile        = output.vmd      # VMD visualization state file'
 
@@ -304,10 +326,13 @@ contains
         write(MsgOut,'(A)') 'weightfile     = output.weight   # weight file'
 
       if (toks(i) == 'WEIGHT') &
-        write(MsgOut,'(A)') 'weightfile     = output{}.weight # weight file'
+        write(MsgOut,'(A)') '# weightfile     = output{}.weight # weight file'
 
       if (toks(i) == 'xsc') &
         write(MsgOut,'(A)') 'xscfile        = output.xsc      # extended system file'
+
+      if (toks(i) == 'morph') &
+        write(MsgOut,'(A)') 'morphfile      = output.mor      # Morphing file'
 
     end do
 
@@ -397,6 +422,8 @@ contains
          out_info%grotopfile)
     call read_ctrlfile_string(handle, Section, 'Grocrdfile',  &
          out_info%grocrdfile)
+    call read_ctrlfile_string(handle, Section, 'Grocrd_tgtfile',  &
+         out_info%grocrd_tgtfile)
     call read_ctrlfile_string(handle, Section, 'Indexfile',   &
          out_info%indexfile)
     call read_ctrlfile_string(handle, Section, 'Logfile',     &
@@ -457,12 +484,18 @@ contains
          out_info%vecfile)
     call read_ctrlfile_string(handle, Section, 'Velfile',     &
          out_info%velfile)
+    call read_ctrlfile_string(handle, Section, 'voronoifile', &
+         out_info%voronoifile)
     call read_ctrlfile_string(handle, Section, 'Vmdfile',     &
          out_info%vmdfile)
     call read_ctrlfile_string(handle, Section, 'weightfile',  &
          out_info%weightfile)
     call read_ctrlfile_string(handle, Section, 'Xscfile',     &
          out_info%xscfile)
+    call read_ctrlfile_string(handle, Section, 'Tblfile',     &
+         out_info%tblfile)
+    call read_ctrlfile_string(handle, Section, 'Morphfile',   &
+         out_info%morphfile)
 
 !TM(181230)
 !    string = ''
@@ -473,9 +506,9 @@ contains
 
     call end_ctrlfile_section(handle)
 
-
     ! write parameters to MsgOut
     !
+
     if (main_rank) then
       write(MsgOut,'(A)') 'Read_Ctrl_Output> Output Files'
       if (len_trim(out_info%ambcrdfile) > 0) &
@@ -516,6 +549,9 @@ contains
         write(MsgOut,'(A20,A)') '  grotopfile      = ', trim(out_info%grotopfile)
       if (len_trim(out_info%grocrdfile) > 0) &
         write(MsgOut,'(A20,A)') '  grocrdfile      = ', trim(out_info%grocrdfile)
+      if (len_trim(out_info%grocrd_tgtfile) > 0) &
+        write(MsgOut,'(A20,A)') '  grocrd_tgtfile  = ', &
+                                                   trim(out_info%grocrd_tgtfile)
       if (len_trim(out_info%indexfile) > 0) &
         write(MsgOut,'(A20,A)') '  indexfile       = ', trim(out_info%indexfile)
       if (len_trim(out_info%logfile) > 0) &
@@ -530,6 +566,8 @@ contains
         write(MsgOut,'(A20,A)') '  pcafile         = ', trim(out_info%pcafile)
       if (len_trim(out_info%pdbfile) > 0) &
         write(MsgOut,'(A20,A)') '  pdbfile         = ', trim(out_info%pdbfile)
+      if (len_trim(out_info%pdb_tgtfile) > 0) &
+        write(MsgOut,'(A20,A)') '  pdb_tgtfile     = ', trim(out_info%pdb_tgtfile)
       if (len_trim(out_info%pdb_avefile) > 0) &
         write(MsgOut,'(A20,A)') '  pdb_avefile     = ', trim(out_info%pdb_avefile)
       if (len_trim(out_info%pdb_aftfile) > 0) &
@@ -582,6 +620,10 @@ contains
         write(MsgOut,'(A20,A)') '  weightfile      = ', trim(out_info%weightfile)
       if (len_trim(out_info%xscfile) > 0) &
         write(MsgOut,'(A20,A)') '  xscfile         = ', trim(out_info%xscfile)
+      if (len_trim(out_info%tblfile) > 0) &
+        write(MsgOut,'(A20,A)') '  tblfile         = ', trim(out_info%tblfile)
+      if (len_trim(out_info%morphfile) > 0) &
+        write(MsgOut,'(A20,A)') '  morphfile       = ', trim(out_info%morphfile)
 
 !TM(181230)
 !      select case(out_info%allow_backup)
@@ -603,6 +645,116 @@ contains
     return
 
   end subroutine read_ctrl_output
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    parse_ctrl_output
+  !> @brief        parse control parameters in OUTPUT section from commandline
+  !! @authors      MK
+  !! @param[in]    section  : output section data
+  !! @param[inout] out_info : OUTPUT section control parameters information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine parse_ctrl_output( section, out_info )
+
+    type(genesis_opt_section), intent(in)    :: section
+    type(s_out_info),          intent(inout) :: out_info
+
+    integer :: i
+
+    do i = 1, section%count
+      select case( section%items(i)%name )
+        case ("angfile")
+          out_info%angfile = section%items(i)%value
+        case ("cntfile")
+          out_info%cntfile = section%items(i)%value
+        case ("comangfile")
+          out_info%comangfile = section%items(i)%value
+        case ("comdisfile")
+          out_info%comdisfile = section%items(i)%value
+        case ("comtorfile")
+          out_info%comtorfile = section%items(i)%value
+        case ("coorfile")
+          out_info%coorfile = section%items(i)%value
+        case ("crsfile")
+          out_info%crsfile = section%items(i)%value
+        case ("disfile")
+          out_info%disfile = section%items(i)%value
+        case ("enefile")
+          out_info%enefile = section%items(i)%value
+        case ("fenefile")
+          out_info%fenefile = section%items(i)%value
+        case ("gprfile")
+          out_info%gprfile = section%items(i)%value
+        case ("grotopfile")
+          out_info%grotopfile = section%items(i)%value
+        case ("grocrdfile")
+          out_info%grocrdfile = section%items(i)%value
+        case ("grocrd_tgtfile")
+          out_info%grocrd_tgtfile = section%items(i)%value
+        case ("pathcvfile")
+          out_info%pathcvfile = section%items(i)%value
+        case ("pcafile")
+          out_info%pcafile = section%items(i)%value
+        case ("pdbfile")
+          out_info%pdbfile = section%items(i)%value
+        case ("pdb_avefile")
+          out_info%pdb_avefile = section%items(i)%value
+        case ("pdb_aftfile")
+          out_info%pdb_aftfile = section%items(i)%value
+        case ("pmffile")
+          out_info%pmffile = section%items(i)%value
+        case ("prjfile")
+          out_info%prjfile = section%items(i)%value
+        case ("probfile")
+          out_info%probfile = section%items(i)%value
+        case ("qntfile")
+          out_info%qntfile = section%items(i)%value
+        case ("rmsfile")
+          out_info%rmsfile = section%items(i)%value
+        case ("rstfile")
+          out_info%rstfile = section%items(i)%value
+        case ("torfile")
+          out_info%torfile = section%items(i)%value
+        case ("trjfile")
+          out_info%trjfile = section%items(i)%value
+        case ("trrfile")
+          out_info%trrfile = section%items(i)%value
+        case ("valfile")
+          out_info%valfile = section%items(i)%value
+        case ("vcvfile")
+          out_info%vcvfile = section%items(i)%value
+        case ("vecfile")
+          out_info%vecfile = section%items(i)%value
+        case ("velfile")
+          out_info%velfile = section%items(i)%value
+        case ("voronoifile")
+          out_info%voronoifile = section%items(i)%value
+        case ("weightfile")
+          out_info%weightfile = section%items(i)%value
+        case ("xscfile")
+          out_info%xscfile = section%items(i)%value
+        case ("morphfile")
+          out_info%morphfile = section%items(i)%value
+        case( "indexfile")
+          out_info%indexfile = section%items(i)%value
+        case default
+          write(MsgOut,'("Error(OUTPUT)> unknown param name ", a, " found.")') &
+              trim(section%items(i)%name)
+          call error_msg('Error(parse_ctrl_output)> quit program')
+      end select
+
+      write(MsgOut,'("INFO> PARAMETER:", a, " of SECTION:", &
+                          & a, " is replaced to:", a )') &
+          trim(section%items(i)%name), trim(section%name), &
+          trim(section%items(i)%value)
+
+    end do
+
+    return
+
+  end subroutine parse_ctrl_output
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -637,6 +789,7 @@ contains
     output%gprfile      = out_info%gprfile
     output%grotopfile   = out_info%grotopfile
     output%grocrdfile   = out_info%grocrdfile
+    output%grocrd_tgtfile  = out_info%grocrd_tgtfile
     output%hb_listfile  = out_info%hb_listfile
     output%indexfile    = out_info%indexfile
     output%logfile      = out_info%logfile
@@ -649,6 +802,7 @@ contains
     output%pdbfile      = out_info%pdbfile
     output%pdb_avefile  = out_info%pdb_avefile
     output%pdb_aftfile  = out_info%pdb_aftfile
+    output%pdb_tgtfile  = out_info%pdb_tgtfile
     output%pmffile      = out_info%pmffile
     output%pmlfile      = out_info%pmlfile
     output%prjfile      = out_info%prjfile
@@ -673,6 +827,8 @@ contains
     output%vmdfile      = out_info%vmdfile
     output%weightfile   = out_info%weightfile
     output%xscfile      = out_info%xscfile
+    output%tblfile      = out_info%tblfile
+    output%morphfile    = out_info%morphfile
 
 !TM(181230)
 !    call set_backup_allowed_by_control(out_info%allow_backup)

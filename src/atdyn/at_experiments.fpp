@@ -18,15 +18,16 @@ module at_experiments_mod
   use at_restraints_str_mod
   use at_experiments_str_mod
   use at_enefunc_str_mod
-  use fileio_sit_mod
   use fileio_mod
+  use fileio_sit_mod
+  use fileio_mrc_mod
   use fileio_control_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
   use string_mod
   use timers_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -35,20 +36,12 @@ module at_experiments_mod
 
   ! structures
   type, public :: s_exp_info
-    logical                         :: emfit           = .false.
-    integer                         :: emfit_type      = ExperimentsEmfit
-    character(MaxFilename)          :: emfit_target    = ''
-    real(wp)                        :: emfit_sigma     = 2.5_wp
-    real(wp)                        :: emfit_tolerance = 0.001_wp
-    integer                         :: emfit_period    = 1
-
-    real(wp)                        :: emfit_pixel_size   = 1.0
-    real(wp)                        :: emfit_roll_angle   = 0.0
-    real(wp)                        :: emfit_tilt_angle   = 0.0
-    real(wp)                        :: emfit_yaw_angle    = 0.0
-    real(wp)                        :: emfit_shift_x      = 0.0
-    real(wp)                        :: emfit_shift_y      = 0.0
-
+    logical                         :: emfit                = .false.
+    character(MaxFilename)          :: emfit_target         = ''
+    real(wp)                        :: emfit_sigma          = 2.5_wp
+    real(wp)                        :: emfit_tolerance      = 0.001_wp
+    integer                         :: emfit_period         = 1
+    real(wp)                        :: emfit_zero_threshold = 0.0_wp
   end type s_exp_info
 
   type(s_experiments), target, save :: experiments
@@ -65,7 +58,6 @@ module at_experiments_mod
   real(wp),       allocatable, save :: dexpa_x(:,:), dexpa_y(:,:), dexpa_z(:,:)
   real(wp),       allocatable, save :: dot_sim_drhodx(:), dot_sim_drhody(:), dot_sim_drhodz(:)
   real(wp),       allocatable, save :: emfit_force(:,:)
-  character(MaxFilename)          :: emfit_target_test    = ''
 
   ! subroutines
   public  :: show_ctrl_experiments
@@ -74,11 +66,6 @@ module at_experiments_mod
   private :: setup_experiments_emfit
   public  :: compute_energy_experimental_restraint
   private :: compute_energy_experimental_restraint_emfit
-  private :: setup_experiments_emfit_img
-  private :: compute_energy_experimental_restraint_emfit_img
-  private :: Euler_angle2Matrix
-  private :: read_header_spi
-  private :: read_data_spi
 
 contains
 
@@ -106,21 +93,13 @@ contains
       case ('md', 'remd')
 
         write(MsgOut,'(A)') '[EXPERIMENTS]'
-        write(MsgOut,'(A)') 'emfit             = YES / NO '
-        write(MsgOut,'(A)') 'emfit_type        = VOLUME / IMAGE '
-        write(MsgOut,'(A)') ' '
-        write(MsgOut,'(A)') '# emfit_target    = sample.sit  # EM data file'
-        write(MsgOut,'(A)') '# emfit_sigma     = 2.5         # resolution parameter of the simulated map'
-        write(MsgOut,'(A)') '# emfit_tolerance = 0.001       # Tolerance for error'
-        write(MsgOut,'(A)') '# emfit_period    = 1           # emfit force update period'
-        write(MsgOut,'(A)') ' '
-        write(MsgOut,'(A)') '# emfit_pixel_size    = 0.0  # Pixel Size in Angstrom'
-        write(MsgOut,'(A)') '# emfit_roll_angle    = 0.0  # Euleur roll angle in degrees'
-        write(MsgOut,'(A)') '# emfit_tilt_angle    = 0.0  # Euleur tilt angle in degrees'
-        write(MsgOut,'(A)') '# emfit_yaw_angle     = 0.0  # Euleur yaw angle in degrees'
-        write(MsgOut,'(A)') '# emfit_shift_x       = 0.0  # Shift in x direction in pixel'
-        write(MsgOut,'(A)') '# emfit_shift_y       = 0.0  # Shift in y direction in pixel'
-        write(MsgOut,'(A)') ' '
+        write(MsgOut,'(A)') 'emfit                  = NO          # EM fit'
+        write(MsgOut,'(A)') '# emfit_target         = sample.map  # Density map file (*.map *.mrc *.ccp4 *.sit)'
+        write(MsgOut,'(A)') '# emfit_sigma          = 2.5         # resolution parameter of the simulated map'
+        write(MsgOut,'(A)') '# emfit_tolerance      = 0.001       # Tolerance for error'
+        write(MsgOut,'(A)') '# emfit_period         = 1           # emfit force update period'
+        write(MsgOut,'(A)') '# emfit_zero_threshold = 0.0         # zero threshold setting'
+        write(MsgOut,'(A)') ''
 
       end select
 
@@ -156,40 +135,23 @@ contains
     ! 
     call begin_ctrlfile_section(handle, Section)
 
-    call read_ctrlfile_logical(handle, Section, 'emfit',           &
-                                exp_info%emfit)
-    call read_ctrlfile_type(handle, Section, 'emfit_type',         &
-                               exp_info%emfit_type, ExperimentsTypes)
+    call read_ctrlfile_logical(handle, Section, 'emfit',                &
+                              exp_info%emfit)
 
-    call read_ctrlfile_string (handle, Section, 'emfit_target',    &
+    call read_ctrlfile_string (handle, Section, 'emfit_target',         &
                               exp_info%emfit_target)
 
-    call read_ctrlfile_real   (handle, Section, 'emfit_sigma',     &
+    call read_ctrlfile_real   (handle, Section, 'emfit_sigma',          &
                               exp_info%emfit_sigma)
 
-    call read_ctrlfile_real   (handle, Section, 'emfit_tolerance', &
+    call read_ctrlfile_real   (handle, Section, 'emfit_tolerance',      &
                               exp_info%emfit_tolerance)
 
-    call read_ctrlfile_integer(handle, Section, 'emfit_period',    &
+    call read_ctrlfile_integer(handle, Section, 'emfit_period',         &
                               exp_info%emfit_period)
 
-    call read_ctrlfile_real   (handle, Section, 'emfit_roll_angle', &
-                            exp_info%emfit_roll_angle)
-
-    call read_ctrlfile_real   (handle, Section, 'emfit_tilt_angle', &
-                            exp_info%emfit_tilt_angle)
-
-    call read_ctrlfile_real   (handle, Section, 'emfit_yaw_angle',	&
-                            exp_info%emfit_yaw_angle)
-
-    call read_ctrlfile_real   (handle, Section, 'emfit_shift_x',	&
-                            exp_info%emfit_shift_x)
-
-    call read_ctrlfile_real   (handle, Section, 'emfit_shift_y',	&
-                            exp_info%emfit_shift_y)
-
-    call read_ctrlfile_real(handle, Section, 'emfit_pixel_size',		&
-                            exp_info%emfit_pixel_size)
+    call read_ctrlfile_real   (handle, Section, 'emfit_zero_threshold', &
+                              exp_info%emfit_zero_threshold)
 
 
     call end_ctrlfile_section(handle)
@@ -200,39 +162,17 @@ contains
     if (main_rank) then
 
       if (exp_info%emfit) then
-        if (exp_info%emfit_type == ExperimentsEmfit) then
 
-          write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
-          write(MsgOut,'(a20)') '  emfit           = VOLUME'
-          write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
-          write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
-                '  emfit_sigma     = ', exp_info%emfit_sigma,        &
-                '  emfit_tolerance = ', exp_info%emfit_tolerance
-          write(MsgOut,'(a20,I10)')                                  &
-                '  emfit_period    = ', exp_info%emfit_period
-          write(MsgOut,'(a)') ' '
+        write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
+        write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
+        write(MsgOut,'(a20,F10.4,a20,F10.4)')                        &
+              '  emfit_sigma     = ', exp_info%emfit_sigma,          &
+              '  emfit_tolerance = ', exp_info%emfit_tolerance
+        write(MsgOut,'(a20,F10.4,a20,I10)')                          &
+              '  zero threshold  = ', exp_info%emfit_zero_threshold, &
+              '  emfit_period    = ', exp_info%emfit_period
+        write(MsgOut,'(a)') ''
 
-        else if (exp_info%emfit_type == ExperimentsEmfitImg) then
-
-          write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting of images'
-          write(MsgOut,'(a20)') '  emfit           = IMAGE'
-          write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
-          write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
-                '  emfit_sigma     = ', exp_info%emfit_sigma,        &
-                '  emfit_tolerance = ', exp_info%emfit_tolerance
-          write(MsgOut,'(a20,I10, a20,F10.4)')                       &
-                '  emfit_period    = ', exp_info%emfit_period, &
-                '  emfit_yaw_angle = ', exp_info%emfit_yaw_angle
-
-          write(MsgOut,'(a20,F10.4,a20,F10.4)')&
-                '  emfit_roll_angle = ', exp_info%emfit_roll_angle, &
-                '  emfit_tilt_angle = ', exp_info%emfit_tilt_angle
-          write(MsgOut,'(a20,F10.4,a20,F10.4)')&      
-                '  emfit_shift_x    = ', exp_info%emfit_shift_x,  &
-                '  emfit_shift_y    = ', exp_info%emfit_shift_y
-          write(MsgOut,'(a)') ' '
-
-        end if
       end if
 
     end if
@@ -264,7 +204,6 @@ contains
     logical    :: do_emfit_res
 
     experiments%do_emfit = .false.
-    experiments%emfit_type = exp_info%emfit_type
 
     if (exp_info%emfit) then
 
@@ -278,12 +217,7 @@ contains
       end if
 
       experiments%do_emfit = .true.
-
-      if (exp_info%emfit_type == ExperimentsEmfit) then
-        call setup_experiments_emfit(exp_info, molecule)
-      else if (exp_info%emfit_type == ExperimentsEmfitImg) then
-        call setup_experiments_emfit_img(exp_info, molecule)
-      endif
+      call setup_experiments_emfit(exp_info, molecule)
 
     end if
 
@@ -309,45 +243,104 @@ contains
 
     ! local variables
     type(s_sit)             :: sit
+    type(s_mrc)             :: mrc
     integer                 :: i, j, k, n(3), max_nxyz
     real(wp)                :: pi, r, y
+    real(wp)                :: x0, y0, z0, dx, dy, dz
+    integer                 :: ix, iy, iz, idx
+    character(10)           :: file_ext
+    logical                 :: format_mrc, format_sit
 
-
-    ! read sitfile
+    ! read mapfile
     !
-    call input_sit(exp_info%emfit_target, sit)
+    format_mrc = .false.
+    format_sit = .false.
+    file_ext   = get_extension(exp_info%emfit_target)
+
+    if (file_ext == "map" .or. file_ext == "ccp4" .or. file_ext == "mrc") then
+      format_mrc = .true.
+      call input_mrc(exp_info%emfit_target, mrc)
+      n(1) = mrc%nx
+      n(2) = mrc%ny
+      n(3) = mrc%nz
+      x0   = mrc%origin(1)
+      y0   = mrc%origin(2)
+      z0   = mrc%origin(3)
+      dx   = mrc%cella(1)/mrc%nx
+      dy   = mrc%cella(2)/mrc%ny
+      dz   = mrc%cella(3)/mrc%nz
+    else if (file_ext == "sit") then
+      format_sit = .true.
+      call input_sit(exp_info%emfit_target, sit)
+      n(1) = sit%nx
+      n(2) = sit%ny
+      n(3) = sit%nz
+      x0   = sit%x0
+      y0   = sit%y0
+      z0   = sit%z0
+      dx   = sit%dx
+      dy   = sit%dx
+      dz   = sit%dx
+    else
+      call error_msg('Setup_Experiments_Emfit> Unrecognized file format of the EM density map.')
+    end if
 
     ! allocate array
     !
-    n(1) = sit%nx
-    n(2) = sit%ny
-    n(3) = sit%nz
     max_nxyz = maxval(n)
     call alloc_experiments(experiments, ExperimentsEmfit, &
-                           sit%nx, sit%ny, sit%nz,        &
+                           n(1), n(2), n(3),              &
                            molecule%num_atoms, max_nxyz)
+
+    experiments%emfit%nx = n(1)
+    experiments%emfit%ny = n(2)
+    experiments%emfit%nz = n(3)
+    experiments%emfit%x0 = x0
+    experiments%emfit%y0 = y0
+    experiments%emfit%z0 = z0
+    experiments%emfit%dx = dx
+    experiments%emfit%dy = dy
+    experiments%emfit%dz = dz
 
     experiments%emfit%sigma        = exp_info%emfit_sigma
     experiments%emfit%tolerance    = exp_info%emfit_tolerance
     experiments%emfit%emfit_period = exp_info%emfit_period
 
-    experiments%emfit%target_map(:,:,:) = sit%map_data(:,:,:)
-    experiments%emfit%nx = sit%nx
-    experiments%emfit%ny = sit%ny
-    experiments%emfit%nz = sit%nz
-    experiments%emfit%x0 = sit%x0
-    experiments%emfit%y0 = sit%y0
-    experiments%emfit%z0 = sit%z0
-    experiments%emfit%dx = sit%dx
-    experiments%emfit%dy = sit%dy
-    experiments%emfit%dz = sit%dz
+    ! set target EM density map
+    !
+    do iz = 0, n(3) - 1
+      do iy = 0, n(2) - 1
+        do ix = 0, n(1) - 1
+          idx = 1 + ix + iy*n(1) + iz*n(1)*n(2)
+
+          if (format_mrc) then
+
+            if (mrc%map_value(idx) < exp_info%emfit_zero_threshold) then
+              experiments%emfit%target_map(ix,iy,iz) = 0.0_wp
+            else
+              experiments%emfit%target_map(ix,iy,iz) = mrc%map_value(idx)
+            end if
+
+          else if (format_sit) then
+
+            if (sit%map_value(idx) < exp_info%emfit_zero_threshold) then
+              experiments%emfit%target_map(ix,iy,iz) = 0.0_wp
+            else
+              experiments%emfit%target_map(ix,iy,iz) = sit%map_value(idx)
+            end if
+
+          end if
+
+        end do
+      end do
+    end do
 
     ! need to calculate norm for force calculation
     !
     experiments%emfit%norm_exp = 0.0_wp
-    do i = 0, sit%nx - 1
-      do j = 0, sit%ny - 1
-        do k = 0, sit%nz - 1
+    do i = 0, n(1) - 1
+      do j = 0, n(2) - 1
+        do k = 0, n(3) - 1
           experiments%emfit%norm_exp = experiments%emfit%norm_exp &
                                      + experiments%emfit%target_map(i,j,k)**2
         end do
@@ -358,14 +351,14 @@ contains
     ! boundary of voxel i is [bound_x(i) bound_x(i+1)]
     ! voxel from (0,0,0) to (nx-1, ny-1, nz-1)
     !
-    do i = 0, sit%nx
-      experiments%emfit%bound_x(i) = sit%x0 + sit%dx * (dble(i) - 0.5_wp)
+    do i = 0, n(1)
+      experiments%emfit%bound_x(i) = x0 + dx * (dble(i) - 0.5_wp)
     end do
-    do i = 0, sit%ny
-      experiments%emfit%bound_y(i) = sit%y0 + sit%dy * (dble(i) - 0.5_wp)
+    do i = 0, n(2)
+      experiments%emfit%bound_y(i) = y0 + dy * (dble(i) - 0.5_wp)
     end do
-    do i = 0, sit%nz
-      experiments%emfit%bound_z(i) = sit%z0 + sit%dz * (dble(i) - 0.5_wp)
+    do i = 0, n(3)
+      experiments%emfit%bound_z(i) = z0 + dz * (dble(i) - 0.5_wp)
     end do
 
     ! determine_cutoff
@@ -379,10 +372,11 @@ contains
       r = r + 0.01_wp
     end do
 
-    experiments%emfit%n_grid_cut_x = ceiling(r*exp_info%emfit_sigma/sit%dx)
-    experiments%emfit%n_grid_cut_y = ceiling(r*exp_info%emfit_sigma/sit%dy)
-    experiments%emfit%n_grid_cut_z = ceiling(r*exp_info%emfit_sigma/sit%dz)
+    experiments%emfit%n_grid_cut_x = ceiling(r*exp_info%emfit_sigma/dx)
+    experiments%emfit%n_grid_cut_y = ceiling(r*exp_info%emfit_sigma/dy)
+    experiments%emfit%n_grid_cut_z = ceiling(r*exp_info%emfit_sigma/dz)
 
+    call dealloc_mrc(mrc)
     call dealloc_sit(sit)
 
     ! for MPI parallelization
@@ -414,57 +408,12 @@ contains
                               experiments%emfit%n_grid_cut_y
       write(MsgOut,'(A,I10)') '  adjacent grids to calculate density along z = ', &
                               experiments%emfit%n_grid_cut_z
+      write(MsgOut,'(A)') ''
     end if
 
     return
 
   end subroutine setup_experiments_emfit
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Function      setup_experiments_emfit_img
-  !> @brief        setup experiments information for image
-  !! @authors      RV
-  !! @param[in]    exp_info    : EXPERIMENTS section control parameter
-  !! @param[in]    molecule : experiments information
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine setup_experiments_emfit_img(exp_info, molecule)
-    ! formal arguments
-    type(s_exp_info),        intent(in)    :: exp_info
-    type(s_molecule),        intent(in)    :: molecule
-
-    experiments%emfit_img%pixel_size  = exp_info%emfit_pixel_size 
-    experiments%emfit_img%shift_x     = exp_info%emfit_shift_x    
-    experiments%emfit_img%shift_y     = exp_info%emfit_shift_y   
-    experiments%emfit_img%period      = exp_info%emfit_period
-    experiments%emfit_img%sigma       = exp_info%emfit_sigma    
-
-    emfit_icycle = -1
-    
-    call Euler_angle2Matrix(exp_info%emfit_roll_angle, &
-        exp_info%emfit_tilt_angle , exp_info%emfit_yaw_angle, &
-        experiments%emfit_img%rot_matrix)
-
-    experiments%emfit_img%inv_rot_matrix = transpose(experiments%emfit_img%rot_matrix)
-      
-    ! distance in pixel where the gaussian is truncated
-    experiments%emfit_img%cutoff = 	&
-          ceiling((sqrt((-(2*(experiments%emfit_img%sigma**2)))&
-          * log(exp_info%emfit_tolerance)))/ experiments%emfit_img%pixel_size)
-
-    call read_header_spi(exp_info%emfit_target,&
-          experiments%emfit_img%image_size)
-
-    call alloc_experiments(experiments, ExperimentsEmfitImg, &
-            experiments%emfit_img%image_size,molecule%num_atoms,0,0,0)
-
-    call read_data_spi(exp_info%emfit_target, experiments%emfit_img%target_img)
-
-    emfit_target_test = exp_info%emfit_target
-
-  end subroutine setup_experiments_emfit_img
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -496,18 +445,8 @@ contains
     real(wp),                intent(inout) :: cv
 
     if (experiments%do_emfit) then
-
-      if (experiments%emfit_type == ExperimentsEmfit) then 
-
-        call compute_energy_experimental_restraint_emfit &
-              (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
-
-      else if (experiments%emfit_type == ExperimentsEmfitImg) then
-       
-        call compute_energy_experimental_restraint_emfit_img &
-              (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
-
-      endif
+      call compute_energy_experimental_restraint_emfit &
+             (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
     end if
 
     return
@@ -574,7 +513,6 @@ contains
     real(wp), pointer :: bound_x(:), bound_y(:), bound_z(:)
 
 
-!    call timer(TimerEmfit, TimerOn)
 
     sigma          => experiments%emfit%sigma
     nx             => experiments%emfit%nx
@@ -790,18 +728,18 @@ contains
     end do
     natom_local = ifound
 
-!    call timer(TimerEmfit, TimerOff)
 
     ! MPI allgather ifound
     !
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(ifound,          1, mpi_integer, &
                        num_atoms_local, 1, mpi_integer, mpi_comm_city, ierror)
+#else
+    num_atoms_local(1) = ifound
 #endif
     max_natom_local = maxval(num_atoms_local(:))
 
 
-!    call timer(TimerEmfit, TimerOn)
 
     ! allocate memory by ifound
     !
@@ -1025,9 +963,8 @@ contains
     end do
     !$omp end parallel do
 
-!    call timer(TimerEmfit, TimerOff)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     before_allreduce(1) = norm_sim
     before_allreduce(2) = dot_exp_sim
 
@@ -1039,7 +976,6 @@ contains
     dot_exp_sim = after_allreduce(2)
 #endif
 
-!    call timer(TimerEmfit, TimerOn)
 
     norm_sim  = sqrt(norm_sim)
     corrcoeff = dot_exp_sim / (norm_exp*norm_sim)
@@ -1078,456 +1014,9 @@ contains
 
     end if
 
-!    call timer(TimerEmfit, TimerOff)
 
     return
 
   end subroutine compute_energy_experimental_restraint_emfit
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine    compute_energy_experimental_restraint_emfit_img
-  !> @brief        calculate restraint energy from experimental data, the data includes two set of images
-  !! @authors      Rémi Vuillemot
-  !! @param[in]    enefunc : potential energy functions information: this potential engergy function is extracted from CHARMM forcefield
-  !! @param[in]    coord   : coordinates of target systems
-  !! @param[in]    inum    : pointer for restraint function
-  !! @param[in]    const   : force constants
-  !! @param[in]    ref     : reference value
-  !! @param[inout] force   : forces of target systems
-  !! @param[inout] virial  : virial of target systems
-  !! @param[out]   eexp    : restraint energy
-  !
-  !======1=========2=========3=========4=========5=========6=========7=========8
-
-  subroutine compute_energy_experimental_restraint_emfit_img(enefunc, coord, inum, &
-    calc_force, force, virial, eexp, cv)
-    ! formal arguments
-    type(s_enefunc), target, intent(inout) 	:: enefunc
-    real(wp),                intent(in)    	:: coord(:,:)
-    integer,                 intent(in)    	:: inum
-    logical,                 intent(in)    	:: calc_force
-    real(wp),                intent(inout) 	:: force(:,:)
-    real(wp),                intent(inout) 	:: virial(3,3)
-    real(wp),                intent(inout) 	:: eexp
-    real(wp),                intent(inout) 	:: cv
-  
-    integer                   :: i, j, a, n_atoms, n_pix, group_id, &
-                                  n, n_atoms_group, cutoff, image_size
-    real(wp) :: roll_angle, tilt_angle, yaw_angle, shift_x, shift_y, pixel_size
-    real(wp) :: gaussian, sigma, norm, threshold
-    real(wp) :: sum_sim2, sum_exp2, sum_simpexp, force_constant	
-    real(wp) :: const1, const2		
-    real(wp) :: mu(2), dpsim(2),  dcc(2)
-    real(wp) :: rot_matrix(4,4),  inv_rot_matrix(4,4)
-    integer,  pointer ::numatoms(:), atom_id(:,:)
-    real(wp), pointer :: sim_image(:,:), exp_image(:,:)
-    real(wp), pointer :: rot_coord(:,:), gaussians_saved(:,:,:), emfit_img_force(:,:)
-    integer,pointer	:: pixels(:,:)
-    character(MaxFilename) :: outfile 
-  
-    n_atoms = size(coord,2)
-    atom_id        => enefunc%restraint_atomlist
-    group_id       =  enefunc%restraint_grouplist(1,inum)
-    numatoms       => enefunc%restraint_numatoms
-    n_atoms_group = numatoms(group_id)
-
-    image_size = experiments%emfit_img%image_size
-    pixel_size = experiments%emfit_img%pixel_size
-    roll_angle = experiments%emfit_img%roll_angle
-    tilt_angle = experiments%emfit_img%tilt_angle
-    yaw_angle  = experiments%emfit_img%yaw_angle 
-    shift_x    = experiments%emfit_img%shift_x   
-    shift_y    = experiments%emfit_img%shift_y   
-    sigma      = experiments%emfit_img%sigma
-    cutoff     = experiments%emfit_img%cutoff
-    exp_image  => experiments%emfit_img%target_img 
-    sim_image  => experiments%emfit_img%simulated_img  
-    rot_coord  => experiments%emfit_img%rot_coord   
-    pixels     => experiments%emfit_img%pixels     
-    emfit_img_force  => experiments%emfit_img%emfit_img_force       
-    gaussians_saved  => experiments%emfit_img%gaussians_saved
-
-
-    ! ------------------------------------------------------------------------
-    ! PERFORM EMFIT OR NOT
-    ! ------------------------------------------------------------------------
-    emfit_icycle = emfit_icycle + 1
-    if (experiments%emfit_img%period /= 0) then
-      if (mod(emfit_icycle,experiments%emfit_img%period) /= 0) then
-        do a=1, n_atoms_group
-          n=  atom_id(a,group_id)
-          force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)
-        end do
-        cv= corrcoeff_save
-        force_constant = enefunc%restraint_const(1,inum)
-        eexp = force_constant * (1.0_wp - cv)
-        return
-      end if
-    else
-      return
-    end if
-
-    ! ------------------------------------------------------------------------
-    ! ROTATE AND SHIFT PDB
-    ! ------------------------------------------------------------------------
-    do a=1, n_atoms_group
-      n=  atom_id(a,group_id)
-      rot_coord(1:3,a)=matmul(experiments%emfit_img%rot_matrix(1:3,1:3),coord(1:3,n))
-      rot_coord(1,a) = rot_coord(1,a) - (shift_x * pixel_size)
-      rot_coord(2,a) = rot_coord(2,a) - (shift_y * pixel_size)
-    end do
-    
-    ! ------------------------------------------------------------------------
-    ! SELECT PIXELS TO INTEGRATE
-    ! ------------------------------------------------------------------------
-    ! number of pixels considered per atom
-    n_pix = int(cutoff*2)  	
-
-    do a = 1, n_atoms_group
-      pixels(1,a) = 1+nint(rot_coord(1,a)/pixel_size + (image_size/2))-cutoff ! starting pixel
-      pixels(2,a) = 1+nint(rot_coord(2,a)/pixel_size + (image_size/2))-cutoff
-
-      ! Check if the atom is extending outside the box
-      if (((pixels(1,a) <= 0) .or. (pixels(2,a) <= 0)) .or. &
-      (((pixels(1,a)+n_pix) > image_size) .or. ((pixels(2,a)+n_pix) > image_size))) then
-        write(MsgOut,'(A)') 'Gaussian kernel is extending outside the map box for atom '
-        write(MsgOut,'(A,I10)') '   pix1 : ', pixels(1,a)
-        write(MsgOut,'(A,I10)') '   pix2 : ', pixels(2,a)
-        call error_msg('Compute_Energy_Experimental_Restraint_Emfit_Img> Gaussian kernel is extending outside the map box ')
-      endif
-    end do
-  
-    ! ------------------------------------------------------------------------
-    ! GENERATE SIM IMAGE
-    ! ------------------------------------------------------------------------
-    sim_image(:,:) = 0.0_wp
-  
-    !$omp parallel do default(none)                                 &
-    !$omp private(a,i,j , mu, norm, gaussian)                   &
-    !$omp shared(pixels, n_pix,image_size, pixel_size, &
-    !$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id, n_atoms_group)
-    !
-  
-    do a=1, n_atoms_group
-      do j=pixels(2,a), pixels(2,a) + n_pix
-        do i=pixels(1,a), pixels(1,a) + n_pix
-
-          mu = (/i,j/)
-          mu = (mu -1- (image_size / 2)) * pixel_size
-  
-          norm = (rot_coord(1,a)-mu(1))**2 + (rot_coord(2,a)-mu(2))**2
-          gaussian = exp(-norm / (2 * (sigma ** 2)))
-          
-          sim_image(i,j) = sim_image(i,j) + gaussian
-  
-          ! save the gaussian to avoid computing them for the gradient
-          gaussians_saved(i,j,a) = gaussian    
-        end do
-      end do
-    end do
-  
-    !$omp end parallel do
-  
-    ! ------------------------------------------------------------------------
-    ! COMPUTE CC
-    ! ------------------------------------------------------------------------
-    sum_sim2 = 0.0
-    sum_exp2 = 0.0
-    sum_simpexp = 0.0
-
-    do j=1, image_size
-      
-      do i=1, image_size
-        sum_sim2 = sum_sim2 + sim_image(i,j) ** 2
-        sum_exp2 = sum_exp2 + exp_image(i,j) ** 2
-        sum_simpexp = sum_simpexp + exp_image(i,j) * sim_image(i,j)
-      end do
-    end do
-  
-    cv= (sum_simpexp / sqrt(sum_sim2 * sum_exp2))
-    force_constant = enefunc%restraint_const(1,inum)
-    eexp = force_constant * (1.0_wp - cv)
-    corrcoeff_save = cv
-  
-    ! ------------------------------------------------------------------------
-    ! GRADIENT COMPUTATION
-    ! ------------------------------------------------------------------------
-    if (calc_force) then
-  
-      const1 = 1/ sqrt(sum_sim2 * sum_exp2)
-      const2 = sum_simpexp / (sqrt(sum_exp2) * sum_sim2**(1.5_wp))
-      emfit_img_force(:,:) = 0.0_wp
-  
-      !$omp parallel do default(none)                                 &
-      !$omp private(a,n, i, j,mu, dpsim,dcc)     &
-      !$omp shared(pixels, n_pix, image_size, pixel_size, &
-      !$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id,&
-      !$omp 	exp_image, const1, const2, force_constant,&
-      !$omp 	emfit_img_force,inv_rot_matrix, force, experiments,n_atoms_group)
-      !
-  
-      do a= 1, n_atoms_group
-  
-        n=  atom_id(a,group_id)
-        dcc = 0.0_wp
-  
-        do j=pixels(2,a), pixels(2,a) + n_pix
-          do i=pixels(1,a), pixels(1,a) + n_pix
-
-            mu = (/i,j/)
-            mu = (mu -1- (image_size / 2)) * pixel_size
-            dpsim = -(rot_coord(1:2,a) - mu) * gaussians_saved(i,j,a) / (sigma ** 2)
-            dcc = dcc + ((exp_image(i,j) * dpsim * const1) - ( sim_image(i,j) * dpsim * const2))
-
-          end do
-        enddo
-  
-        emfit_img_force(1:2,n) = dcc * force_constant
-  
-        force(1:3,n) = force(1:3,n) + matmul(experiments%emfit_img%inv_rot_matrix(1:3,1:3), &
-                      emfit_img_force(1:3,n))
-      end do
-  
-      !$omp end parallel do
-    end if
-
-
-    ! ------------------------------------------------------------------------
-    ! WRITE OUTPUT IMAGE
-    ! ------------------------------------------------------------------------
-    outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.spi"
-    if (mod(emfit_icycle,100) == 0) then 
-      call write_spi(outfile, sim_image)
-    endif
-
-    return
-  end subroutine compute_energy_experimental_restraint_emfit_img
-  
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine         Euler_angle2Matrix
-  !> @brief             convert three rotation angle roll, title and yaw in dgree into a roation matrix
-  !! @authors           Alex Mirzaei, IMPMC pars
-  !! @param[in]         roll : angle in degree
-  !! @param[in]         pitch: angle in degree
-  !! @param[in]          yew : angle in degree
-  !! @param[inout]       A   : 3*3 matrix for rotation and translation
-  ! 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  subroutine Euler_angle2Matrix(roll, tilt, yaw, A)
-    real(wp),                intent(in)    :: roll
-    real(wp),                intent(in)    :: tilt
-    real(wp),                intent(in)    :: yaw
-    real(wp),                intent(inout) :: A(3,3)
-
-    !local variables
-    real(wp) :: pi
-    real(wp) :: a1, b1, g1, sa, ca, sb, cb, sg, cg, cc, cs, sc, ss
-
-    pi = acos(-1.0_wp)
-    a1=pi*roll/180.0_wp
-    b1=pi*tilt/180.0_wp
-    g1=pi*yaw/180.0_wp
-    sa= sin(a1)
-    ca= cos(a1)
-    sb= sin(b1)
-    cb= cos(b1)
-    sg= sin(g1)
-    cg= cos(g1)
-    cc = cb * ca
-    cs = cb * sa
-    sc = sb * ca
-    ss = sb * sa
-    A(1, 1) =  cg * cc - sg * sa
-    A(1, 2) =  cg * cs + sg * ca
-    A(1, 3) = -cg * sb
-    A(2, 1) = -sg * cc - cg * sa
-    A(2, 2) = -sg * cs + cg * ca
-    A(2, 3) =  sg * sb
-    A(3, 1) =  sc
-    A(3, 2) =  ss
-    A(3, 3) =  cb
-
-  end subroutine Euler_angle2Matrix
-
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine         read_header_spi
-  !> @brief		read image_size in header of Spider image 
-  !!			
-  !! @authors           Rémi Vuillemot
-  ! 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  subroutine read_header_spi(filename, image_size)
-    character(MaxFilename),         intent(in)    	 :: filename
-    integer,						intent(inout)    :: image_size
-
-    !local variable
-    real(4)								:: buffer
-    integer ::unit_no, status, i, LENBYT, LABREC, LABBYT
-
-    unit_no = get_unit_no()
-    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
-
-    LABBYT=256
-    i=1
-    do while(i<=LABBYT)
-      read(unit_no,IOSTAT=status) buffer
-      if (status /= 0) &
-        call error_msg("Read_Spider> Error while reading spider image")
-      if (i==12) then
-        image_size = nint(buffer)
-      else if (i==22) then
-	      LABBYT = ceiling(real(buffer)/4)
-      endif
-      i=i+1
-    end do
-    call close_file(unit_no)
-    return
-
-  end subroutine read_header_spi  
-
-   !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine         read_data_spi
-  !> @brief		read Spider image format
-  !!			
-  !! @authors           Rémi Vuillemot
-  ! 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  subroutine read_data_spi(filename, target_image)
-    character(MaxFilename),         intent(in)    	 :: filename
-    real(wp),						intent(inout)    :: target_image(:,:)
-
-    !local variable
-    real(4)								:: buffer
-    integer :: i,j, im_size,unit_no, status,LABBYT, NX, LABREC, LENBYT
-
-    im_size = size(target_image(:,1))
-
-    unit_no = get_unit_no()
-    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
-
-    i=1
-    LABBYT=256
-    do while(i<=LABBYT)
-      read(unit_no,IOSTAT=status) buffer
-      if (status /= 0) &
-        call error_msg("Read_Spider> Error while reading spider image")
-      if (i==22) then
-	      LABBYT = ceiling(real(buffer)/4)
-      endif
-      if (i==12) then
-	      NX = real(buffer)
-      endif
-      if (i==13) then
-	      LABREC = real(buffer)
-      endif
-      if (i==23) then
-	      LENBYT = real(buffer)
-      endif
-
-      i=i+1
-    end do
-
-    do i= 1, im_size
-      do j= 1, im_size
-        read(unit_no,IOSTAT=status) buffer
-        if (status == 0) then
-          target_image(j,i) = real(buffer,wp)
-        else
-          call error_msg("Read_Spider> Error while reading spider image")
-        endif
-      end do
-    end do
-
-    call close_file(unit_no)
-    return
-
-  end subroutine read_data_spi  
-
-     !======1=========2=========3=========4=========5=========6=========7=========8
-  !
-  !  Subroutine         write_spi
-  !> @brief		write Spider image format
-  !!			
-  !! @authors           Rémi Vuillemot
-  ! 
-  !======1=========2=========3=========4=========5=========6=========7=========8
-  subroutine write_spi(filename, target_image)
-    character(MaxFilename),         intent(in)    	 :: filename
-    real(wp),						intent(inout)    :: target_image(:,:)
-
-    !local variable
-    integer :: i,j, unit_no, status
-    integer :: LABBYT, NX,LENBYT, LABREC
-    logical :: file_exists
-
-
-    ! HEADER DATA
-    NX = size(target_image(:,1))
-    LENBYT = NX * 4
-    LABREC = 1024 / LENBYT
-    IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
-    LABBYT = LABREC * LENBYT
-
-
-    inquire(file=filename, exist=file_exists)
-    if (file_exists) then
-      unit_no = get_unit_no()
-      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="replace")
-  
-    else
-      unit_no = get_unit_no()
-      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="new")
-  
-    endif
-
-
-    ! WRITE HEADER
-    ! 1 NZ
-    write(unit_no) real(1,4)
-    ! 2 NY
-    write(unit_no) real(NX,4)  
-    ! 3 IREC
-    write(unit_no) real(LABREC + NX,4)
-    ! 4
-    write(unit_no) real(0,4)
-    ! 5 IFORM
-    write(unit_no) real(1,4)
-    ! skip 6
-    do i =1, 6
-      write(unit_no) real(0,4)
-    enddo
-    ! 12 NX
-    write(unit_no) real(NX,4)
-    ! 13 LABREC
-    write(unit_no) real(LABREC,4)
-    ! skip 7
-    do i =1, 7
-      write(unit_no) real(0,4)
-    enddo
-    ! 21 SCALE
-    write(unit_no) real(1.0,4)
-    ! 22 LABBYT
-    write(unit_no) real(LABBYT,4)
-    ! 23 LENBYT
-    write(unit_no) real(LENBYT,4)
-    ! skip
-    do i =1, (int(LABBYT/4) -23)
-      write(unit_no) real(0,4)
-    enddo
-
-    do i= 1, NX
-      do j= 1, NX
-        write(unit_no) real(target_image(j,i),4)
-      end do
-    end do
-
-    call close_file(unit_no)
-    return
-
-  end subroutine write_spi  
 
 end module at_experiments_mod

@@ -20,14 +20,16 @@ module sp_experiments_mod
   use sp_enefunc_str_mod
   use sp_domain_str_mod
   use sp_boundary_str_mod
+  use fileio_mod
   use fileio_sit_mod
+  use fileio_mrc_mod
   use fileio_control_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
   use string_mod
   use timers_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -36,11 +38,12 @@ module sp_experiments_mod
 
   ! structures
   type, public :: s_exp_info
-    logical                         :: emfit           = .false.
-    character(MaxFilename)          :: emfit_target    = ''
-    real(wp)                        :: emfit_sigma     = 2.5_wp
-    real(wp)                        :: emfit_tolerance = 0.001_wp
-    integer                         :: emfit_period    = 1
+    logical                         :: emfit                = .false.
+    character(MaxFilename)          :: emfit_target         = ''
+    real(wp)                        :: emfit_sigma          = 2.5_wp
+    real(wp)                        :: emfit_tolerance      = 0.001_wp
+    integer                         :: emfit_period         = 1
+    real(wp)                        :: emfit_zero_threshold = 0.0_wp
   end type s_exp_info
 
   integer,                     save :: emfit_icycle
@@ -122,11 +125,12 @@ contains
       case ('md', 'remd')
 
         write(MsgOut,'(A)') '[EXPERIMENTS]'
-        write(MsgOut,'(A)') 'emfit           = NO          # EM fit'
-        write(MsgOut,'(A)') '# emfit_target    = sample.sit  # EM data file'
-        write(MsgOut,'(A)') '# emfit_sigma     = 2.5         # resolution parameter of the simulated map'
-        write(MsgOut,'(A)') '# emfit_tolerance = 0.001       # Tolerance for error'
-        write(MsgOut,'(A)') '# emfit_period    = 1           # emfit force update period'
+        write(MsgOut,'(A)') 'emfit                  = NO          # EM fit'
+        write(MsgOut,'(A)') '# emfit_target         = sample.map  # Density map file (*.map *.mrc *.ccp4 *.sit)'
+        write(MsgOut,'(A)') '# emfit_sigma          = 2.5         # resolution parameter of the simulated map'
+        write(MsgOut,'(A)') '# emfit_tolerance      = 0.001       # Tolerance for error'
+        write(MsgOut,'(A)') '# emfit_period         = 1           # emfit force update period'
+        write(MsgOut,'(A)') '# emfit_zero_threshold = 0.0         # zero threshold setting'
         write(MsgOut,'(A)') ''
 
       end select
@@ -163,20 +167,23 @@ contains
     ! 
     call begin_ctrlfile_section(handle, Section)
 
-    call read_ctrlfile_logical(handle, Section, 'emfit',           &
-                               exp_info%emfit)
+    call read_ctrlfile_logical(handle, Section, 'emfit',                &
+                              exp_info%emfit)
 
-    call read_ctrlfile_string (handle, Section, 'emfit_target',    &
+    call read_ctrlfile_string (handle, Section, 'emfit_target',         &
                               exp_info%emfit_target)
 
-    call read_ctrlfile_real   (handle, Section, 'emfit_sigma',     &
+    call read_ctrlfile_real   (handle, Section, 'emfit_sigma',          &
                               exp_info%emfit_sigma)
 
-    call read_ctrlfile_real   (handle, Section, 'emfit_tolerance', &
+    call read_ctrlfile_real   (handle, Section, 'emfit_tolerance',      &
                               exp_info%emfit_tolerance)
 
-    call read_ctrlfile_integer(handle, Section, 'emfit_period',    &
+    call read_ctrlfile_integer(handle, Section, 'emfit_period',         &
                               exp_info%emfit_period)
+
+    call read_ctrlfile_real   (handle, Section, 'emfit_zero_threshold', &
+                              exp_info%emfit_zero_threshold)
 
     call end_ctrlfile_section(handle)
 
@@ -189,10 +196,11 @@ contains
 
         write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting'
         write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
-        write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
-              '  emfit_sigma     = ', exp_info%emfit_sigma,        &
+        write(MsgOut,'(a20,F10.4,a20,F10.4)')                        &
+              '  emfit_sigma     = ', exp_info%emfit_sigma,          &
               '  emfit_tolerance = ', exp_info%emfit_tolerance
-        write(MsgOut,'(a20,I10)')                                  &
+        write(MsgOut,'(a20,F10.4,a20,I10)')                          &
+              '  zero threshold  = ', exp_info%emfit_zero_threshold, &
               '  emfit_period    = ', exp_info%emfit_period
         write(MsgOut,'(a)') ''
 
@@ -270,38 +278,97 @@ contains
 
     ! local variables
     type(s_sit)             :: sit
+    type(s_mrc)             :: mrc
     integer                 :: i, j, k, idx, n(3)
     real(wp)                :: pi, r, y
-
+    real(wp)                :: x0, y0, z0, dx, dy, dz
+    integer                 :: ix, iy, iz
+    character(10)           :: file_ext
+    logical                 :: format_mrc, format_sit
 
     ! read sitfile
     !
-    call input_sit(exp_info%emfit_target, sit)
+    format_mrc = .false.
+    format_sit = .false.
+    file_ext   = get_extension(exp_info%emfit_target)
+
+    if (file_ext == "map" .or. file_ext == "ccp4" .or. file_ext == "mrc") then
+      format_mrc = .true.
+      call input_mrc(exp_info%emfit_target, mrc)
+      n(1) = mrc%nx
+      n(2) = mrc%ny
+      n(3) = mrc%nz
+      x0   = mrc%origin(1)
+      y0   = mrc%origin(2)
+      z0   = mrc%origin(3)
+      dx   = mrc%cella(1)/mrc%nx
+      dy   = mrc%cella(2)/mrc%ny
+      dz   = mrc%cella(3)/mrc%nz
+    else if (file_ext == "sit") then
+      format_sit = .true.
+      call input_sit(exp_info%emfit_target, sit)
+      n(1) = sit%nx
+      n(2) = sit%ny
+      n(3) = sit%nz
+      x0   = sit%x0
+      y0   = sit%y0
+      z0   = sit%z0
+      dx   = sit%dx
+      dy   = sit%dx
+      dz   = sit%dx
+    else
+      call error_msg('Setup_Experiments_Emfit> Unrecognized file format of the EM density map.')
+    end if
 
     ! allocate array
     !
-    n(1) = sit%nx
-    n(2) = sit%ny
-    n(3) = sit%nz
     max_nxyz = maxval(n)
     call alloc_experiments(experiments, ExperimentsEmfit, &
-                           sit%nx, sit%ny, sit%nz,        &
+                           n(1), n(2), n(3),              &
                            molecule%num_atoms)
 
-    experiments%emfit%sigma     = exp_info%emfit_sigma
-    experiments%emfit%tolerance = exp_info%emfit_tolerance
+    experiments%emfit%nx = n(1)
+    experiments%emfit%ny = n(2)
+    experiments%emfit%nz = n(3)
+    experiments%emfit%x0 = x0
+    experiments%emfit%y0 = y0
+    experiments%emfit%z0 = z0
+    experiments%emfit%dx = dx
+    experiments%emfit%dy = dy
+    experiments%emfit%dz = dz
+
+    experiments%emfit%sigma        = exp_info%emfit_sigma
+    experiments%emfit%tolerance    = exp_info%emfit_tolerance
     experiments%emfit%emfit_period = exp_info%emfit_period
 
-    experiments%emfit%target_map(:,:,:) = sit%map_data(:,:,:)
-    experiments%emfit%nx = sit%nx
-    experiments%emfit%ny = sit%ny
-    experiments%emfit%nz = sit%nz
-    experiments%emfit%x0 = sit%x0
-    experiments%emfit%y0 = sit%y0
-    experiments%emfit%z0 = sit%z0
-    experiments%emfit%dx = sit%dx
-    experiments%emfit%dy = sit%dy
-    experiments%emfit%dz = sit%dz
+    ! set target EM density map
+    !
+    do iz = 0, n(3) - 1
+      do iy = 0, n(2) - 1
+        do ix = 0, n(1) - 1
+          idx = 1 + ix + iy*n(1) + iz*n(1)*n(2)
+
+          if (format_mrc) then
+
+            if (mrc%map_value(idx) < exp_info%emfit_zero_threshold) then
+              experiments%emfit%target_map(ix,iy,iz) = 0.0_wp
+            else
+              experiments%emfit%target_map(ix,iy,iz) = mrc%map_value(idx)
+            end if
+
+          else if (format_sit) then
+
+            if (sit%map_value(idx) < exp_info%emfit_zero_threshold) then
+              experiments%emfit%target_map(ix,iy,iz) = 0.0_wp
+            else
+              experiments%emfit%target_map(ix,iy,iz) = sit%map_value(idx)
+            end if
+
+          end if
+
+        end do
+      end do
+    end do
 
     allocate(num_atoms_local(nproc_city))
     allocate(domain_index   (nproc_city))
@@ -310,9 +377,9 @@ contains
     ! need to calculate norm for force calculation
     !
     experiments%emfit%norm_exp = 0.0_wp
-    do i = 0, sit%nx - 1
-      do j = 0, sit%ny - 1
-        do k = 0, sit%nz - 1
+    do i = 0, n(1) - 1
+      do j = 0, n(2) - 1
+        do k = 0, n(3) - 1
           experiments%emfit%norm_exp = experiments%emfit%norm_exp &
                                      + experiments%emfit%target_map(i,j,k)**2
         end do
@@ -324,14 +391,14 @@ contains
     ! boundary of voxel i is [bound_x(i) bound_x(i+1)]
     ! voxel from (0,0,0) to (nx-1, ny-1, nz-1)
     !
-    do i = 0, sit%nx
-      experiments%emfit%bound_x(i) = sit%x0 + sit%dx * (dble(i) - 0.5_wp)
+    do i = 0, n(1)
+      experiments%emfit%bound_x(i) = x0 + dx * (dble(i) - 0.5_wp)
     end do
-    do i = 0, sit%ny
-      experiments%emfit%bound_y(i) = sit%y0 + sit%dy * (dble(i) - 0.5_wp)
+    do i = 0, n(2)
+      experiments%emfit%bound_y(i) = y0 + dy * (dble(i) - 0.5_wp)
     end do
-    do i = 0, sit%nz
-      experiments%emfit%bound_z(i) = sit%z0 + sit%dz * (dble(i) - 0.5_wp)
+    do i = 0, n(3)
+      experiments%emfit%bound_z(i) = z0 + dz * (dble(i) - 0.5_wp)
     end do
 
 
@@ -346,10 +413,11 @@ contains
       r = r + 0.01_wp
     end do
 
-    experiments%emfit%n_grid_cut_x = ceiling(r*exp_info%emfit_sigma/sit%dx)
-    experiments%emfit%n_grid_cut_y = ceiling(r*exp_info%emfit_sigma/sit%dy)
-    experiments%emfit%n_grid_cut_z = ceiling(r*exp_info%emfit_sigma/sit%dz)
+    experiments%emfit%n_grid_cut_x = ceiling(r*exp_info%emfit_sigma/dx)
+    experiments%emfit%n_grid_cut_y = ceiling(r*exp_info%emfit_sigma/dy)
+    experiments%emfit%n_grid_cut_z = ceiling(r*exp_info%emfit_sigma/dz)
 
+    call dealloc_mrc(mrc)
     call dealloc_sit(sit)
 
 
@@ -437,7 +505,7 @@ contains
     logical           :: start_domain(3), end_domain(3)
     logical           :: do_allocate
     integer,  pointer :: id_l2g(:,:), natom_cell(:)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer           :: istatus(mpi_status_size)
 #endif
 
@@ -509,7 +577,7 @@ contains
       ntimer_count = ntimer_count + 1
       if (ntimer_count == partition_update_period) then
         timer_tmp = total_time(TimerEnergyEmfit)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_allgather(timer_tmp, 1, mpi_wp_real, &
                            timing,    1, mpi_wp_real, mpi_comm_city, ierror)
 #endif
@@ -524,7 +592,7 @@ contains
     ! sorting domain information by number of atoms
     ! and decide the partner domain (domain1)
     !
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(ifound,          1, mpi_integer, &
                        num_atoms_local, 1, mpi_integer, mpi_comm_city, ierror)
 #endif
@@ -921,7 +989,7 @@ contains
     integer           :: natom_domain
     integer           :: irequest6, irequest7
     real(wp)          :: map_ori(3)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer           :: istatus(mpi_status_size)
 #endif
     integer,  pointer :: id_g2l(:,:)
@@ -1222,7 +1290,7 @@ contains
     call timer(TimerEmfit, TimerOff)
     call timer(TimerEnergyEmfit, TimerOff)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     before_allreduce(1) = norm_sim
     before_allreduce(2) = dot_exp_sim
 
@@ -1293,7 +1361,7 @@ contains
       call timer(TimerEmfit, TimerOff)
       call timer(TimerEnergyEmfit, TimerOff)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       if (my_sorted_rank <= nproc_city/2) then
         call mpi_isend(force_domain10, 3*natom_domain10, mpi_wp_real, &
                        domain_index1,  1, mpi_comm_city, irequest6, ierror)
@@ -1337,7 +1405,7 @@ contains
       ! allreduce emfit_force
       !
       if (experiments%emfit%emfit_period >= 2) then
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         emfit_force(:,:) = 0.0_wp
         ncycle = (natom_all - 1) / mpi_drain + 1
         nlen   = mpi_drain

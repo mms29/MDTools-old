@@ -26,7 +26,10 @@ module sp_energy_go_mod
 
   ! subroutines
   public :: compute_energy_contact_126
+  public :: compute_energy_contact_1210
+  public :: compute_energy_contact_1210_pbc
   public :: compute_energy_noncontact_nobc
+  public :: compute_energy_noncontact_pbc
 
 contains
 
@@ -125,16 +128,126 @@ contains
         econt     = econt + term_lj12 - term_lj6
         coef      = 12.0_wp*term_lj12 - 6.0_wp*term_lj6
 
-        ! noncontact energy
+        ! gradient: dE/dX
         !
-        if (rij2 < cutoff2) then
-          iatmcls   = atmcls(i1,icel1)
-          jatmcls   = atmcls(i2,icel2)
-          lj12      = nonb_lj12(iatmcls, jatmcls)
-          term_lj12 = lj12 * inv_rij12
-          encont    = encont - term_lj12
-          coef      = coef - 12.0_wp*term_lj12
-        end if
+        coef      = - inv_rij2 * coef
+        work(1:3) = coef * dij(1:3)
+
+        ! store force: F=-dE/dX
+        !
+        force(1:3,i1,icel1,id+1) = force(1:3,i1,icel1,id+1) - work(1:3)
+        force(1:3,i2,icel2,id+1) = force(1:3,i2,icel2,id+1) + work(1:3)
+
+      end do
+
+      econtact(id+1) = econtact(id+1) + econt
+
+    end do
+
+    !$omp end parallel
+
+    return
+
+  end subroutine compute_energy_contact_126
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_contact_1210
+  !> @brief        calculate contact energy
+  !! @authors      JJ
+  !! @param[in]    domain  : domain information
+  !! @param[in]    enefunc : potential energy functions information
+  !! @param[in]    coord   : coordinates of target systems
+  !! @param[inout] force   : forces of target systems
+  !! @param[inout] econtact: contact energy of target systems
+  !! @param[inout] enoncontact: non-contact energy of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_contact_1210(domain, enefunc, coord, force, &
+                                         econtact)
+
+    ! formal arguments
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(in)    :: enefunc
+    real(dp),                intent(in)    :: coord(:,:,:)
+    real(wp),                intent(inout) :: force(:,:,:,:)
+    real(dp),                intent(inout) :: econtact(nthread)
+
+    ! local variables
+    real(wp)                 :: dij(1:3), rij2
+    real(wp)                 :: inv_rij2, inv_rij6, inv_rij10, inv_rij12
+    real(wp)                 :: lj10, lj12, term_lj12, term_lj10
+    real(wp)                 :: econt, encont, work(3), coef, cutoff2
+    integer                  :: list(2)
+    integer                  :: i, j, ix, icel1, icel2, i1, i2
+    integer                  :: iatmcls, jatmcls
+    integer                  :: id, omp_get_thread_num
+
+    real(wp),        pointer :: contact_lj12(:,:), contact_lj10(:,:)
+    real(wp),        pointer :: nonb_lj12(:,:)
+    integer,         pointer :: ncontact(:), contactlist(:,:,:)
+    integer,         pointer :: atmcls(:,:)
+    integer,         pointer :: ncell_local
+    integer,         pointer :: id_g2l(:,:)
+
+
+    ncell_local  => domain%num_cell_local
+    id_g2l       => domain%id_g2l
+    atmcls       => domain%atom_cls_no
+
+    ncontact     => enefunc%num_contact
+    contactlist  => enefunc%contact_list
+    contact_lj12 => enefunc%contact_lj12
+    contact_lj10 => enefunc%contact_lj10
+    nonb_lj12    => enefunc%nonb_lj12
+
+    cutoff2      = enefunc%cutoffdist * enefunc%cutoffdist
+
+    ! calculate bond energy
+    !
+    !$omp parallel default(shared) &
+    !$omp private(id, i, ix, icel1, i1, icel2, i2, lj10, lj12, dij, rij2, &
+    !$omp         inv_rij2, inv_rij6, inv_rij10, inv_rij12, term_lj12,    &
+    !$omp         term_lj10,    &
+    !$omp         econt, encont, iatmcls, jatmcls, coef, work, list)
+    !
+#ifdef OMP
+    id  = omp_get_thread_num()
+#else
+    id  = 0
+#endif
+
+    do i = id+1, ncell_local, nthread
+
+      econt  = 0.0_wp
+      encont = 0.0_wp
+
+      do ix = 1, ncontact(i)
+
+        list(1:2) = contactlist(1:2,ix,i)
+        icel1 = id_g2l(1,list(1))
+        i1    = id_g2l(2,list(1))
+        icel2 = id_g2l(1,list(2))
+        i2    = id_g2l(2,list(2))
+        dij(1:3)  = coord(1:3,i1,icel1) - coord(1:3,i2,icel2)
+
+        ! contact energy
+        !
+        lj10      = contact_lj10(ix,i)
+        lj12      = contact_lj12(ix,i)
+        rij2      = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+        inv_rij2  = 1.0_wp / rij2
+        inv_rij6  = inv_rij2 * inv_rij2 * inv_rij2 
+        inv_rij10 = inv_rij6 * inv_rij2 * inv_rij2
+        inv_rij12 = inv_rij6 * inv_rij6
+
+        term_lj12 = lj12 * inv_rij12
+        term_lj10 = lj10 * inv_rij10
+        econt     = econt + term_lj12 - term_lj10
+        coef      = 12.0_wp*term_lj12 - 10.0_wp*term_lj10
+        coef      = -inv_rij2 * coef
+
 
         ! gradient: dE/dX
         !
@@ -149,7 +262,6 @@ contains
       end do
 
       econtact(id+1) = econtact(id+1) + econt
-      enoncontact(id+1) = enoncontact(id+1) + encont
 
     end do
 
@@ -157,7 +269,144 @@ contains
 
     return
 
-  end subroutine compute_energy_contact_126
+  end subroutine compute_energy_contact_1210
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_contact_1210_pbc
+  !> @brief        calculate contact energy
+  !! @authors      JJ
+  !! @param[in]    domain  : domain information
+  !! @param[in]    enefunc : potential energy functions information
+  !! @param[in]    coord   : coordinates of target systems
+  !! @param[inout] force   : forces of target systems
+  !! @param[inout] econtact: contact energy of target systems
+  !! @param[inout] enoncontact: non-contact energy of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_contact_1210_pbc(domain, enefunc, coord,       &
+                                             coord_pbc, force, econtact)
+
+    ! formal arguments
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(in)    :: enefunc
+    real(dp),                intent(in)    :: coord(:,:,:)
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(wp),                intent(inout) :: force(:,:,:,:)
+    real(dp),                intent(inout) :: econtact(nthread)
+
+    ! local variables
+    real(wp)                 :: dij(1:3), rij2
+    real(wp)                 :: inv_rij2, inv_rij6, inv_rij10, inv_rij12
+    real(wp)                 :: lj10, lj12, term_lj12, term_lj10
+    real(wp)                 :: econt, encont, work(3), coef, cutoff2
+    integer                  :: list(2), ncell
+    integer                  :: i, j, ix, icel1, icel2, i1, i2
+    integer                  :: iatmcls, jatmcls
+    integer                  :: id, omp_get_thread_num
+
+    real(wp),        pointer :: trans1(:,:,:)
+    real(wp),        pointer :: cell_move(:,:,:), system_size(:)
+    real(wp),        pointer :: contact_lj12(:,:), contact_lj10(:,:)
+    real(wp),        pointer :: nonb_lj12(:,:)
+    integer,         pointer :: natom(:)
+    integer,         pointer :: ncontact(:), contactlist(:,:,:)
+    integer,         pointer :: atmcls(:,:)
+    integer,         pointer :: ncell_local
+    integer,         pointer :: id_g2l(:,:)
+
+
+    ncell_local  => domain%num_cell_local
+    natom        => domain%num_atom
+    id_g2l       => domain%id_g2l
+    atmcls       => domain%atom_cls_no
+    trans1       => domain%trans_vec
+    cell_move    => domain%cell_move
+    system_size  => domain%system_size
+
+    ncontact     => enefunc%num_contact
+    contactlist  => enefunc%contact_list
+    contact_lj12 => enefunc%contact_lj12
+    contact_lj10 => enefunc%contact_lj10
+    nonb_lj12    => enefunc%nonb_lj12
+
+    cutoff2      = enefunc%cutoffdist * enefunc%cutoffdist
+    ncell        = ncell_local + domain%num_cell_boundary
+
+    !$omp parallel default(shared) &
+    !$omp private(id, i, ix, icel1, i1, icel2, i2, lj10, lj12, dij, rij2, &
+    !$omp         inv_rij2, inv_rij6, inv_rij10, inv_rij12, term_lj12,    &
+    !$omp         term_lj10,    &
+    !$omp         econt, encont, iatmcls, jatmcls, coef, work, list)
+    !
+#ifdef OMP
+    id  = omp_get_thread_num()
+#else
+    id  = 0
+#endif
+
+    do i = id+1, ncell, nthread
+      do ix = 1, natom(i)
+        coord_pbc(1,ix,i) = coord(1,ix,i) + trans1(1,ix,i)
+        coord_pbc(2,ix,i) = coord(2,ix,i) + trans1(2,ix,i)
+        coord_pbc(3,ix,i) = coord(3,ix,i) + trans1(3,ix,i)
+      end do
+    end do
+
+    !$omp barrier
+
+    do i = id+1, ncell_local, nthread
+
+      econt  = 0.0_wp
+
+      do ix = 1, ncontact(i)
+
+        list(1:2) = contactlist(1:2,ix,i)
+        icel1 = id_g2l(1,list(1))
+        i1    = id_g2l(2,list(1))
+        icel2 = id_g2l(1,list(2))
+        i2    = id_g2l(2,list(2))
+        dij(1:3)  = coord_pbc(1:3,i1,icel1) - coord_pbc(1:3,i2,icel2) &
+                  + cell_move(1:3,icel2,icel1)*system_size(1:3)
+
+        ! contact energy
+        !
+        lj10      = contact_lj10(ix,i)
+        lj12      = contact_lj12(ix,i)
+        rij2      = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+        inv_rij2  = 1.0_wp / rij2
+        inv_rij6  = inv_rij2 * inv_rij2 * inv_rij2 
+        inv_rij10 = inv_rij6 * inv_rij2 * inv_rij2
+        inv_rij12 = inv_rij6 * inv_rij6
+
+        term_lj12 = lj12 * inv_rij12
+        term_lj10 = lj10 * inv_rij10
+        econt     = econt + term_lj12 - term_lj10
+        coef      = 12.0_wp*term_lj12 - 10.0_wp*term_lj10
+
+
+        ! gradient: dE/dX
+        !
+        coef      = - inv_rij2 * coef
+        work(1:3) = coef * dij(1:3)
+
+        ! store force: F=-dE/dX
+        !
+        force(1:3,i1,icel1,id+1) = force(1:3,i1,icel1,id+1) - work(1:3)
+        force(1:3,i2,icel2,id+1) = force(1:3,i2,icel2,id+1) + work(1:3)
+
+      end do
+
+      econtact(id+1) = econtact(id+1) + econt
+
+    end do
+
+    !$omp end parallel
+
+    return
+
+  end subroutine compute_energy_contact_1210_pbc
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -286,6 +535,152 @@ contains
     return
 
   end subroutine compute_energy_noncontact_nobc
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_noncontact_pbc
+  !> @brief        calculate nonbonded energy
+  !! @authors      JJ
+  !! @param[in]    domain   : domain information
+  !! @param[in]    enefunc  : potential energy functions
+  !! @param[in]    pairlist : interaction list in each domain
+  !! @param[inout] force    : forces for each cell
+  !! @param[inout] enoncontact : non-native contact energy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_noncontact_pbc(domain, enefunc, pairlist, coord, &
+                                           coord_pbc, force, enoncontact)
+
+    ! formal arguments
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_enefunc),  target, intent(in)    :: enefunc
+    type(s_pairlist), target, intent(in)    :: pairlist
+    real(dp),                 intent(in)    :: coord(:,:,:)
+    real(wp),                 intent(inout) :: coord_pbc(:,:,:)
+    real(wp),                 intent(inout) :: force(:,:,:,:)
+    real(dp),                 intent(inout) :: enoncontact(nthread)
+
+    ! local variables
+    real(wp)                  :: dij(1:3), rij2, inv_rij2, inv_rij6, inv_rij12
+    real(wp)                  :: lj12, term_lj12, cutoff2
+    real(wp)                  :: grad_coef, work(1:3)
+    real(wp)                  :: rtmp(1:3)
+    real(wp)                  :: encont
+    real(wp)                  :: force_local(3)
+    integer                   :: i, ix, iy, j, k
+    integer                   :: num_nb15
+    integer                   :: id, omp_get_thread_num, j_list(MaxAtom)
+    integer                   :: ncell, ncell_local
+    integer                   :: iatmcls, jatmcls
+
+    real(wp),         pointer :: trans1(:,:,:)
+    real(wp),         pointer :: cell_move(:,:,:), system_size(:)
+    real(wp),         pointer :: nonb_lj12(:,:)
+    real(wp),         pointer :: cutoff
+    real(wp),         pointer :: table_ene(:), table_grad(:)
+    integer,          pointer :: cell_pairlist(:,:), atmcls(:,:)
+    integer,          pointer :: natom(:), nsolute(:), nwater(:)
+    integer,          pointer :: nb15_list(:,:)
+    integer,          pointer :: nb15_cell(:)
+    integer,          pointer :: num_nb15_cgpbc(:,:)
+    integer,          pointer :: nb15_calc_list(:,:,:,:)
+
+
+    atmcls          => domain%atom_cls_no
+    natom           => domain%num_atom
+    atmcls          => domain%atom_cls_no
+    trans1          => domain%trans_vec
+    cell_move       => domain%cell_move
+    system_size     => domain%system_size
+
+    cutoff          => enefunc%cutoffdist
+    nonb_lj12       => enefunc%nonb_lj12
+
+    num_nb15_cgpbc  => pairlist%num_nb15_cgpbc
+    nb15_calc_list  => pairlist%nb15_calc_list_cgpbc
+
+    ncell           =  domain%num_cell_local + domain%num_cell_boundary
+    cutoff2         =  cutoff * cutoff
+
+    !$omp parallel default(shared)                             &
+    !$omp private(id, i, ix, j, iy, k, rtmp, num_nb15, encont, &
+    !$omp         dij, rij2, inv_rij2, inv_rij6, inv_rij12,    &
+    !$omp         term_lj12, grad_coef, work, force_local,     &
+    !$omp         iatmcls, jatmcls, lj12)
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    do i = id+1, ncell, nthread
+      do ix = 1, natom(i)
+        coord_pbc(1,ix,i) = coord(1,ix,i) + trans1(1,ix,i)
+        coord_pbc(2,ix,i) = coord(2,ix,i) + trans1(2,ix,i)
+        coord_pbc(3,ix,i) = coord(3,ix,i) + trans1(3,ix,i)
+      end do
+    end do
+
+    !$omp barrier
+
+    do i = id+1, ncell, nthread
+
+      do ix = 1, natom(i)
+
+        rtmp(1:3) = coord_pbc(1:3,ix,i) 
+
+        num_nb15 = num_nb15_cgpbc(ix,i)
+        iatmcls  = atmcls(ix,i)
+        encont   = 0.0_wp
+        force_local(1:3) = 0.0_wp
+
+        do k = 1, num_nb15
+
+          j  = nb15_calc_list(1,k,ix,i)
+          iy = nb15_calc_list(2,k,ix,i)
+
+          ! compute distance
+          !
+          dij(1:3) = rtmp(1:3) - coord_pbc(1:3,iy,j) &
+                   + cell_move(1:3,j,i)*system_size(1:3)
+          rij2  = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+          if (rij2 < cutoff2) then
+
+            jatmcls = atmcls(iy,j)
+            lj12 = nonb_lj12(iatmcls, jatmcls)
+
+            inv_rij2  = 1.0_wp / rij2
+            inv_rij6  = inv_rij2 * inv_rij2 * inv_rij2
+            inv_rij12 = inv_rij6 * inv_rij6
+            term_lj12 = lj12 * inv_rij12
+
+            encont = encont + term_lj12
+
+            grad_coef   = - inv_rij2 * 12.0_wp * term_lj12
+            work(1:3) = grad_coef * dij(1:3)
+
+            ! store force
+            !
+            force_local(1:3) = force_local(1:3) - work(1:3)
+            force(1:3,iy,j,id+1)  = force(1:3,iy,j,id+1) + work(1:3)
+
+          end if
+
+        end do
+
+        force(1:3,ix,i,id+1) = force(1:3,ix,i,id+1) + force_local(1:3)
+        enoncontact(id+1) = enoncontact(id+1) + encont
+
+      end do
+
+    end do
+
+    !$omp end parallel
+
+    return
+
+  end subroutine compute_energy_noncontact_pbc
 
 end module sp_energy_go_mod
 

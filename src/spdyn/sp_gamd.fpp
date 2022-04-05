@@ -25,7 +25,7 @@ module sp_gamd_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -91,15 +91,15 @@ contains
 
       select case (run_mode)
 
-      case ('gamd')
+      case ('md', 'remd')
 
         write(MsgOut,'(A)') '[GAMD]'
         write(MsgOut,'(A)') 'gamd          = no    # Gaussian accelarated MD (GaMD) [yes, no]'
-        write(MsgOut,'(A)') 'boost_type    = DUAL  # boost type of GaMD [DIHEDRAL, POTENTIAL, DUAL]'
-        write(MsgOut,'(A)') 'thresh_type   = LOWER # threshold of GaMD [LOWER, UPPER]'
-        write(MsgOut,'(A)') 'sigma0_pot    = 6.0   #'
-        write(MsgOut,'(A)') 'sigma0_dih    = 6.0   #'
-        write(MsgOut,'(A)') 'update_period = 0     # update period for GaMD parameter'
+        write(MsgOut,'(A)') '# boost_type    = DUAL  # boost type of GaMD [DIHEDRAL, POTENTIAL, DUAL]'
+        write(MsgOut,'(A)') '# thresh_type   = LOWER # threshold of GaMD [LOWER, UPPER]'
+        write(MsgOut,'(A)') '# sigma0_pot    = 6.0   #'
+        write(MsgOut,'(A)') '# sigma0_dih    = 6.0   #'
+        write(MsgOut,'(A)') '# update_period = 0     # update period for GaMD parameter'
         write(MsgOut,'(A)') '# pot_max       = 0.0 # maximum of potential energy (kcal/mol)'
         write(MsgOut,'(A)') '# pot_min       = 0.0 # minimum of potential energy (kcal/mol)'
         write(MsgOut,'(A)') '# pot_ave       = 0.0 # average of potential energy (kcal/mol)'
@@ -117,15 +117,15 @@ contains
 
       select case (run_mode)
 
-      case ('gamd')
+      case ('md', 'remd')
 
         write(MsgOut,'(A)') '[GAMD]'
         write(MsgOut,'(A)') 'gamd          = no    # Gaussian accelarated MD (GaMD) [yes, no]'
-        write(MsgOut,'(A)') 'boost_type    = DUAL  # boost type of GaMD [DIHEDRAL, POTENTIAL, DUAL]'
-        write(MsgOut,'(A)') 'thresh_type   = LOWER # threshold of GaMD [LOWER, UPPER]'
-        write(MsgOut,'(A)') 'sigma0_pot    = 6.0   #'
-        write(MsgOut,'(A)') 'sigma0_dih    = 6.0   #'
-        write(MsgOut,'(A)') 'update_period = 0     # update period for GaMD parameter'
+        write(MsgOut,'(A)') '# boost_type    = DUAL  # boost type of GaMD [DIHEDRAL, POTENTIAL, DUAL]'
+        write(MsgOut,'(A)') '# thresh_type   = LOWER # threshold of GaMD [LOWER, UPPER]'
+        write(MsgOut,'(A)') '# sigma0_pot    = 6.0   #'
+        write(MsgOut,'(A)') '# sigma0_dih    = 6.0   #'
+        write(MsgOut,'(A)') '# update_period = 0     # update period for GaMD parameter'
         write(MsgOut,'(A)') ' '
 
       end select

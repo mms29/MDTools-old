@@ -38,6 +38,7 @@ module at_minimize_str_mod
     logical                :: eneout
     logical                :: crdout
     logical                :: rstout
+    logical                :: eneout_short
 
     ! For SD
     real(wp)               :: force_scale_init
@@ -51,6 +52,7 @@ module at_minimize_str_mod
 
     ! For LBFGS - micro-iteration
     logical                :: macro
+    integer                :: start_micro
     integer                :: nsteps_micro
     real(wp)               :: tol_rmsg_micro
     real(wp)               :: tol_maxg_micro
@@ -58,8 +60,6 @@ module at_minimize_str_mod
     integer                :: num_optatoms_macro
     integer, allocatable   :: optatom_micro_id(:)
     integer                :: num_optatoms_micro
-    logical                :: init_lbfgs_micro
-    logical                :: init_lbfgs
 
     character(len=60)      :: csave_micro
     logical                :: lsave_micro(4)
@@ -73,14 +73,16 @@ module at_minimize_str_mod
     integer,  allocatable  :: list_bound_micro(:)
     integer,  allocatable  :: iwork_lbfgs_micro(:)
 
+    logical                :: check_structure
+
 !ky what is this for?
     integer                :: pairalloc_period
 
   end type s_minimize
 
   ! parameters
-  integer,      public, parameter :: MinimizeMethodSD = 1
-  integer,      public, parameter :: MinimizeMethodLBFGS  = 2
+  integer,      public, parameter :: MinimizeMethodSD    = 1
+  integer,      public, parameter :: MinimizeMethodLBFGS = 2
   
   character(*), public, parameter :: MinimizeMethodTypes(2) = (/'SD   ',&
                                                                 'LBFGS'/)
@@ -122,6 +124,7 @@ contains
     minimize%lbfgs_bnd         = .true.
     minimize%lbfgs_bnd_qmonly  = .true.
     minimize%lbfgs_bnd_maxmove = 0.1D+00
+    minimize%check_structure   = .true.
 
     return
 

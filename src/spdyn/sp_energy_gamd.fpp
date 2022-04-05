@@ -29,7 +29,7 @@ module sp_energy_gamd_mod
   use constants_mod
   use math_libs_mod
   use string_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -156,7 +156,7 @@ contains
 
     ! Reduce potential energy or dihedral energy.
     !
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     if (gamd%boost_dih) then
       before_reduce(1) = energy%dihedral
       if (enefunc%forcefield == ForcefieldCHARMM) &

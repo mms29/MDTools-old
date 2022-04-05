@@ -200,7 +200,7 @@ contains
     ! set lennard-jones parameters
     !
     switchdist2 = switchdist * switchdist
-    switch_int  = int(1.0_wp/switchdist2*cutoff2*density)
+    if (switchdist2 > EPS) switch_int  = int(1.0_wp/switchdist2*cutoff2*density)
 
     table_ene  (1:3*cutoff_int1) = 0.0_wp
     table_ecor (1:cutoff_int1)   = 0.0_wp
@@ -327,8 +327,9 @@ contains
                                      cutoff2, switchdist2, table_ene,       &
                                      table_grad)
 
-    else if (enefunc%forcefield == ForcefieldGROAMBER .or.                &
-            enefunc%forcefield == ForcefieldGROMARTINI) then
+    else if (enefunc%forcefield == ForcefieldGROAMBER   .or.                &
+             enefunc%forcefield == ForcefieldGROMARTINI .or.                &
+             enefunc%forcefield == ForcefieldAAGO) then
 
       if (ene_info%vdw_shift) then
 
