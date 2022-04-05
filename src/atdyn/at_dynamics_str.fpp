@@ -78,7 +78,7 @@ end type s_nmmd_dynamics
 
   character(*), public, parameter :: IntegratorTypes(7)  = &
                                       (/'LEAP   ','VVER   ','BDEM   ',&
-                                        'BD2N   ','SDMP   ','VVER_CG', 'NMMD'/)
+                                        'BD2N   ','SDMP   ','VVER_CG', 'NMMD   '/)
 
 
   ! subroutines

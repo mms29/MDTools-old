@@ -147,12 +147,9 @@ contains
     ! setup random force
     !
     if (present(dynamics)) then
-<<<<<<< HEAD
-      if ((dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) .and. &
-=======
       if ((dynamics%integrator == IntegratorVVER .or.      &
-           dynamics%integrator == IntegratorVVER_CG) .and. &
->>>>>>> genesis_1.7
+           dynamics%integrator == IntegratorVVER_CG .or.   &
+           dynamics%integrator == IntegratorNMMD) .and. &
           tpcontrol           == TpcontrolLangevin) then
         call alloc_dynvars(dynvars, DynvarsLangevin,natom, nproc_country)
       end if
@@ -498,12 +495,9 @@ contains
       ekin_old = 0.5_wp * ekin_old
       ekin_new = 0.5_wp * ekin_new
 
-<<<<<<< HEAD
-    else if (dynamics%integrator == IntegratorVVER .or. dynamics%integrator == IntegratorNMMD) then
-=======
     else if (dynamics%integrator == IntegratorVVER .or.       &
-             dynamics%integrator == IntegratorVVER_CG) then
->>>>>>> genesis_1.7
+             dynamics%integrator == IntegratorVVER_CG .or.    &
+             dynamics%integrator == IntegratorNMMD) then
 
       do j = 1, natom
         rmsg = rmsg + force(1,j)**2 + force(2,j)**2 + force(3,j)**2
