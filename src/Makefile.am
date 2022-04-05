@@ -12,12 +12,22 @@ if ATDYN
 else
   ATDYN_DIR=
 endif
+if QSIMULATE
+  QSIMULATE_DIR=lib/qsimulate
+else
+  QSIMULATE_DIR=
+endif
 if ANALYSIS
   ANALYSIS_DIR=analysis
 else
   ANALYSIS_DIR=
 endif
-SUBDIRS = lib $(ATDYN_DIR) spdyn $(ANALYSIS_DIR)
+if SPDYN
+  SPDYN_DIR=spdyn
+else
+  SPDYN_DIR=
+endif
+SUBDIRS = lib $(QSIMULATE_DIR) $(ATDYN_DIR) $(SPDYN_DIR) $(ANALYSIS_DIR)
 
 MAINTAINERCLEANFILES = Makefile.in
 

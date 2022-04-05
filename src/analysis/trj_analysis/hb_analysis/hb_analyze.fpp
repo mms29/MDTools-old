@@ -417,8 +417,8 @@ contains
       atomcls2   = molecule%atom_cls_name(bond_atom2)
       mass2      = molecule%mass(bond_atom2)
 
-      if (atomic_number(mass1, atomcls1(1:3)) /= 1 .and. &
-          atomic_number(mass2, atomcls2(1:3)) /= 1)      &
+      if (atomic_number(mass1, atomcls1(1:6)) /= 1 .and. &
+          atomic_number(mass2, atomcls2(1:6)) /= 1)      &
         cycle
 
       if (atom_to_idx(bond_atom1) > 0) then

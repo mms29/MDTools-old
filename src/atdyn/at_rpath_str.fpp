@@ -41,15 +41,21 @@ module at_rpath_str_mod
 
   ! MFEP variables
     ! Input
+    logical                           :: avoid_shrinkage
     integer                           :: rpath_period
     real(wp)                          :: smooth
     logical                           :: use_restart
+    real(wp)                          :: sum_distance
+    real(wp)                          :: distance_prev
+    real(wp)                          :: distance_init
     integer,              allocatable :: rest_function(:)
 
     ! module private
     real(wp),             allocatable :: rest_constants(:,:,:)
     real(wp),             allocatable :: rest_reference(:,:,:)
     real(dp),             allocatable :: metric(:,:)
+    real(dp),             allocatable :: rest_reference_prev(:,:)
+    real(dp),             allocatable :: rest_reference_init(:,:)
     integer                           :: fitting_method
     character(256)                    :: fitting_atom
     type(s_output)                    :: output
@@ -57,7 +63,7 @@ module at_rpath_str_mod
   ! MEP variables
     ! Input parameters
     logical                           :: mep_partial_opt
-    integer                           :: qmsave_period
+    integer                           :: eneout_period
     integer                           :: crdout_period
     integer                           :: rstout_period
     integer                           :: method
@@ -91,13 +97,31 @@ module at_rpath_str_mod
     real(wp)                          :: pathlength
     real(wp)                          :: pathlength_prev
     integer                           :: mep_natoms
+    integer                           :: neb_cycle = 0                  
+    integer,              allocatable :: isave(:,:)             
     integer,              allocatable :: mepatom_id(:)
+    integer,              allocatable :: iwa(:,:)               
+    real(wp),             allocatable :: dsave(:,:)             
     real(wp),             allocatable :: mep_coord(:,:)
     real(wp),             allocatable :: mep_force(:,:)
     real(wp),             allocatable :: mep_energy(:)
+    real(wp),             allocatable :: mep_energy_prev(:)
+    real(wp),             allocatable :: mep_length(:)
+    real(wp),             allocatable :: recv_buff(:,:)
+    real(wp),             allocatable :: micro_force(:,:,:)     
+    real(wp),             allocatable :: wa(:,:)                           
     logical                           :: opt_micro
-    logical                           :: is_qmcharge
     logical                           :: do_cineb
+    logical                           :: eneout
+    logical                           :: crdout
+    logical                           :: rstout
+    logical                           :: first_iter     = .true.  
+    logical                           :: neb_output     = .true.  
+    logical                           :: first_replica  = .true.  
+    logical                           :: mep_exit       = .false.    
+    logical,              allocatable :: lsave(:,:)               
+    character(60)                     :: task                     
+    character(60),        allocatable :: csave(:)                 
 
   ! FEP variables
     ! Input parameters
@@ -211,15 +235,21 @@ contains
         if (size(rpath%rest_constants(:,:,:)) == (4*var_size1*var_size2)) return
         deallocate(rpath%rest_constants,          &
                    rpath%rest_reference,          &
+                   rpath%rest_reference_prev,     &
+                   rpath%rest_reference_init,     &
                    stat = dealloc_stat)
       end if
 
       allocate(rpath%rest_constants(4,var_size1,var_size2), &
                rpath%rest_reference(2,var_size1,var_size2), &
+               rpath%rest_reference_prev(var_size1,var_size2), &
+               rpath%rest_reference_init(var_size1,var_size2), &
                stat = alloc_stat)
 
       rpath%rest_constants(1:4,1:var_size1,1:var_size2) = 0.0_wp
       rpath%rest_reference(1:2,1:var_size1,1:var_size2) = 0.0_wp
+      rpath%rest_reference_prev(1:var_size1,1:var_size2) = 0.0_wp
+      rpath%rest_reference_init(1:var_size1,1:var_size2) = 0.0_wp
 
     case default
 
@@ -238,7 +268,7 @@ contains
   !
   !  Subroutine    alloc_rpath_mep
   !> @brief        allocate rpath information
-  !! @authors      YA, KY
+  !! @authors      YA, KY, SI
   !! @param[inout] rpath     : information of rpath
   !! @param[in]    var_size1 : MEP dimension
   !! @param[in]    var_size2 : Number of replicas
@@ -246,44 +276,70 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine alloc_rpath_mep(rpath, var_size1, var_size2, var_size3)
+  subroutine alloc_rpath_mep(rpath, var_size1, var_size2, var_size3, &
+                             var_size4, var_size5)
 
     ! formal arguments
     type(s_rpath),           intent(inout) :: rpath
-    integer,                 intent(in)    :: var_size1
-    integer,                 intent(in)    :: var_size2
-    integer,      optional,  intent(in)    :: var_size3
+    integer,                 intent(in)    :: var_size1 ! rpath%mep_natoms * 3
+    integer,                 intent(in)    :: var_size2 ! rpath%nreplica
+    integer,                 intent(in)    :: var_size3 ! minimize%num_optatoms_micro
+    integer,                 intent(in)    :: var_size4 ! nrep_per_proc   
+    integer,      optional,  intent(in)    :: var_size5 ! qmmm%qm_natoms
 
     ! local variables
     integer                  :: alloc_stat
+    integer                  :: tmp_var1, tmp_var2, tmp_var3, tmp_var4
 
 
     alloc_stat = 0
 
     ! allocate selected variables
     !
-    allocate(rpath%force(var_size1),                        &
-             rpath%mep_coord(var_size1, var_size2),         &
-!YA_Bgn
-             rpath%mep_force(var_size1, var_size2),         &
-             rpath%mep_energy(var_size2),                   &
-!YA_End
-             rpath%before_gather(var_size1),                &
-             rpath%after_gather(var_size1*var_size2),       &
-             stat = alloc_stat)
+    ! Avoid error by re-allocation 
+    if (.not. allocated(rpath%mep_coord)) then 
+      allocate(rpath%force(var_size1),                        &
+               rpath%mep_coord(var_size1, var_size2),         &
+               rpath%mep_force(var_size1, var_size2),         &
+               rpath%recv_buff(var_size1, var_size2),         &
+               rpath%mep_energy(var_size2),                   &
+               rpath%mep_energy_prev(var_size2),              &
+               rpath%mep_length(var_size2),                   &
+               rpath%before_gather(var_size1),                &
+               rpath%after_gather(var_size1*var_size2),       &
+               rpath%micro_force(3, var_size3, var_size4),    &
+               stat = alloc_stat)
+      if ((rpath%method == MEPmethod_NEB) .and. &
+          (var_size4 > 1)) then
+        allocate(rpath%isave(44, var_size2))
+        allocate(rpath%dsave(29, var_size2))
+        allocate(rpath%lsave(4,  var_size2))
+        allocate(rpath%csave(var_size2))
+        allocate(rpath%iwa(3*var_size1*var_size2, var_size2))
+        tmp_var1 = rpath%ncorrection
+        tmp_var2 = var_size1
+        tmp_var3 = var_size1 * var_size2
+        tmp_var4 = (2*tmp_var3 + 11*tmp_var1 +8) * tmp_var1 + 5*tmp_var2
+        allocate(rpath%wa(tmp_var4, var_size2))
+      end if
 
-    rpath%force(1:var_size1)                         = 0.0_wp
-    rpath%mep_coord(1:var_size1,1:var_size2)         = 0.0_wp
-!YA_Bgn
-    rpath%mep_force(1:var_size1,1:var_size2)         = 0.0_wp
-    rpath%mep_energy(1:var_size2)                    = 0.0_wp
-!YA_End
-    rpath%before_gather(1:var_size1)                 = 0.0_wp
-    rpath%after_gather(1:var_size1*var_size2)        = 0.0_wp
+      rpath%force(1:var_size1)                  = 0.0_wp
+      rpath%mep_coord(1:var_size1,1:var_size2)  = 0.0_wp
+      rpath%mep_force(1:var_size1,1:var_size2)  = 0.0_wp
+      rpath%recv_buff(1:var_size1,1:var_size2)  = 0.0_wp
+      rpath%mep_energy(1:var_size2)             = 0.0_wp
+      rpath%mep_energy_prev(1:var_size2)        = 0.0_wp
+      rpath%mep_length(1:var_size2)             = 0.0_wp
+      rpath%before_gather(1:var_size1)          = 0.0_wp
+      rpath%after_gather(1:var_size1*var_size2) = 0.0_wp
+      rpath%micro_force(1:3, 1:var_size3, 1:var_size4) =  0.0_wp
+    end if  
 
-    if (present(var_size3)) then
-      allocate(rpath%qm_energy(var_size2), stat = alloc_stat)
-      rpath%qm_energy = 0.0_wp
+    if(.not. allocated(rpath%qm_energy)) then
+      if (present(var_size5)) then
+        allocate(rpath%qm_energy(var_size2), stat = alloc_stat)
+        rpath%qm_energy = 0.0_wp
+      end if
     end if
 
     if (alloc_stat /= 0) call error_msg_alloc
@@ -379,8 +435,10 @@ contains
     case (RpathUmbrellas)
 
       if (allocated(rpath%rest_constants)) then
-        deallocate(rpath%rest_constants,       &
-                   rpath%rest_reference,      &
+        deallocate(rpath%rest_constants,          &
+                   rpath%rest_reference,          &
+                   rpath%rest_reference_prev,     &
+                   rpath%rest_reference_init,     &
                    stat = dealloc_stat)
       end if
 
@@ -418,26 +476,25 @@ contains
 
     if (allocated(rpath%mep_coord)) then
       deallocate(rpath%force,            &
-                 rpath%before_gather,    &
-                 rpath%after_gather,     &
                  rpath%mepatom_id,       &
                  rpath%mep_coord,        &
-!YA_Bgn
                  rpath%mep_force,        &
+                 rpath%recv_buff,        &
                  rpath%mep_energy,       &
-!YA_End
+                 rpath%mep_energy_prev,  &
+                 rpath%mep_length,       &
+                 rpath%before_gather,    &
+                 rpath%after_gather,     &
                  stat = dealloc_stat)
     end if
 
     ! QM/MM 
-!    if (allocated(rpath%qm_charge)) then
-!      deallocate(rpath%qm_charge,        &
-!                 rpath%qm_energy,        &
-!                 stat = dealloc_stat)
     if (allocated(rpath%qm_energy)) then
       deallocate(rpath%qm_energy,        &
                  stat = dealloc_stat)
     end if
+
+    if (dealloc_stat /= 0) call error_msg_dealloc
 
   end subroutine dealloc_rpath_mep
 

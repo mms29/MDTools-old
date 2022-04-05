@@ -190,7 +190,7 @@ contains
     type(s_rtp)              :: rtp0
     integer                  :: file, i, nfile
 
-    character(200), allocatable :: files(:)
+    character(MaxFilename), allocatable :: files(:)
 
 
     ! parse filename string
@@ -690,60 +690,72 @@ contains
 
     rtp0%bondedtypes(1:n) = rtp1%bondedtypes(1:n)
 
-    ! copy rtp0 -> rtp
-    !
-
-    call alloc_rtp(rtp, RTPRes,      size(rtp0%ress))
-    call alloc_rtp(rtp, RTPBackbone, size(rtp0%backbones))
-
     ! res
-    n = size(rtp0%ress)
-    rtp%ress(1:n) = rtp0%ress(1:n)
+    !
+    if (.not. allocated(rtp0%ress)) then
+
+      n = size(rtp1%ress)
+      call alloc_rtp(rtp0, RTPRes, n)
+      rtp0%ress(1:n) = rtp1%ress(1:n)
+
+    else
+
+      ! copy rtp0 -> rtp
+      n = size(rtp0%ress)
+      call alloc_rtp(rtp, RTPRes, n)
+      rtp%ress(1:n) = rtp0%ress(1:n)
+
+      ! re-allocate rtp0
+      call dealloc_rtp(rtp0, RTPRes)
+      call alloc_rtp  (rtp0, RTPRes, size(rtp%ress) + size(rtp1%ress))
+
+      ! copy rtp  -> rtp0
+      n = size(rtp%ress)
+      rtp0%ress(1:n) = rtp%ress(1:n)
+
+      ! copy rtp1 -> rtp0
+      nn = size(rtp%ress)
+      n  = size(rtp1%ress)
+      rtp0%ress(nn+1:nn+n) = rtp1%ress(1:n)
+
+      ! deallocate
+      call dealloc_rtp(rtp, RTPRes)
+
+    end if
 
     ! backbone
-    n = size(rtp0%backbones)
-    rtp%backbones(1:n) = rtp0%backbones(1:n)
-
-
-    ! re-allocate rtp0
     !
-    call dealloc_rtp_all(rtp0)
+    if (.not. allocated(rtp0%backbones)) then
 
-    call alloc_rtp(rtp0, RTPRes,      size(rtp%ress)      +size(rtp1%ress))
-    call alloc_rtp(rtp0, RTPBackbone, size(rtp%backbones) +size(rtp1%backbones))
+      n = size(rtp1%backbones)
+      call alloc_rtp(rtp0, RTPBackbone, n)
+      rtp0%backbones(1:n) = rtp1%backbones(1:n)
 
+    else
 
-    ! copy rtp  -> rtp0
-    !
+      ! copy rtp0 -> rtp
+      n = size(rtp0%backbones)
+      call alloc_rtp(rtp, RTPBackbone, n)
+      rtp%backbones(1:n) = rtp0%backbones(1:n)
 
-    ! res
-    n = size(rtp%ress)
-    rtp0%ress(1:n) = rtp%ress(1:n)
+      ! re-allocate rtp0
+      call dealloc_rtp(rtp0, RTPBackbone)
+      call alloc_rtp  (rtp0, RTPBackbone, size(rtp%backbones) + &
+                                          size(rtp1%backbones))
 
-    ! backbone
-    n = size(rtp%backbones)
-    rtp0%backbones(1:n) = rtp%backbones(1:n)
+      ! copy rtp  -> rtp0
+      n = size(rtp%backbones)
+      rtp0%backbones(1:n) = rtp%backbones(1:n)
 
+      ! copy rtp1 -> rtp0
+      nn = size(rtp%backbones)
+      n  = size(rtp1%backbones)
+      rtp0%backbones(nn+1:nn+n) = rtp1%backbones(1:n)
 
-    ! copy rtp1 -> rtp0
-    !
+      ! deallocate
+      call dealloc_rtp(rtp, RTPBackbone)
 
-    ! res
-    nn = size(rtp%ress)
-    n  = size(rtp1%ress)
-    rtp0%ress(nn+1:nn+n) = rtp1%ress(1:n)
-
-    ! backbone
-    nn = size(rtp%backbones)
-    n  = size(rtp1%backbones)
-    rtp0%backbones(nn+1:nn+n) = rtp1%backbones(1:n)
-
-
-    ! deallocate
-    !
-
-    call dealloc_rtp_all(rtp)
-
+    end if
 
     return
 
@@ -767,6 +779,7 @@ contains
 
     ! local variables
     integer                  :: directive, nres, nbb, i
+    integer                  :: ni 
     character(200)           :: line
 
 
@@ -872,14 +885,45 @@ contains
       write(MsgOut,'(a20,i10)') &
            '  num_residues    = ', size(rtp%ress)
       do i = 1, size(rtp%ress)
-        write(MsgOut,'(4x,i2,1x,a6,":",6(a6,i3,"|"))') &
-             i, rtp%ress(i)%name, &
-             'natom:', size(rtp%ress(i)%atoms), &
-             'nbond:', size(rtp%ress(i)%bonds), &
-             'nexcl:', size(rtp%ress(i)%excls), &
-             'nangl:', size(rtp%ress(i)%angls), &
-             'ndihe:', size(rtp%ress(i)%dihes), &
-             'nimpr:', size(rtp%ress(i)%imprs)
+        write(MsgOut,'(4x,i2,1x,a6,":",$)') i, rtp%ress(i)%name
+
+        ni = 0
+        if (allocated(rtp%ress(i)%atoms)) then
+          ni = size(rtp%ress(i)%atoms)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "natom:", ni
+
+        ni = 0
+        if (allocated(rtp%ress(i)%bonds)) then
+          ni = size(rtp%ress(i)%bonds)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "nbond:", ni
+
+        ni = 0
+        if (allocated(rtp%ress(i)%excls)) then
+          ni = size(rtp%ress(i)%excls)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "nexcl:", ni
+
+        ni = 0
+        if (allocated(rtp%ress(i)%angls)) then
+          ni = size(rtp%ress(i)%angls)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "angls:", ni
+
+        ni = 0
+        if (allocated(rtp%ress(i)%dihes)) then
+          ni = size(rtp%ress(i)%dihes)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "ndihe:", ni
+
+        ni = 0
+        if (allocated(rtp%ress(i)%imprs)) then
+          ni = size(rtp%ress(i)%imprs)
+        endif
+        write(MsgOut,'(a6,i3,"|",$)') "nimpr:", ni
+        write(MsgOut,'(a)') ''
+       
       end do
       write(MsgOut,'(a20,i10)') &
            '  num_backbone def= ', size(rtp%backbones)

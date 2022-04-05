@@ -473,9 +473,6 @@ contains
     b => g_file(handle)%b
 
     b(1:4) = transfer(data, b(1:4))
-#ifdef KCOMP
-    call swap4(b(1:4))
-#endif
 
     call write_data(handle, 'i', tag, 4, b)
 
@@ -562,9 +559,6 @@ contains
 
     dd = real(data,dp)
     b(1:8) = transfer(dd, b(1:8))
-#ifdef KCOMP
-    call swap8(b(1:8))
-#endif
 
     call write_data(handle, 'w', tag, 8, b)
 
@@ -648,9 +642,6 @@ contains
     b => g_file(handle)%b
 
     b(1:8) = transfer(data, b(1:8))
-#ifdef KCOMP
-    call swap8(b(1:8))
-#endif
 
     call write_data(handle, 'd', tag, 8, b)
 
@@ -734,9 +725,6 @@ contains
     b => g_file(handle)%b
 
     b(1:4) = transfer(data, b(1:4))
-#ifdef KCOMP
-    call swap4(b(1:4))
-#endif
 
     call write_data(handle, 's', tag, 4, b)
 
@@ -1045,9 +1033,6 @@ contains
       return
     end if
 
-#ifdef KCOMP
-    call swap4(b(1:4))
-#endif
     data = transfer(b(1:4), data)
 
     return
@@ -1162,9 +1147,6 @@ contains
       return
     end if
 
-#ifdef KCOMP
-    call swap8(b(1:8))
-#endif
     dd = transfer(b(1:8), dd)
     data = real(dd,wp)
 
@@ -1281,9 +1263,6 @@ contains
       return
     end if
 
-#ifdef KCOMP
-    call swap8(b(1:8))
-#endif
     data = transfer(b(1:8), data)
 
     return
@@ -1400,9 +1379,6 @@ contains
       return
     end if
 
-#ifdef KCOMP
-    call swap4(b(1:4))
-#endif
     data = transfer(b(1:4), data)
 
     return
@@ -2088,11 +2064,7 @@ contains
 
 
     do i = 0, SizeBlockSize - 1
-#ifdef KCOMP
-      call fd_read(file, pos+i, b(SizeBlockSize-i), One)
-#else
       call fd_read(file, pos+i, b(i+1), One)
-#endif
     end do
 
     block_size = transfer(b, block_size)
@@ -2191,11 +2163,7 @@ contains
     pos0 = pos + block_size - SizeNextPos
 
     do i = 0, SizeNextPos - 1
-#ifdef KCOMP
-      call fd_read(file, pos0+i, b(SizeNextPos-i), One)
-#else
       call fd_read(file, pos0+i, b(i+1), One)
-#endif
     end do
 
     next_pos = transfer(b, next_pos)
@@ -2267,11 +2235,7 @@ contains
     b = transfer(block_size, b)
 
     do i = 0, SizeBlockSize - 1
-#ifdef KCOMP
-      call fd_write(file, b(SizeBlockSize-i), One)
-#else
       call fd_write(file, b(i+1), One)
-#endif
     end do
 
     return
@@ -2349,11 +2313,7 @@ contains
     b = transfer(next_pos, b)
 
     do i = 0, SizeNextPos - 1
-#ifdef KCOMP
-      call fd_write(file, b(SizeNextPos-i), One)
-#else
       call fd_write(file, b(i+1), One)
-#endif
     end do
 
     return
@@ -2376,9 +2336,6 @@ contains
     ii = 1
     do i = 1, ndata
       bdata(ii:ii+3) = transfer(idata(i), bdata(ii:ii+3))
-#ifdef KCOMP
-      call swap4(bdata(ii:ii+3))
-#endif
       ii = ii + 4
     end do
 
@@ -2404,9 +2361,6 @@ contains
     do i = 1, ndata
       dd = real(wdata(i),dp)
       bdata(ii:ii+7) = transfer(dd, bdata(ii:ii+7))
-#ifdef KCOMP
-      call swap8(bdata(ii:ii+7))
-#endif
       ii = ii + 8
     end do
 
@@ -2430,9 +2384,6 @@ contains
     ii = 1
     do i = 1, ndata
       bdata(ii:ii+7) = transfer(ddata(i), bdata(ii:ii+7))
-#ifdef KCOMP
-      call swap8(bdata(ii:ii+7))
-#endif
       ii = ii + 8
     end do
 
@@ -2456,9 +2407,6 @@ contains
     ii = 1
     do i = 1, ndata
       bdata(ii:ii+3) = transfer(sdata(i), bdata(ii:ii+3))
-#ifdef KCOMP
-      call swap4(bdata(ii:ii+3))
-#endif
       ii = ii + 4
     end do
 
@@ -2481,9 +2429,6 @@ contains
 
     ii = 1
     do i = 1, ndata
-#ifdef KCOMP
-      call swap4(bdata(ii:ii+3))
-#endif
       idata(i) = transfer(bdata(ii:ii+3), idata(i))
       ii = ii + 4
     end do
@@ -2508,9 +2453,6 @@ contains
 
     ii = 1
     do i = 1, ndata
-#ifdef KCOMP
-      call swap8(bdata(ii:ii+7))
-#endif
       dd = transfer(bdata(ii:ii+7), dd)
       wdata(i) = real(dd,wp)
       ii = ii + 8
@@ -2535,9 +2477,6 @@ contains
 
     ii = 1
     do i = 1, ndata
-#ifdef KCOMP
-      call swap8(bdata(ii:ii+7))
-#endif
       ddata(i) = transfer(bdata(ii:ii+7), ddata(i))
       ii = ii + 8
     end do
@@ -2561,9 +2500,6 @@ contains
 
     ii = 1
     do i = 1, ndata
-#ifdef KCOMP
-      call swap4(bdata(ii:ii+3))
-#endif
       sdata(i) = transfer(bdata(ii:ii+3), sdata(i))
       ii = ii + 4
     end do

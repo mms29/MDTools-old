@@ -29,6 +29,8 @@ module sp_output_mod
   use sp_domain_str_mod
   use sp_remd_str_mod
   use sp_rpath_str_mod
+  use sp_alchemy_str_mod
+  use sp_fep_energy_mod
   use sp_grest_energy_mod
   use molecules_str_mod
   use fileio_control_mod
@@ -39,7 +41,7 @@ module sp_output_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -58,6 +60,9 @@ module sp_output_mod
     character(MaxFilename) :: rpathfile  = ''
     character(MaxFilename) :: mfrcfile   = ''
     character(MaxFilename) :: gamdfile   = ''
+    !FEP
+    character(MaxFilename) :: fepfile    = ''
+    character(MaxFilename) :: rpathlogfile  = ''
   end type s_out_info
 
   ! valiables
@@ -91,6 +96,9 @@ module sp_output_mod
   private :: reduce_coord
   private :: include_id_to_filename
 
+  ! FEP
+  public :: output_fep_energy
+
 contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -117,12 +125,13 @@ contains
       case ('md')
 
         write(MsgOut,'(A)') '[OUTPUT]'
-        write(MsgOut,'(A)') '# dcdfile    = sample.dcd   # DCD trajectory file'
-        write(MsgOut,'(A)') '# dcdvelfile = sample.dcd   # DCD velocity file'
-        write(MsgOut,'(A)') '# rstfile    = sample.rst   # restart file'
-        write(MsgOut,'(A)') '# rstfile    = sample().rst # parallel I/O restart file'
-        write(MsgOut,'(A)') '# pdbfile    = sample.pdb   # PDB file'
-        write(MsgOut,'(A)') '# gamdfile   = sample.gamd  # gamd file'
+        write(MsgOut,'(A)') '# dcdfile    = sample.dcd    # DCD trajectory file'
+        write(MsgOut,'(A)') '# dcdvelfile = sample.dcd    # DCD velocity file'
+        write(MsgOut,'(A)') '# rstfile    = sample.rst    # restart file'
+        write(MsgOut,'(A)') '# rstfile    = sample().rst  # parallel I/O restart file'
+        write(MsgOut,'(A)') '# pdbfile    = sample.pdb    # PDB file'
+        write(MsgOut,'(A)') '# gamdfile   = sample.gamd   # gamd file'
+        write(MsgOut,'(A)') '# fepfile    = sample.fepout # fep file'
         write(MsgOut,'(A)') ' '
 
       case ('min')
@@ -138,12 +147,13 @@ contains
 
         write(MsgOut,'(A)') '[OUTPUT]'
         write(MsgOut,'(A)') 'logfile    = sample{}.log # log file of each replica'
-        write(MsgOut,'(A)') '# dcdfile    = sample{}.dcd # DCD trajectory file'
-        write(MsgOut,'(A)') '# dcdvelfile = sample{}.dcd # DCD velocity file'
-        write(MsgOut,'(A)') '# rstfile    = sample{}.rst # restart file'
-        write(MsgOut,'(A)') '# pdbfile    = sample{}.pdb # PDB file'
-        write(MsgOut,'(A)') '# remfile    = sample{}.rem # replica exchange ID file'
-        write(MsgOut,'(A)') '# enefile    = sample{}.ene # energy output for grest (only when analysis_grest = YES'
+        write(MsgOut,'(A)') '# dcdfile    = sample{}.dcd    # DCD trajectory file'
+        write(MsgOut,'(A)') '# dcdvelfile = sample{}.dcd    # DCD velocity file'
+        write(MsgOut,'(A)') '# rstfile    = sample{}.rst    # restart file'
+        write(MsgOut,'(A)') '# pdbfile    = sample{}.pdb    # PDB file'
+        write(MsgOut,'(A)') '# remfile    = sample{}.rem    # replica exchange ID file'
+        write(MsgOut,'(A)') '# enefile    = sample{}.ene    # energy output for grest (only when analysis_grest = YES'
+        write(MsgOut,'(A)') '# fepfile    = sample{}.fepout # fep file'
         write(MsgOut,'(A)') ' '
 
       case ('rpath')
@@ -155,6 +165,7 @@ contains
         write(MsgOut,'(A)') '# rstfile    = sample{}.rst # restart file'
         write(MsgOut,'(A)') '# pdbfile    = sample{}.pdb # PDB file'
         write(MsgOut,'(A)') '# rpathfile  = sample{}.rpath # replica path ID file'
+        write(MsgOut,'(A)') '# rpathlogfile  = sample{}.rpathlog # path log (only main) '
         write(MsgOut,'(A)') '# mfrcfile   = sample{}.mfrc # mean force file'
         write(MsgOut,'(A)') ' '
 
@@ -212,6 +223,8 @@ contains
     call read_ctrlfile_string(handle, Section, 'rpathfile', out_info%rpathfile)
     call read_ctrlfile_string(handle, Section, 'mfrcfile', out_info%mfrcfile)
     call read_ctrlfile_string(handle, Section, 'gamdfile',  out_info%gamdfile)
+    call read_ctrlfile_string(handle, Section, 'rpathlogfile',  out_info%rpathlogfile)
+    call read_ctrlfile_string(handle, Section, 'fepfile',   out_info%fepfile)
 
     call end_ctrlfile_section(handle)
 
@@ -240,6 +253,8 @@ contains
         write(MsgOut,*) ' mfrcfile   = ', trim(out_info%mfrcfile)
       if (out_info%gamdfile /= '') &
         write(MsgOut,*) ' gamdfile   = ', trim(out_info%gamdfile)
+      if (out_info%rpathlogfile /= '') &
+        write(MsgOut,*) ' rpathlogfile   = ', trim(out_info%rpathlogfile)
       write(MsgOut,'(A)') ' '
     end if
 
@@ -303,6 +318,14 @@ contains
     if (out_info%gamdfile /= '') then
       output%gamdout  = .true.
       output%gamdfile = out_info%gamdfile
+    end if
+
+    if (dynamics%fepout_period > 0) then
+      if (out_info%fepfile == '') &
+        call error_msg('Setup_Output_Md> Error: fepfile name is not'//&
+                  ' specified in [OUTPUT] (fepout_period > 0 in [ALCHEMY])')
+      output%fepout  = .true.
+      output%fepfile = out_info%fepfile
     end if
 
     return
@@ -440,6 +463,25 @@ contains
       end if
     end if
 
+    if (dynamics%fepout_period > 0) then
+      if (out_info%fepfile == '') &
+        call error_msg('Setup_Output_Remd> Error: fepfile name is not'//&
+                  ' specified in [OUTPUT] (fepout_period > 0 in [ALCHEMY])')
+      output%fepfile = out_info%fepfile
+      call include_id_to_filename(output%fepfile)
+      output%fepfile = output%fepfile
+      output%fepout  = .true.
+
+      ! output remfile to sort fepfile
+      if (out_info%remfile == '') &
+        call error_msg('Setup_Output_Remd> Error: remfile name is not'//&
+                  ' specified in [OUTPUT]')
+      output%remfile = out_info%remfile
+      call include_id_to_filename(output%remfile)
+      output%remfile = output%remfile
+      output%remout  = .true.
+    end if
+
     output%replica = .true.
 
     return
@@ -513,6 +555,13 @@ contains
         output%mfrcfile = out_info%mfrcfile
         call include_id_to_filename(output%mfrcfile)
         output%mfrcout  = .true.
+      end if
+    end if
+
+    if (dynamics%crdout_period > 0) then
+      if (out_info%rpathlogfile /= '') then
+        output%rpathlogfile = out_info%rpathlogfile
+        output%rpathlogout  = .true.
       end if
     end if
 
@@ -652,6 +701,15 @@ contains
       end if
     end if
 
+    ! open fepfile
+    !
+    if (output%fepout) then
+      if (main_rank .or. replica_main_rank) then
+        call open_file(file, output%fepfile, IOFileOutputNew)
+        output%fepunit = file
+      end if
+    end if
+
     ! open mfrcfile
     !
     if (output%mfrcout) then
@@ -667,6 +725,15 @@ contains
       if (main_rank .or. replica_main_rank) then
         call open_file(file, output%gamdfile, IOFileOutputNew)
         output%gamdunit = file
+      end if
+    end if
+
+    ! open rpathlogfile (only main rank)
+    !
+    if (output%rpathlogout) then
+      if (main_rank) then
+        call open_file(file, output%rpathlogfile, IOFileOutputNew)
+        output%rpathlogunit = file
       end if
     end if
 
@@ -717,6 +784,10 @@ contains
     if (output%logout) &
       call close_file(output%logunit)
 
+    ! close rpathlogfile
+    !
+    if (output%rpathlogout) &
+      call close_file(output%rpathlogunit)
 
     return
 
@@ -738,18 +809,20 @@ contains
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine output_md(output, dynamics, boundary, pairlist, &
-                       ensemble,  dynvars, domain, enefunc, remd)
+                       ensemble,  dynvars, domain, enefunc,  &
+                       remd, alchemy)
 
     ! formakl arguments
     type(s_output),          intent(inout) :: output
     type(s_dynamics),        intent(in)    :: dynamics
-    type(s_boundary),        intent(in)    :: boundary
+    type(s_boundary),        intent(inout) :: boundary
     type(s_pairlist),        intent(in)    :: pairlist
     type(s_ensemble),        intent(in)    :: ensemble
     type(s_dynvars),         intent(inout) :: dynvars
     type(s_domain),  target, intent(inout) :: domain
     type(s_enefunc),         intent(inout) :: enefunc
     type(s_remd),            intent(inout) :: remd  
+    type(s_alchemy),optional,intent(inout) :: alchemy
 
     ! local variables
     logical                   :: alloc_ref, dealloc_ref
@@ -1070,6 +1143,14 @@ contains
     ! local variables
     integer                  :: k, repid_i
 
+    ! wrire log (main rank only)
+    !
+    if (main_rank .and. output%rpathlogout) then
+      write(output%rpathlogunit, '(I10,3F15.8)') dynvars%step, rpath%sum_distance, &
+                                 rpath%distance_init,rpath%distance_prev
+    endif
+
+
     ! wrire collective variables per replica
     !
     repid_i = my_country_no + 1
@@ -1386,6 +1467,9 @@ contains
     if (output%replica) &
       return
 
+    if (output%rpath) &
+      return
+
     if (.not. allocated(tmp_coord1)) &
       allocate(tmp_coord1(3, natom_all), tmp_coord2(3, natom_all))
 
@@ -1481,6 +1565,9 @@ contains
     istep     =  dynvars%step
 
     if (output%replica) &
+      return
+
+    if (output%rpath) &
       return
 
     if (.not. allocated(tmp_coord1)) &
@@ -2052,7 +2139,7 @@ contains
     real(dp),                intent(inout) :: temporary(:,:)
     integer,                 intent(in)    :: natom
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     ! local variables
     integer                  :: j
@@ -2160,5 +2247,113 @@ contains
     return
 
   end subroutine include_id_to_filename
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    output_fep_energy
+  !> @brief        output energy difference between adjacent states in FEP
+  !! @authors      HO
+  !! @param[in]    output   : output information
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    dynvars  : dynamical variables information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine output_fep_energy(output, enefunc, dynvars)
+
+    ! formal arguments
+    type(s_output),             intent(in) :: output
+    type(s_enefunc),            intent(in) :: enefunc
+    type(s_dynvars),            intent(in) :: dynvars
+
+    ! local variables
+    integer,parameter        :: clength=16, flength=4
+    integer                  :: i, ifm
+    character(16)            :: title
+    character(16)            :: category(999)
+    character                :: frmt*5, frmt_res*10, rfrmt*7
+    character                :: rfrmt_cont*9,frmt_cont*7
+    real(dp)                 :: values(999)
+    real(dp)                 :: ene_restraint
+    logical, save            :: fep_title = .true.
+
+    if (output%replica) then
+      if (.not. replica_main_rank) return
+    else if (output%rpath) then
+      if (.not. replica_main_rank) return
+    else
+      if (.not. main_rank) return
+    end if
+
+    title = '#     STEP'
+    write(frmt,'(A2,I2,A)') '(A',clength,')'
+    write(frmt_cont,'(A2,I2,A3)') '(A',clength,',$)'
+    write(frmt_res,'(A2,I2,A6)') '(A',clength-3,',I3.3)'
+    write(rfrmt,'(A2,I2,A1,I1,A1)') '(F',clength,'.',flength,')'
+    write(rfrmt_cont,'(A2,I2,A1,I1,A3)') '(F',clength,'.',flength,',$)'
+
+    ifm = 1
+
+    write(category(ifm),frmt) 'Total_E_ref'
+    values(ifm) = dynvars%energy%deltU_fep(1)
+    ifm = ifm+1
+
+    if (enefunc%num_fep_neighbor == 2) then
+
+      write(category(ifm),frmt) 'Delta_E_rev'
+      values(ifm) = dynvars%energy%deltU_fep(2)
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'Delta_E_fwd'
+      values(ifm) = dynvars%energy%deltU_fep(3)
+      ifm = ifm+1
+
+    else if (enefunc%num_fep_neighbor == 1) then
+
+      if (enefunc%fep_direction == FEP_Forward) then
+
+        write(category(ifm),frmt) 'Delta_E_fwd'
+        values(ifm) = dynvars%energy%deltU_fep(2)
+        ifm = ifm+1
+
+      else if (enefunc%fep_direction == FEP_Reverse) then
+
+        write(category(ifm),frmt) 'Delta_E_rev'
+        values(ifm) = dynvars%energy%deltU_fep(2)
+        ifm = ifm+1
+
+      end if
+
+    end if
+
+    if (fep_title) then
+
+      write(output%fepunit,'(A10,$)') title
+
+      do i = 1, ifm-1
+
+        if (i == ifm-1) then
+          write(output%fepunit,frmt) category(i)
+        else
+          write(output%fepunit,frmt_cont) category(i)
+        endif
+      end do
+
+      fep_title = .false.
+    end if
+
+    write(output%fepunit,'(I10,$)') dynvars%step
+
+    do i = 1, ifm-1
+      if (i == ifm-1) then
+        write(output%fepunit,rfrmt) values(i)
+      else
+        write(output%fepunit,rfrmt_cont) values(i)
+      endif
+    end do
+
+    return
+
+  end subroutine output_fep_energy
 
 end module sp_output_mod

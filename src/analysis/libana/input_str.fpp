@@ -35,13 +35,16 @@ module input_str_mod
     character(MaxFilename) :: grocrdfile
     character(MaxFilename) :: groreffile
     character(MaxFilename) :: grotopfile
+    character(MaxFilename) :: mtfile
     character(MaxFilename) :: indexfile
     character(MaxFilename) :: logfile
+    character(MaxFilename) :: enefile
     character(MaxFilename) :: msdfile
     character(MaxFilename) :: pathfile
     character(MaxFilename) :: pathcvfile
     character(MaxFilename) :: pcafile
     character(MaxFilename) :: pdbfile
+    character(MaxFilename) :: pdb_tgtfile
     character(MaxFilename) :: pdb_avefile
     character(MaxFilename) :: pdb_aftfile
     character(MaxFilename) :: pdb_sphfile
@@ -49,6 +52,7 @@ module input_str_mod
     character(MaxFilename) :: prmtopfile
     character(MaxFilename) :: psffile
     character(MaxFilename) :: radfile
+    character(MaxFilename) :: refenefile
     character(MaxFilename) :: reffile
     character(MaxFilename) :: fitfile
     character(MaxFilename) :: remfile

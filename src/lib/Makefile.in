@@ -111,7 +111,8 @@ am_lib_a_OBJECTS = constants.$(OBJEXT) mpi_parallel.$(OBJEXT) \
 	timers.$(OBJEXT) nbond_list.$(OBJEXT) ffte_fft235.$(OBJEXT) \
 	ffte_kernel.$(OBJEXT) ffte_zfft1d.$(OBJEXT) \
 	ffte_pzfft3dv.$(OBJEXT) ffte_pdzfft3d.$(OBJEXT) \
-	ffte_pzdfft3d.$(OBJEXT) fft3d.$(OBJEXT) fileio.$(OBJEXT) \
+	ffte_pzdfft3d.$(OBJEXT) ffte_dzfft3d.$(OBJEXT) \
+	ffte_zdfft3d.$(OBJEXT) fft3d.$(OBJEXT) fileio.$(OBJEXT) \
 	fileio_control.$(OBJEXT) fileio_data.$(OBJEXT) \
 	fileio_data_.$(OBJEXT) fileio_pdb.$(OBJEXT) \
 	fileio_crd.$(OBJEXT) fileio_top.$(OBJEXT) fileio_par.$(OBJEXT) \
@@ -120,15 +121,18 @@ am_lib_a_OBJECTS = constants.$(OBJEXT) mpi_parallel.$(OBJEXT) \
 	fileio_ambcrd.$(OBJEXT) fileio_gropp.$(OBJEXT) \
 	fileio_grotop.$(OBJEXT) fileio_grocrd.$(OBJEXT) \
 	fileio_mode.$(OBJEXT) fileio_eef1.$(OBJEXT) \
-	fileio_sit.$(OBJEXT) fileio_localres.$(OBJEXT) \
-	fileio_rstmep.$(OBJEXT) fileio_spot.$(OBJEXT) \
-	hardwareinfo.$(OBJEXT) dSFMT/dSFMT.$(OBJEXT) \
-	dSFMT/dSFMT_if.$(OBJEXT) Lbfgsb.3.0/lbfgsb.$(OBJEXT) \
-	molecules_str.$(OBJEXT) select_atoms_str.$(OBJEXT) \
-	fitting_str.$(OBJEXT) molecules.$(OBJEXT) \
-	dihedral_libs.$(OBJEXT) select_lexer.$(OBJEXT) \
-	select_parser.$(OBJEXT) select_contacts.$(OBJEXT) \
-	select_atoms.$(OBJEXT) select.$(OBJEXT) fitting.$(OBJEXT)
+	fileio_sit.$(OBJEXT) fileio_mrc.$(OBJEXT) \
+	fileio_localres.$(OBJEXT) fileio_rstmep.$(OBJEXT) \
+	fileio_morph.$(OBJEXT) fileio_table.$(OBJEXT) \
+	fileio_spot.$(OBJEXT) hardwareinfo.$(OBJEXT) \
+	dSFMT/dSFMT.$(OBJEXT) dSFMT/dSFMT_if.$(OBJEXT) \
+	Lbfgsb.3.0/lbfgsb.$(OBJEXT) molecules_str.$(OBJEXT) \
+	select_atoms_str.$(OBJEXT) fitting_str.$(OBJEXT) \
+	molecules.$(OBJEXT) dihedral_libs.$(OBJEXT) \
+	select_lexer.$(OBJEXT) select_parser.$(OBJEXT) \
+	select_contacts.$(OBJEXT) select_atoms.$(OBJEXT) \
+	select.$(OBJEXT) getopt.$(OBJEXT) fitting.$(OBJEXT) \
+	fileio_minfo.$(OBJEXT) structure_check.$(OBJEXT)
 lib_a_OBJECTS = $(am_lib_a_OBJECTS)
 AM_V_P = $(am__v_P_@AM_V@)
 am__v_P_ = $(am__v_P_@AM_DEFAULT_V@)
@@ -210,20 +214,27 @@ CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
+EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 F77 = @F77@
 FC = @FC@
 FCFLAGS = @FCFLAGS@
 FCFLAGS_FFTE_KERNEL_FPP__PGI__SP = @FCFLAGS_FFTE_KERNEL_FPP__PGI__SP@
 FCFLAGS_FPP__PGI_NOOPT = @FCFLAGS_FPP__PGI_NOOPT@
+FCFLAGS_KERNELS_NONBOND = @FCFLAGS_KERNELS_NONBOND@
 FFLAGS = @FFLAGS@
 FPP = @FPP@
+GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -259,6 +270,7 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_F77 = @ac_ct_F77@
 ac_ct_FC = @ac_ct_FC@
 am__include = @am__include@
@@ -317,6 +329,8 @@ lib_a_SOURCES = \
 	ffte_pzfft3dv.fpp \
 	ffte_pdzfft3d.fpp \
 	ffte_pzdfft3d.fpp \
+	ffte_dzfft3d.fpp \
+	ffte_zdfft3d.fpp \
 	fft3d.fpp \
 	fileio.fpp \
 	fileio_control.fpp \
@@ -338,8 +352,11 @@ lib_a_SOURCES = \
 	fileio_mode.fpp \
 	fileio_eef1.fpp \
 	fileio_sit.fpp \
+	fileio_mrc.fpp \
 	fileio_localres.fpp \
 	fileio_rstmep.fpp \
+	fileio_morph.fpp \
+	fileio_table.fpp \
 	fileio_spot.fpp \
 	hardwareinfo.fpp \
 	dSFMT/dSFMT.c \
@@ -368,7 +385,10 @@ lib_a_SOURCES = \
 	select_contacts.fpp \
 	select_atoms.fpp \
 	select.fpp \
+	getopt.fpp \
 	fitting.fpp \
+	fileio_minfo.fpp \
+	structure_check.fpp \
 	ffte_param.h
 
 EXTRA_DIST = \
@@ -376,6 +396,7 @@ EXTRA_DIST = \
 
 SUFFIXES = .fpp .c .f
 DEPENDS = Makefile.depends
+CLEANFILES = $(noinst_LIBRARIES) $(lib_a_OBJECTS) *.f90 *~ *.mod
 all: all-am
 
 .SUFFIXES:
@@ -572,6 +593,7 @@ install-strip:
 mostlyclean-generic:
 
 clean-generic:
+	-test -z "$(CLEANFILES)" || rm -f $(CLEANFILES)
 
 distclean-generic:
 	-test -z "$(CONFIG_CLEAN_FILES)" || rm -f $(CONFIG_CLEAN_FILES)
@@ -584,6 +606,8 @@ distclean-generic:
 maintainer-clean-generic:
 	@echo "This command is intended for maintainers to use"
 	@echo "it deletes files that may require special tools to rebuild."
+clean: clean-am
+
 clean-am: clean-generic clean-noinstLIBRARIES mostlyclean-am
 
 depend-am: depend-local
@@ -691,9 +715,6 @@ ffte_kernel.o : ffte_kernel.fpp
 
 lib.a : $(lib_a_OBJECTS)
 	$(AR) $(ARFLAGS) cr $(noinst_LIBRARIES) $(lib_a_OBJECTS)
-
-clean:
-	rm -f $(noinst_LIBRARIES) $(lib_a_OBJECTS) *.f90 *~ *.mod
 
 depend: clean_depend
 	python ../../fortdep.py *.fpp > $(DEPENDS)

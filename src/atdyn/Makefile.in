@@ -105,31 +105,35 @@ am_atdyn_OBJECTS = at_energy_str.$(OBJEXT) at_enefunc_str.$(OBJEXT) \
 	at_dynvars_str.$(OBJEXT) at_dynamics_str.$(OBJEXT) \
 	at_minimize_str.$(OBJEXT) at_vibration_str.$(OBJEXT) \
 	at_output_str.$(OBJEXT) at_remd_str.$(OBJEXT) \
-	at_rpath_str.$(OBJEXT) at_qmmm.$(OBJEXT) \
-	at_experiments.$(OBJEXT) at_pairlist.$(OBJEXT) \
-	at_boundary.$(OBJEXT) at_energy_bonds.$(OBJEXT) \
+	at_morph_str.$(OBJEXT) at_rpath_str.$(OBJEXT) \
+	at_qmmm.$(OBJEXT) at_experiments.$(OBJEXT) \
+	at_pairlist.$(OBJEXT) at_boundary.$(OBJEXT) \
+	at_energy_morph.$(OBJEXT) at_energy_bonds.$(OBJEXT) \
 	at_energy_angles.$(OBJEXT) at_energy_dihedrals.$(OBJEXT) \
+	at_energy_cg_nonlocal.$(OBJEXT) \
 	at_energy_table_cubic.$(OBJEXT) \
 	at_energy_table_linear.$(OBJEXT) \
 	at_energy_table_linear_bondcorr.$(OBJEXT) \
 	at_energy_pme.$(OBJEXT) at_energy_eef1.$(OBJEXT) \
 	at_energy_gbsa.$(OBJEXT) at_energy_nonbonds.$(OBJEXT) \
 	at_energy_restraints.$(OBJEXT) at_energy_go.$(OBJEXT) \
-	at_energy_gamd.$(OBJEXT) at_energy.$(OBJEXT) \
-	at_enefunc_restraints.$(OBJEXT) at_enefunc_gamd.$(OBJEXT) \
-	at_enefunc_gbsa.$(OBJEXT) at_enefunc_table.$(OBJEXT) \
-	at_enefunc_pme.$(OBJEXT) at_enefunc_charmm.$(OBJEXT) \
-	at_enefunc_amber.$(OBJEXT) at_enefunc_gromacs.$(OBJEXT) \
-	at_enefunc_go.$(OBJEXT) at_enefunc.$(OBJEXT) \
-	at_constraints.$(OBJEXT) at_restraints.$(OBJEXT) \
-	at_ensemble.$(OBJEXT) at_dynvars.$(OBJEXT) at_input.$(OBJEXT) \
-	at_output.$(OBJEXT) at_md_leapfrog.$(OBJEXT) \
-	at_md_vverlet.$(OBJEXT) at_minimize.$(OBJEXT) \
+	at_energy_soft.$(OBJEXT) at_energy_gamd.$(OBJEXT) \
+	at_energy.$(OBJEXT) at_enefunc_restraints.$(OBJEXT) \
+	at_enefunc_gamd.$(OBJEXT) at_enefunc_gbsa.$(OBJEXT) \
+	at_enefunc_table.$(OBJEXT) at_enefunc_pme.$(OBJEXT) \
+	at_enefunc_charmm.$(OBJEXT) at_enefunc_amber.$(OBJEXT) \
+	at_enefunc_gromacs.$(OBJEXT) at_enefunc_go.$(OBJEXT) \
+	at_enefunc.$(OBJEXT) at_constraints.$(OBJEXT) \
+	at_restraints.$(OBJEXT) at_ensemble.$(OBJEXT) \
+	at_dynvars.$(OBJEXT) at_input.$(OBJEXT) at_output.$(OBJEXT) \
+	at_md_leapfrog.$(OBJEXT) at_md_vverlet.$(OBJEXT) \
+	at_md_vverlet_cg.$(OBJEXT) at_minimize.$(OBJEXT) \
 	at_vibration.$(OBJEXT) at_remd.$(OBJEXT) \
 	at_rpath_mep.$(OBJEXT) at_rpath_fep.$(OBJEXT) \
-	at_rpath.$(OBJEXT) at_gamd.$(OBJEXT) at_dynamics.$(OBJEXT) \
-	at_control.$(OBJEXT) at_setup_atdyn.$(OBJEXT) \
-	at_setup_mpi.$(OBJEXT) atdyn.$(OBJEXT)
+	at_rpath.$(OBJEXT) at_morph.$(OBJEXT) at_gamd.$(OBJEXT) \
+	at_dynamics.$(OBJEXT) at_control.$(OBJEXT) \
+	at_setup_atdyn.$(OBJEXT) at_setup_mpi.$(OBJEXT) \
+	atdyn.$(OBJEXT)
 atdyn_OBJECTS = $(am_atdyn_OBJECTS)
 atdyn_LDADD = $(LDADD)
 AM_V_P = $(am__v_P_@AM_V@)
@@ -188,7 +192,7 @@ am__define_uniq_tagged_files = \
   done | $(am__uniquify_input)`
 ETAGS = etags
 CTAGS = ctags
-DIST_SUBDIRS = $(SUBDIRS)
+DIST_SUBDIRS = ../lib . ../lib/qsimulate
 DISTFILES = $(DIST_COMMON) $(DIST_SOURCES) $(TEXINFOS) $(EXTRA_DIST)
 am__relativize = \
   dir0=`pwd`; \
@@ -227,20 +231,27 @@ CC = @CC@
 CCDEPMODE = @CCDEPMODE@
 CFLAGS = @CFLAGS@
 CPPFLAGS = @CPPFLAGS@
+CXX = @CXX@
+CXXCPP = @CXXCPP@
+CXXDEPMODE = @CXXDEPMODE@
+CXXFLAGS = @CXXFLAGS@
 CYGPATH_W = @CYGPATH_W@
 DEFS = @DEFS@
 DEPDIR = @DEPDIR@
 ECHO_C = @ECHO_C@
 ECHO_N = @ECHO_N@
 ECHO_T = @ECHO_T@
+EGREP = @EGREP@
 EXEEXT = @EXEEXT@
 F77 = @F77@
 FC = @FC@
 FCFLAGS = @FCFLAGS@
 FCFLAGS_FFTE_KERNEL_FPP__PGI__SP = @FCFLAGS_FFTE_KERNEL_FPP__PGI__SP@
 FCFLAGS_FPP__PGI_NOOPT = @FCFLAGS_FPP__PGI_NOOPT@
+FCFLAGS_KERNELS_NONBOND = @FCFLAGS_KERNELS_NONBOND@
 FFLAGS = @FFLAGS@
 FPP = @FPP@
+GREP = @GREP@
 INSTALL = @INSTALL@
 INSTALL_DATA = @INSTALL_DATA@
 INSTALL_PROGRAM = @INSTALL_PROGRAM@
@@ -276,6 +287,7 @@ abs_srcdir = @abs_srcdir@
 abs_top_builddir = @abs_top_builddir@
 abs_top_srcdir = @abs_top_srcdir@
 ac_ct_CC = @ac_ct_CC@
+ac_ct_CXX = @ac_ct_CXX@
 ac_ct_F77 = @ac_ct_F77@
 ac_ct_FC = @ac_ct_FC@
 am__include = @am__include@
@@ -316,7 +328,10 @@ target_alias = @target_alias@
 top_build_prefix = @top_build_prefix@
 top_builddir = @top_builddir@
 top_srcdir = @top_srcdir@
-SUBDIRS := ../lib .
+@INTERNAL_LAPACK_FALSE@INT_LAPACK_LIB = 
+@INTERNAL_LAPACK_TRUE@INT_LAPACK_LIB = $(LAPACK_LIB1)
+@QSIMULATE_FALSE@SUBDIRS := ../lib .
+@QSIMULATE_TRUE@SUBDIRS := ../lib ../lib/qsimulate .
 atdyn_SOURCES = \
 	at_energy_str.fpp \
 	at_enefunc_str.fpp \
@@ -332,14 +347,17 @@ atdyn_SOURCES = \
 	at_vibration_str.fpp \
 	at_output_str.fpp \
 	at_remd_str.fpp \
+	at_morph_str.fpp \
 	at_rpath_str.fpp \
 	at_qmmm.fpp \
 	at_experiments.fpp \
 	at_pairlist.fpp \
 	at_boundary.fpp \
+	at_energy_morph.fpp \
 	at_energy_bonds.fpp \
 	at_energy_angles.fpp \
 	at_energy_dihedrals.fpp \
+	at_energy_cg_nonlocal.fpp \
 	at_energy_table_cubic.fpp \
 	at_energy_table_linear.fpp \
 	at_energy_table_linear_bondcorr.fpp \
@@ -349,6 +367,7 @@ atdyn_SOURCES = \
 	at_energy_nonbonds.fpp \
 	at_energy_restraints.fpp \
 	at_energy_go.fpp \
+	at_energy_soft.fpp \
 	at_energy_gamd.fpp \
 	at_energy.fpp \
 	at_enefunc_restraints.fpp \
@@ -369,12 +388,14 @@ atdyn_SOURCES = \
 	at_output.fpp \
 	at_md_leapfrog.fpp \
 	at_md_vverlet.fpp \
+	at_md_vverlet_cg.fpp \
 	at_minimize.fpp \
 	at_vibration.fpp \
 	at_remd.fpp \
 	at_rpath_mep.fpp \
 	at_rpath_fep.fpp \
 	at_rpath.fpp \
+	at_morph.fpp \
 	at_gamd.fpp \
 	at_dynamics.fpp \
 	at_control.fpp \
@@ -386,7 +407,8 @@ at_energy_linear_object = \
 	at_energy_table_linear.o \
 	at_energy_table_linear_bondcorr.o 
 
-atdyn_ADDLIB = ../lib/lib.a
+@QSIMULATE_FALSE@atdyn_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
+@QSIMULATE_TRUE@atdyn_ADDLIB = ../lib/lib.a ../lib/qsimulate/libqs.a $(INT_LAPACK_LIB)
 EXTRA_DIST = \
 	Makefile.depends 
 
@@ -770,7 +792,7 @@ $(at_energy_linear_object) : %.o : %.fpp
 @USEKCOMP_FALSE@	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
 
 atdyn$(EXEEXT) : $(atdyn_ADDLIB) $(atdyn_OBJECTS)
-	$(FC) -o $(bin_PROGRAMS) $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(LDFLAGS)
+	$(FC) -o $(bin_PROGRAMS) $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(atdyn_LDADD) $(LDFLAGS)
 
 clean:
 	rm -f $(bin_PROGRAMS) $(atdyn_OBJECTS) *.f90 *~ *.mod

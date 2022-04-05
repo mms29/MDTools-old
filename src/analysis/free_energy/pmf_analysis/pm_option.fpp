@@ -36,6 +36,7 @@ module pm_option_mod
     real(wp),           allocatable :: band_width(:)
     logical,            allocatable :: is_periodic(:)
     real(wp),           allocatable :: box_size(:)
+    integer                         :: output_type      = OutputTypeGNUPLOT
   end type s_opt_info
 
   ! subroutines
@@ -58,14 +59,18 @@ contains
     write(MsgOut,'(A)') '[OPTION]'
     write(MsgOut,'(A)') 'check_only     = NO              # only checking input files (YES/NO)'
     write(MsgOut,'(A)') 'allow_backup   = NO              # backup existing output files (YES/NO)'
+    write(MsgOut,'(A)') ''
     write(MsgOut,'(A)') 'nreplica       = 8'
     write(MsgOut,'(A)') 'dimension      = 1'
     write(MsgOut,'(A)') 'temperature    = 300'
     write(MsgOut,'(A)') 'cutoff         = 100             # cutoff distance measured by pathcv_analysis'
+    write(MsgOut,'(A)') ''
     write(MsgOut,'(A)') 'grids1         = 1.0 10.0 100    # (min max num_of_bins)'
     write(MsgOut,'(A)') 'band_width1    = 0.1             # sigma of Gaussian kernel'
     write(MsgOut,'(A)') 'is_periodic1   = YES'
     write(MsgOut,'(A)') 'box_size1      = 360.0'
+    write(MsgOut,'(A)') ''
+    write(MsgOut,'(A)') 'output_type    = GNUPLOT  # GNUPLOT MATLAB'
     write(MsgOut,'(A)') ''
 
     return
@@ -118,6 +123,9 @@ contains
     call read_ctrlfile_real   (handle, Section, &
                                'cutoff', opt_info%cutoff)
 
+    call read_ctrlfile_type   (handle, Section, &
+                              'output_type', opt_info%output_type, OutputType)
+
     ! call read_ctrlfile_string (handle, Section, &
     !                            'center', opt_info%center)
 
@@ -128,6 +136,7 @@ contains
 
     opt_info%is_periodic(1:opt_info%dimension) = .false.
     opt_info%box_size(1:opt_info%dimension)    = 0.0_wp
+    opt_info%band_width(1:opt_info%dimension)  = 0.0_wp
 
     do i = 1, opt_info%dimension
       write(cdim,'(i0)') i
@@ -238,6 +247,7 @@ contains
     option%dimension   = opt_info%dimension
     option%temperature = opt_info%temperature
     option%cutoff      = opt_info%cutoff
+    option%output_type = opt_info%output_type
 
     ! !
     allocate(option%grid_min (option%dimension), &
@@ -245,7 +255,8 @@ contains
              option%num_grids(option%dimension), &
              option%band_width(option%dimension), &
              option%is_periodic(option%dimension), &
-             option%box_size(option%dimension))
+             option%box_size(option%dimension), &
+             option%delta_grid(option%dimension))
     
     do i = 1, option%dimension
       str = opt_info%grids(i)
@@ -281,9 +292,11 @@ contains
     allocate(option%center(option%dimension, num_bins_max))
 
     do i = 1, option%dimension
-      delta = (option%grid_max(i) - option%grid_min(i))/(option%num_grids(i) - 1)
+      option%delta_grid(i) = (option%grid_max(i) - option%grid_min(i)) &
+                             / (option%num_grids(i) - 1)   
       do j = 1, option%num_grids(i) - 1
-        option%center(i, j) = option%grid_min(i) + 0.5_wp*delta + real((j-1),wp)*delta
+        option%center(i, j) = option%grid_min(i) + 0.5_wp*option%delta_grid(i) + &
+                               real((j-1),wp)*option%delta_grid(i)
       end do
     end do
 
@@ -298,6 +311,7 @@ contains
     write(MsgOut, *)
 
     do i = 1, option%dimension
+      option%delta_grid(i) = 0.5_wp * option%delta_grid(i)    
       option%band_width(i) = opt_info%band_width(i)
     end do
 

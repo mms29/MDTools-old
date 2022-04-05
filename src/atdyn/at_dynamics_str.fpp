@@ -22,6 +22,7 @@ module at_dynamics_str_mod
   ! structures
   type, public :: s_dynamics
     logical             :: restart
+    logical             :: multiple_random_seed
     integer             :: integrator
     integer             :: nsteps
     real(wp)            :: timestep
@@ -46,13 +47,27 @@ module at_dynamics_str_mod
     real(wp)            :: final_value
     logical             :: verbose
     logical             :: random_restart
+    logical             :: shrink_box
+    integer             :: shrink_period
+    real(wp)            :: dbox_x
+    real(wp)            :: dbox_y
+    real(wp)            :: dbox_z
+    logical             :: esp_mm
+    integer             :: calc_qm_period
+    logical             :: avg_qm_charge
   end type s_dynamics
 
   ! parameters
   integer,      public, parameter :: IntegratorLEAP = 1
   integer,      public, parameter :: IntegratorVVER = 2
+  integer,      public, parameter :: IntegratorBDEM = 3
+  integer,      public, parameter :: IntegratorBD2N = 4
+  integer,      public, parameter :: IntegratorSDMP = 5
+  integer,      public, parameter :: IntegratorVVER_CG = 6
 
-  character(*), public, parameter :: IntegratorTypes(2)  = (/'LEAP','VVER'/)
+  character(*), public, parameter :: IntegratorTypes(6)  = &
+                                      (/'LEAP   ','VVER   ','BDEM   ',&
+                                        'BD2N   ','SDMP   ','VVER_CG'/)
 
 
   ! subroutines

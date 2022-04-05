@@ -16,6 +16,7 @@ module at_restraints_str_mod
 
   use string_mod
   use messages_mod
+  use constants_mod
 
   implicit none
   private
@@ -30,6 +31,7 @@ module at_restraints_str_mod
     integer                       :: num_groups
     integer                       :: target_function
     integer                       :: max_atoms
+    logical                       :: climber_flag
 
     ! restraints function (size = nfunctions)
     integer,              allocatable :: function(:)
@@ -41,6 +43,10 @@ module at_restraints_str_mod
     integer,              allocatable :: exponent(:)
     character(MaxLine),   allocatable :: exponent_dist(:)
     character(MaxLine),   allocatable :: weight_dist(:)
+    character(MaxLine),   allocatable :: caging(:)
+    character(MaxLine),   allocatable :: flat_radius(:)
+    real(wp),             allocatable :: rgbuffer(:)
+    character(MaxLine),   allocatable :: wall_z(:)
 
     ! restraints group (size = num_group)
     character(MaxLine),   allocatable :: group(:)
@@ -73,6 +79,12 @@ module at_restraints_str_mod
   integer,      public, parameter :: RestraintsFuncREPULCOM  = 14
   integer,      public, parameter :: RestraintsFuncFB        = 15
   integer,      public, parameter :: RestraintsFuncFBCOM     = 16
+  integer,      public, parameter :: RestraintsFuncRG        = 17
+  integer,      public, parameter :: RestraintsFuncRGWOMASS  = 18
+  integer,      public, parameter :: RestraintsFuncRGXY      = 19
+  integer,      public, parameter :: RestraintsFuncWALL_Z    = 20
+  integer,      public, parameter :: RestraintsFuncCLIMBER   = 21
+
  
   ! parameters for kind of direction
   integer,      public, parameter :: RestraintsDirALL       = 1
@@ -85,7 +97,7 @@ module at_restraints_str_mod
   integer,      public, parameter :: RestraintsMaxRef       = 2
 
   ! restraints func type strings
-  character(*), public, parameter :: RestraintsFuncTypes(16) = (/'POSI     ', &
+  character(*), public, parameter :: RestraintsFuncTypes(21) = (/'POSI     ', &
                                                                 'DIST     ', &
                                                                 'DISTMASS ', &
                                                                 'RMSD     ', &
@@ -100,7 +112,12 @@ module at_restraints_str_mod
                                                                 'REPUL    ', &
                                                                 'REPULMASS', &
                                                                 'FB       ', &
-                                                                'FBMASS   '/)
+                                                                'FBMASS   ', &
+                                                                'RG       ', &
+                                                                'RGWOMASS ', &
+                                                                'RGXY     ', &
+                                                                'WALL_Z   ', &
+                                                                'CLIMBER  '/)
 
   character(*), public, parameter :: RestraintsDirTypes(4)  = (/'ALL ', &
                                                                 'X   ', &
@@ -131,12 +148,14 @@ contains
 
 
     restraints%restraint_flag     = .false.
+    restraints%climber_flag       = .false.
     restraints%verbose            = .false.
     restraints%pressure_position  = .false.
     restraints%pressure_rmsd      = .false.
     restraints%nfunctions         = 0
     restraints%num_groups         = 0
     restraints%max_atoms          = 0
+    restraints%target_function    = 0
 
     return
 
@@ -187,6 +206,10 @@ contains
                    restraints%exponent,      &
                    restraints%exponent_dist, &
                    restraints%weight_dist,   &
+                   restraints%caging,        &
+                   restraints%flat_radius,   &
+                   restraints%rgbuffer,      &
+                   restraints%wall_z,        &
                    stat = dealloc_stat)
       end if
 
@@ -199,6 +222,10 @@ contains
                restraints%exponent(var_size),      &
                restraints%exponent_dist(var_size), &
                restraints%weight_dist(var_size),   &
+               restraints%caging(var_size),        &
+               restraints%flat_radius(var_size),   &
+               restraints%rgbuffer(var_size),      &
+               restraints%wall_z(var_size),        &
                stat = alloc_stat)
 
       restraints%function     (1:var_size) = 0
@@ -210,6 +237,10 @@ contains
       restraints%exponent     (1:var_size) = 0
       restraints%exponent_dist(1:var_size) = ''
       restraints%weight_dist  (1:var_size) = ''
+      restraints%caging       (1:var_size) = ''
+      restraints%flat_radius  (1:var_size) = ''
+      restraints%rgbuffer     (1:var_size) = 0.0_wp
+      restraints%wall_z       (1:var_size) = ''
 
     case (RestraintsGroup)
 
@@ -289,6 +320,10 @@ contains
                     restraints%exponent,      &
                     restraints%exponent_dist, &
                     restraints%weight_dist,   &
+                    restraints%caging,        &
+                    restraints%flat_radius,   &
+                    restraints%rgbuffer,      &
+                    restraints%wall_z,        &
                     stat = dealloc_stat)
 
       end if

@@ -38,23 +38,23 @@ module sp_input_mod
 
   ! structures
   type, public :: s_inp_info
-    character(MaxFilename) :: topfile    = ''
-    character(MaxFilename) :: parfile    = ''
-    character(MaxFilename) :: strfile    = ''
-    character(MaxFilename) :: psffile    = ''
-    character(MaxFilename) :: prmtopfile = ''
-    character(MaxFilename) :: grotopfile = ''
-    character(MaxFilename) :: pdbfile    = ''
-    character(MaxFilename) :: crdfile    = ''
-    character(MaxFilename) :: ambcrdfile = ''
-    character(MaxFilename) :: grocrdfile = ''
-    character(MaxFilename) :: rstfile    = ''
-    character(MaxFilename) :: reffile    = ''
-    character(MaxFilename) :: fitfile    = ''
-    character(MaxFilename) :: ambreffile = ''
-    character(MaxFilename) :: groreffile = ''
-    character(MaxFilename) :: local_resfile = ''
-    character(MaxFilename) :: modefile   = ''
+    character(MaxFilenameLong) :: topfile    = ''
+    character(MaxFilenameLong) :: parfile    = ''
+    character(MaxFilenameLong) :: strfile    = ''
+    character(MaxFilename)     :: psffile    = ''
+    character(MaxFilename)     :: prmtopfile = ''
+    character(MaxFilename)     :: grotopfile = ''
+    character(MaxFilename)     :: pdbfile    = ''
+    character(MaxFilename)     :: crdfile    = ''
+    character(MaxFilename)     :: ambcrdfile = ''
+    character(MaxFilename)     :: grocrdfile = ''
+    character(MaxFilename)     :: rstfile    = ''
+    character(MaxFilename)     :: reffile    = ''
+    character(MaxFilename)     :: fitfile    = ''
+    character(MaxFilename)     :: ambreffile = ''
+    character(MaxFilename)     :: groreffile = ''
+    character(MaxFilename)     :: local_resfile = ''
+    character(MaxFilename)     :: modefile   = ''
   end type s_inp_info
 
   ! subroutines
@@ -665,6 +665,7 @@ contains
 
     ! local variables
     character(MaxMultiFilename)            :: filename
+    character(MaxFilenameLong)             :: filename_long
 
 
     call init_top(top)
@@ -681,18 +682,18 @@ contains
     call init_grocrd(groref)
 
     if (inp_info%topfile /= '') then
-      filename = inp_info%topfile
-      call input_top(filename, top)
+      filename_long = inp_info%topfile
+      call input_top(filename_long, top)
     end if
 
     if (inp_info%parfile /= '') then
-      filename = inp_info%parfile
-      call input_par(filename, par)
+      filename_long = inp_info%parfile
+      call input_par(filename_long, par)
     end if
 
     if (inp_info%strfile /= '') then
-      filename = inp_info%strfile
-      call input_str(filename, top, par)
+      filename_long = inp_info%strfile
+      call input_str(filename_long, top, par)
     end if
 
     if (inp_info%psffile /= '') then
@@ -820,6 +821,7 @@ contains
 
     ! local variables
     character(MaxMultiFilename)            :: filename
+    character(MaxFilenameLong)             :: filename_long
 
 
     call init_top(top)
@@ -837,18 +839,18 @@ contains
     call init_grocrd(groref)
 
     if (inp_info%topfile /= '') then
-      filename = inp_info%topfile
-      call input_top(filename, top)
+      filename_long = inp_info%topfile
+      call input_top(filename_long, top)
     end if
 
     if (inp_info%parfile /= '') then
-      filename = inp_info%parfile
-      call input_par(filename, par, top)
+      filename_long = inp_info%parfile
+      call input_par(filename_long, par, top)
     end if
 
     if (inp_info%strfile /= '') then
-      filename = inp_info%strfile
-      call input_str(filename, top, par)
+      filename_long = inp_info%strfile
+      call input_str(filename_long, top, par)
     end if
 
     if (inp_info%psffile /= '') then

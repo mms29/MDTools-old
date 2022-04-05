@@ -22,7 +22,7 @@ module at_energy_gbsa_mod
   use mpi_parallel_mod
   use messages_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -31,7 +31,11 @@ module at_energy_gbsa_mod
 
   real(wp), allocatable, save :: Hij(:)
   real(wp), allocatable, save :: dadrfac(:)
+  real(wp), allocatable, save :: sgrad(:)
+  real(wp), allocatable, save :: dfact(:)
   real(wp), allocatable, save :: alpha(:)
+  real(wp), allocatable, save :: tmp_allreduce(:)
+  real(wp),              save :: gbcutoff2
   integer,  allocatable, save :: cell_pointer(:)
   integer,  allocatable, save :: head_atom(:)
   integer,  allocatable, save :: cell_list(:,:)
@@ -83,7 +87,7 @@ contains
     type(s_pairlist),        intent(in)    :: pairlist
     logical,                 intent(in)    :: nonb_ene
     real(wp),                intent(in)    :: coord(:,:)
-    real(wp),                intent(inout) :: force(:,:)
+    real(wp),                intent(inout) :: force(:,:,:)
     real(wp),                intent(inout) :: virial(3,3)
     real(wp),                intent(inout) :: esolv
 
@@ -140,7 +144,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: esolv
 
@@ -149,16 +153,19 @@ contains
     integer                   :: natom
     integer                   :: num_all, ini_all, fin_all
     integer                   :: id, my_id, istart, iend
+    real(wp)                  :: esolv_omp(nthread)
     real(wp)                  :: drij(1:3), rij, rij2, esolv_tmp, tmp
+    real(wp)                  :: dfact_i
     real(wp)                  :: a, b, c, kappa, rho_0, ieps_p, ieps_w
     real(wp)                  :: rho_i0, rho_is, rho_j0, rho_js
     real(wp)                  :: rho_js2, rho_is2, rho_i02, rho_j02
     real(wp)                  :: alpha_i, alpha_j, inv_alpha, alpha_ij
     real(wp)                  :: fij, Dij, PSI1, PSI2, PSI3, b2, c3
-    real(wp)                  :: Hij_i, dHdr_i, dHdr_j, dfact, grad_coef
+    real(wp)                  :: Hij_i, dHdr_i, dHdr_j, grad_coef
     real(wp)                  :: term1, term2, term3, term4
     real(wp)                  :: term_tanh, term_exp1, term_exp2
     real(wp)                  :: elec_term, cutoff2, ELECOEF2
+    real(wp)                  :: max_rho_is
     real(wp)                  :: charge_i, coord_i(3), force_i(3)
     integer,          pointer :: num_all_calc(:,:), all_calc_list(:,:)
     real(wp),         pointer :: charge(:), rho_k(:), scale_k(:)
@@ -188,8 +195,21 @@ contains
     num_all_calc  => pairlist%num_all_calc
     all_calc_list => pairlist%all_calc_list
 
+
+    ! initial setup
+    !
     if (.not. allocated(Hij)) then
-      allocate(Hij(natom), dadrfac(natom), alpha(natom))
+      allocate(Hij(natom), dadrfac(natom), alpha(natom), sgrad(natom), &
+               dfact(natom), tmp_allreduce(natom))
+
+      max_rho_is = -9999_wp
+      do i = 1, natom
+        rho_i0  = rho_k(i) - rho_0
+        rho_is  = rho_i0 * scale_k(i)
+        if (rho_is > max_rho_is) max_rho_is = rho_is
+      end do
+      gbcutoff2 = (cutoff + max_rho_is)**2
+
     end if
 
     ! calculate pairwise descreening function H
@@ -197,12 +217,12 @@ contains
     num_all = 0
     Hij(:)  = 0.0_wp
 
-    !$omp parallel &
+    !$omp parallel                                                   &
     !$omp firstprivate(num_all)                                      &
     !$omp private(id, my_id, ini_all, fin_all, i, k, j,              &
     !$omp         rho_i0, rho_is, rho_i02, rho_is2, Hij_i, coord_i,  &
     !$omp         rho_j0, rho_js, rho_j02, rho_js2, drij, rij2, rij, &
-    !$omp         term1, term2, term3)  &
+    !$omp         term1, term2, term3, tmp)                          &
     !$omp reduction(+:Hij)
     !
 #ifdef OMP
@@ -233,19 +253,19 @@ contains
         j = all_calc_list(k,id+1)
 
         drij(1:3) = coord_i(1:3) - coord(1:3,j)
-        rij2 = drij(1)*drij(1) + drij(2)*drij(2) + drij(3)*drij(3)
+        rij2      = drij(1)*drij(1) + drij(2)*drij(2) + drij(3)*drij(3)
 
-        if (rij2 < cutoff2) then
-
-          rij = sqrt(rij2)
-
+        if (rij2 < gbcutoff2) then
+          rij     = sqrt(rij2)
           rho_j0  = rho_k(j) - rho_0
           rho_js  = rho_j0 * scale_k(j)
           rho_j02 = rho_j0 * rho_j0
           rho_js2 = rho_js * rho_js
 
-          ! for Hij 
-          if (rij > cutoff - rho_js) then
+          ! for Hij
+          if (rij >= cutoff + rho_js) then
+            Hij_i  = Hij_i + 0.0_wp
+          else if (rij > cutoff - rho_js) then
             term1  = 1.0_wp + 2.0_wp*rij/(rij - rho_js)
             term2  = (rij2 - 4.0_wp*cutoff*rij - rho_js2)/cutoff2
             term3  = 2.0_wp*log((rij - rho_js)/cutoff)
@@ -275,7 +295,9 @@ contains
           end if
 
           ! for Hji
-          if (rij > cutoff - rho_is) then
+          if (rij >= cutoff + rho_is) then
+            Hij(j) = Hij(j) + 0.0_wp
+          else if (rij > cutoff - rho_is) then
             term1  = 1.0_wp + 2.0_wp*rij/(rij - rho_is)
             term2  = (rij2 - 4.0_wp*cutoff*rij - rho_is2)/cutoff2
             term3  = 2.0_wp*log((rij - rho_is)/cutoff)
@@ -313,63 +335,155 @@ contains
     end do
     !$omp end parallel
 
-    ! Note: alpha is used temporarily for MPI allreduse
-#ifdef MPI
-    alpha(1:natom) = 0.0_wp
-    alpha(1:natom) = Hij(1:natom)
-    call mpi_allreduce(alpha, Hij, natom, &
+#ifdef HAVE_MPI_GENESIS
+    tmp_allreduce(1:natom) = 0.0_wp
+    tmp_allreduce(1:natom) = Hij(1:natom)
+    call mpi_allreduce(tmp_allreduce, Hij, natom, &
                        mpi_wp_real, mpi_sum, mpi_comm_city, ierror)
 #endif
 
     ! compute effective Born radius of atom i and gradient factor
     !
-    !$omp parallel do                                        &
-    !$omp private(i, rho_i0, PSI1, PSI2, PSI3,               &
-    !$omp         term1, term2, term3, term_tanh, inv_alpha)
+    !$omp parallel do                                                  &
+    !$omp private(i, rho_i0, PSI1, PSI2, PSI3,                         &
+    !$omp         term1, term2, term3, term_tanh, inv_alpha, term_exp1)
     !
     do i = 1, natom
-      rho_i0    = rho_k(i) - rho_0
-      PSI1      = rho_i0 * Hij(i)
-      PSI2      = PSI1 * PSI1
-      PSI3      = PSI1 * PSI2
-      term_tanh = tanh(a*PSI1 - b*PSI2 + c*PSI3)
-      inv_alpha = 1.0_wp/rho_i0 - 1.0_wp/rho_k(i)*term_tanh
-      alpha(i)  = 1.0_wp/inv_alpha
+      rho_i0     = rho_k(i) - rho_0
+      PSI1       = rho_i0 * Hij(i)
+      PSI2       = PSI1 * PSI1
+      PSI3       = PSI1 * PSI2
+      term_tanh  = tanh(a*PSI1 - b*PSI2 + c*PSI3)
+      inv_alpha  = 1.0_wp/rho_i0 - 1.0_wp/rho_k(i)*term_tanh
+      alpha(i)   = 1.0_wp/inv_alpha
 
-      term1 = alpha(i)*rho_i0/rho_k(i)
-      term2 = 1.0_wp - term_tanh*term_tanh
-      term3 = a - b2*PSI1 + c3*PSI2
+      term1      = alpha(i)*rho_i0/rho_k(i)
+      term2      = 1.0_wp - term_tanh*term_tanh
+      term3      = a - b2*PSI1 + c3*PSI2
       dadrfac(i) = term1*term2*term3
+
+      term_exp1  = exp(-kappa*alpha(i))*ieps_w
+      term1      = ieps_p - term_exp1
+      term2      = ELECOEF2*charge(i)*charge(i)/alpha(i)
+      sgrad(i)   = term1*term2 - kappa*term2*alpha(i)*term_exp1
     end do
     !$omp end parallel do
 
     ! compute self energy
     !
-    esolv_tmp = 0.0_wp
+    esolv_omp(1:nthread) = 0.0_wp
     !$omp parallel do              &
     !$omp private(i, term1, term2) &
-    !$omp reduction(+:esolv_tmp)
+    !$omp reduction(+:esolv_omp)
     !
     do i = istart, iend
       term1 = ieps_p - exp(-kappa*alpha(i))*ieps_w
       term2 = ELECOEF2*charge(i)*charge(i)/alpha(i)
-      esolv_tmp = esolv_tmp - term1*term2
+      esolv_omp(1) = esolv_omp(1) - term1*term2
     end do
     !$omp end parallel do
+
+    ! compute solvation free energy
+    !
+    dfact(:) = 0.0_wp
+    num_all  = 0
+    !$omp parallel                                                        &
+    !$omp firstprivate(num_all)                                           &
+    !$omp private(id, my_id, ini_all, fin_all, i, k, j,                   &
+    !$omp         coord_i, drij, rij2, rij, term_exp1, term_exp2, term1,  &
+    !$omp         term2, elec_term, fij, Dij, alpha_i, alpha_j, alpha_ij, &
+    !$omp         tmp, grad_coef, charge_i, dfact_i, force_i, esolv_tmp)  &
+    !$omp reduction(+:dfact)
+    !
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    my_id = my_city_rank * nthread + id
+
+    do i = 1, natom-1
+
+      ini_all = num_all + 1
+      fin_all = num_all + num_all_calc(i,id+1)
+      num_all = fin_all
+
+      if (mod(i-1,nproc_city*nthread) /= my_id) cycle
+
+      alpha_i      = alpha(i)
+      charge_i     = charge(i)*ELECOEF
+      coord_i(1:3) = coord(1:3,i)
+      esolv_tmp    = 0.0_wp
+      dfact_i      = 0.0_wp
+      force_i(1:3) = 0.0_wp
+
+      do k = ini_all, fin_all
+
+        j = all_calc_list(k,id+1)
+
+        drij(1:3) = coord_i(1:3) - coord(1:3,j)
+        rij2      = drij(1)*drij(1) + drij(2)*drij(2) + drij(3)*drij(3)
+
+        if (rij2 < gbcutoff2) then
+          rij       = sqrt(rij2)
+          alpha_j   = alpha(j)
+          alpha_ij  = alpha_i * alpha_j
+
+          ! effective distance
+          term_exp1 = exp(-rij2/(4.0_wp*alpha_ij))
+          fij       = sqrt(rij2 + alpha_ij*term_exp1)
+
+          ! solvation free energy
+          term_exp2 = exp(-kappa*fij)
+          Dij       = ieps_p - term_exp2*ieps_w
+          elec_term = charge_i*charge(j)
+          esolv_tmp = esolv_tmp - elec_term*Dij/fij
+
+          ! gradient
+          tmp       = - elec_term/(2.0_wp*fij*fij)
+          term1     = tmp*(kappa*ieps_w*term_exp2 - Dij/fij)
+          term2     = term1*(alpha_ij + 0.25_wp*rij2)*term_exp1
+
+          dfact_i   = dfact_i  + term2
+          dfact(j)  = dfact(j) + term2
+
+          grad_coef         = term1*(2.0_wp - 0.5_wp*term_exp1)
+          force_i(1:3)      = force_i(1:3)      - grad_coef*drij(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + grad_coef*drij(1:3)
+        end if
+      end do
+
+      esolv_omp(id+1)   = esolv_omp(id+1)   + esolv_tmp
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_i(1:3)
+      dfact(i)          = dfact(i)          + dfact_i
+
+    end do
+    !$omp end parallel
+
+    esolv = 0.0_wp
+    do i = 1, nthread
+      esolv = esolv + esolv_omp(i)
+    end do
+
+#ifdef HAVE_MPI_GENESIS
+    tmp_allreduce(1:natom) = 0.0_wp
+    tmp_allreduce(1:natom) = dfact(1:natom)
+    call mpi_allreduce(tmp_allreduce, dfact, natom, &
+                       mpi_wp_real, mpi_sum, mpi_comm_city, ierror)
+#endif
+
+    dfact(:) = dfact(:) + sgrad(:)
 
     ! compute solvation free energy and force
     !
     num_all = 0
-    !$omp parallel                                                       &
-    !$omp firstprivate(num_all)                                          &
-    !$omp private(id, my_id, ini_all, fin_all, i, k, j,                  &
-    !$omp         rho_i0, rho_is, rho_i02, rho_is2, coord_i, force_i,    &
-    !$omp         rho_j0, rho_js, rho_j02, rho_js2, drij, rij2, rij,     &
-    !$omp         term1, term2, term3, term4, term_exp1, term_exp2,      &
-    !$omp         elec_term, fij, Dij, dfact, dHdr_i, dHdr_j, grad_coef, &
-    !$omp         alpha_i, alpha_j, alpha_ij, tmp)                       &
-    !$omp reduction(+:force,esolv_tmp)
-!    !$omp reduction(+:force) reduction(+:esolv_tmp)
+    !$omp parallel                                                    &
+    !$omp firstprivate(num_all)                                       &
+    !$omp private(id, my_id, ini_all, fin_all, i, k, j,               &
+    !$omp         rho_i0, rho_is, rho_i02, rho_is2, coord_i, force_i, &
+    !$omp         rho_j0, rho_js, rho_j02, rho_js2, drij, rij2, rij,  &
+    !$omp         term1, term2, term3, term4, term_exp1, term_exp2,   &
+    !$omp         dHdr_i, dHdr_j, grad_coef, tmp)
     !
 #ifdef OMP
     id = omp_get_thread_num()
@@ -390,129 +504,99 @@ contains
       rho_is  = rho_i0 * scale_k(i)
       rho_i02 = rho_i0 * rho_i0
       rho_is2 = rho_is * rho_is
-      alpha_i      = alpha(i)
-      charge_i     = charge(i)*ELECOEF
       coord_i(1:3) = coord(1:3,i)
       force_i(1:3) = 0.0_wp
 
       do k = ini_all, fin_all
-
         j = all_calc_list(k,id+1)
 
         drij(1:3) = coord_i(1:3) - coord(1:3,j)
-        rij2 = drij(1)*drij(1) + drij(2)*drij(2) + drij(3)*drij(3)
+        rij2      = drij(1)*drij(1) + drij(2)*drij(2) + drij(3)*drij(3)
 
-        if (rij2 < cutoff2) then
-
-          rij = sqrt(rij2)
-
-          rho_j0   = rho_k(j) - rho_0
-          rho_js   = rho_j0 * scale_k(j)
-          rho_j02  = rho_j0 * rho_j0
-          rho_js2  = rho_js * rho_js
-          alpha_j  = alpha(j)
-          alpha_ij = alpha_i * alpha_j
-
-          ! effective distance
-          term_exp1 = exp(-rij2/(4.0_wp*alpha_ij))
-          fij = sqrt(rij2 + alpha_ij*term_exp1)
-
-          ! solvation free energy
-          term_exp2 = exp(-kappa*fij)
-          Dij = ieps_p - term_exp2*ieps_w
-          elec_term = charge_i*charge(j)
-          esolv_tmp = esolv_tmp - elec_term*Dij/fij
+        if (rij2 < gbcutoff2) then
+          rij     = sqrt(rij2)
+          rho_j0  = rho_k(j) - rho_0
+          rho_js  = rho_j0 * scale_k(j)
+          rho_j02 = rho_j0 * rho_j0
+          rho_js2 = rho_js * rho_js
 
           ! dHij/drij
-          if (rij > cutoff - rho_js) then
-            tmp     = rij - rho_js
-            term1   = - (cutoff - tmp)*(cutoff + tmp)*(rho_js2 + rij2)
-            term2   = 8.0_wp*cutoff2*rij2*tmp*tmp
-            term3   = - 0.25_wp*log(tmp/cutoff)/rij2
-            dHdr_i  = term1/term2 + term3
+          if (rij > cutoff + rho_js) then
+            dHdr_i = 0.0_wp
+          else if (rij > cutoff - rho_js) then
+            tmp    = rij - rho_js
+            term1  = - (cutoff - tmp)*(cutoff + tmp)*(rho_js2 + rij2)
+            term2  = 8.0_wp*cutoff2*rij2*tmp*tmp
+            term3  = - 0.25_wp*log(tmp/cutoff)/rij2
+            dHdr_i = term1/term2 + term3
           else if (rij > 4.0_wp*rho_js) then
-            tmp     = rho_js2/rij2
-            term1   = paa + tmp*(pbb + tmp*(pcc + tmp*(pdd + tmp*pee)))
-            term2   = - tmp*tmp/rho_js/rij
-            dHdr_i  = term1*term2
+            tmp    = rho_js2/rij2
+            term1  = paa + tmp*(pbb + tmp*(pcc + tmp*(pdd + tmp*pee)))
+            term2  = - tmp*tmp/rho_js/rij
+            dHdr_i = term1*term2
           else if (rij > rho_i0 + rho_js) then
-            term1   = - rho_js*(rij2 + rho_js2)/(rij*(rij2 - rho_js2)**2)
-            term2   = - 0.5_wp/rij2 * log((rij - rho_js)/(rij + rho_js))
-            dHdr_i  = 0.5_wp * (term1 + term2)
+            term1  = - rho_js*(rij2 + rho_js2)/(rij*(rij2 - rho_js2)**2)
+            term2  = - 0.5_wp/rij2 * log((rij - rho_js)/(rij + rho_js))
+            dHdr_i = 0.5_wp * (term1 + term2)
           else if (rij > abs(rho_i0 - rho_js)) then
-            term1   = - 0.5_wp/rho_i02
-            term2   = (rij2+rho_js2)*(rho_i02-rho_js2) - 2.0_wp*rij*rho_js**3
-            term2   = term2/(2.0_wp*rij2*rho_i02*(rij + rho_js)**2)
-            term3   = - 1.0_wp/rij2 * log(rho_i0/(rij + rho_js))
-            dHdr_i  = 0.25_wp * (term1 + term2 + term3)
+            term1  = - 0.5_wp/rho_i02
+            term2  = (rij2+rho_js2)*(rho_i02-rho_js2) - 2.0_wp*rij*rho_js**3
+            term2  = term2/(2.0_wp*rij2*rho_i02*(rij + rho_js)**2)
+            term3  = - 1.0_wp/rij2 * log(rho_i0/(rij + rho_js))
+            dHdr_i = 0.25_wp * (term1 + term2 + term3)
           else if (rho_i0 < rho_js) then
-            term1   = - rho_js*(rij2 + rho_js2)/(rij*(rij2 - rho_js2)**2)
-            term2   = - 0.5_wp/rij2 * log((rho_js - rij)/(rij + rho_js))
-            dHdr_i  = 0.5_wp * (term1 + term2)
+            term1  = - rho_js*(rij2 + rho_js2)/(rij*(rij2 - rho_js2)**2)
+            term2  = - 0.5_wp/rij2 * log((rho_js - rij)/(rij + rho_js))
+            dHdr_i = 0.5_wp * (term1 + term2)
           else
-            dHdr_i  = 0.0_wp
+            dHdr_i = 0.0_wp
           end if
 
           ! dHji/drij
-          if (rij > cutoff - rho_is) then
-            tmp     = rij - rho_is
-            term1   = - (cutoff - tmp)*(cutoff + tmp)*(rho_is2 + rij2)
-            term2   = 8.0_wp*cutoff2*rij2*tmp*tmp
-            term3   = - 0.25_wp*log(tmp/cutoff)/rij2
-            dHdr_j  = term1/term2 + term3
+          if (rij > cutoff + rho_is) then
+            dHdr_j = 0.0_wp
+          else if (rij > cutoff - rho_is) then
+            tmp    = rij - rho_is
+            term1  = - (cutoff - tmp)*(cutoff + tmp)*(rho_is2 + rij2)
+            term2  = 8.0_wp*cutoff2*rij2*tmp*tmp
+            term3  = - 0.25_wp*log(tmp/cutoff)/rij2
+            dHdr_j = term1/term2 + term3
           else if (rij > 4.0_wp*rho_is) then
-            tmp     = rho_is2/rij2
-            term1   = paa + tmp*(pbb + tmp*(pcc + tmp*(pdd + tmp*pee)))
-            term2   = - tmp*tmp/rho_is/rij
-            dHdr_j  = term1*term2
+            tmp    = rho_is2/rij2
+            term1  = paa + tmp*(pbb + tmp*(pcc + tmp*(pdd + tmp*pee)))
+            term2  = - tmp*tmp/rho_is/rij
+            dHdr_j = term1*term2
           else if (rij > rho_j0 + rho_is) then
-            term1   = - rho_is*(rij2 + rho_is2)/(rij*(rij2 - rho_is2)**2)
-            term2   = - 0.5_wp/rij2 * log((rij - rho_is)/(rij + rho_is))
-            dHdr_j  = 0.5_wp * (term1 + term2)
+            term1  = - rho_is*(rij2 + rho_is2)/(rij*(rij2 - rho_is2)**2)
+            term2  = - 0.5_wp/rij2 * log((rij - rho_is)/(rij + rho_is))
+            dHdr_j = 0.5_wp * (term1 + term2)
           else if (rij > abs(rho_j0 - rho_is)) then
-            term1   = - 0.5_wp/rho_j02
-            term2   = (rij2+rho_is2)*(rho_j02-rho_is2) - 2.0_wp*rij*rho_is**3
-            term2   = term2/(2.0_wp*rij2*rho_j02*(rij + rho_is)**2)
-            term3   = - 1.0_wp/rij2 * log(rho_j0/(rij + rho_is))
-            dHdr_j  = 0.25_wp * (term1 + term2 + term3)
+            term1  = - 0.5_wp/rho_j02
+            term2  = (rij2+rho_is2)*(rho_j02-rho_is2) - 2.0_wp*rij*rho_is**3
+            term2  = term2/(2.0_wp*rij2*rho_j02*(rij + rho_is)**2)
+            term3  = - 1.0_wp/rij2 * log(rho_j0/(rij + rho_is))
+            dHdr_j = 0.25_wp * (term1 + term2 + term3)
           else if (rho_j0 < rho_is) then
-            term1   = - rho_is*(rij2 + rho_is2)/(rij*(rij2 - rho_is2)**2)
-            term2   = - 0.5_wp/rij2 * log((rho_is - rij)/(rij + rho_is))
-            dHdr_j  = 0.5_wp * (term1 + term2)
+            term1  = - rho_is*(rij2 + rho_is2)/(rij*(rij2 - rho_is2)**2)
+            term2  = - 0.5_wp/rij2 * log((rho_is - rij)/(rij + rho_is))
+            dHdr_j = 0.5_wp * (term1 + term2)
           else
-            dHdr_j  = 0.0_wp
+            dHdr_j = 0.0_wp
           end if
- 
-          ! dfact: a*dE/da
-          term4 = - elec_term/(2.0_wp*fij*fij)
-          term4 = term4*(kappa*ieps_w*term_exp2 - Dij/fij)
-          dfact = term4*(alpha_ij + 0.25_wp*rij2)
-          dfact = dfact*term_exp1
 
-          ! term1: dE/dai * dai/dr
-          ! term2: dE/daj * daj/dr
-          term1 = dadrfac(i)*dHdr_i*dfact
-          term2 = dadrfac(j)*dHdr_j*dfact
+          term1 = dadrfac(i)*dHdr_i*dfact(i)
+          term2 = dadrfac(j)*dHdr_j*dfact(j)
+          grad_coef = (term1 + term2)/rij
 
-          ! term3: dE/dr
-          term3 = term4*rij*2.0_wp
-          term3 = term3*(1.0_wp - 0.25_wp*term_exp1)
-
-          ! force
-          grad_coef = (term1 + term2 + term3)/rij
-          force_i(1:3) = force_i(1:3) - grad_coef*drij(1:3)
-          force(1:3,j) = force(1:3,j) + grad_coef*drij(1:3)
-
+          force_i(1:3)      = force_i(1:3)      - grad_coef*drij(1:3)
+          force(1:3,j,id+1) = force(1:3,j,id+1) + grad_coef*drij(1:3)
         end if
 
       end do
-
-      force(1:3,i) = force(1:3,i) + force_i(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) + force_i(1:3)
 
     end do
     !$omp end parallel
-
-    esolv = esolv + esolv_tmp
 
     return
 
@@ -542,7 +626,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_pairlist), target, intent(in)    :: pairlist
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: esolv
 
@@ -682,8 +766,7 @@ contains
     !$omp         sum_dfacjk, dxik, rik2, RiRk2, Rk, dxjk, rjk2, RjRk2, &
     !$omp         Rk2, rjk, fact, Ajk, dAjkdx, nj, dfacjk, sasa_i,      &
     !$omp         dfacij, dAijdx, sum_dfacij, coord_i, coord_j)         &
-    !$omp reduction(+:force,sasa)
-!    !$omp reduction(+:force) reduction(+:sasa)
+    !$omp reduction(+:sasa)
     !
 #ifdef OMP
     id = omp_get_thread_num()
@@ -805,7 +888,7 @@ contains
 
               sum_dfacjk(1:3) = sum_dfacjk(1:3) + dfacjk(1:3)
 
-              force(1:3,k) = force(1:3,k) + tension*dfacjk(1:3)
+              force(1:3,k,id+1) = force(1:3,k,id+1) + tension*dfacjk(1:3)
 
               k = cell_linked_list(k)
 
@@ -819,7 +902,7 @@ contains
           dfacij    (1:3) = P2*dAijdx(1:3) + P4*dAijdx(1:3)*sum_Ajk
           sum_dfacij(1:3) = sum_dfacij(1:3) + dfacij(1:3)
 
-          force(1:3,j) = force(1:3,j) + tension*(dfacij(1:3) - sum_dfacjk(1:3))
+          force(1:3,j,id+1) = force(1:3,j,id+1) + tension*(dfacij(1:3) - sum_dfacjk(1:3))
 
           j = cell_linked_list(j)
 
@@ -830,7 +913,7 @@ contains
       sasa_i = P1*term1 + P2*term2 + P3*term3 + P4*term4
       sasa = sasa + sasa_i
 
-      force(1:3,i) = force(1:3,i) - tension*sum_dfacij(1:3)
+      force(1:3,i,id+1) = force(1:3,i,id+1) - tension*sum_dfacij(1:3)
 
     end do
     !$omp end parallel

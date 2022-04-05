@@ -21,7 +21,7 @@ module hardwareinfo_mod
   use messages_mod
 
 #ifdef USE_GPU
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif /* MPI */
   use mpi_parallel_mod
@@ -322,7 +322,11 @@ contains
     logical       :: exists
 
     exists=.false.
-    
+
+#ifdef KCOMP
+    cpuname="Fugaku"
+    return
+#endif
     inquire(file=cpuinfo, EXIST=exists)
     if (.not. exists) then
       cpuname="N/A"
@@ -372,7 +376,7 @@ contains
 
 
     my_device_id = 0
-#ifndef MPI
+#ifndef HAVE_MPI_GENESIS
     ! do nothing if MPI is not available
     return
 #else
@@ -466,7 +470,7 @@ contains
     character(MaxLine), allocatable :: nodenames(:)
     integer,            allocatable :: ranks(:)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! check OpenMPI
     call getenv("OMPI_COMM_WORLD_LOCAL_RANK", myname)
     if ( len_trim(myname) /= 0 ) then

@@ -16,6 +16,7 @@ module at_enefunc_amber_mod
 
   use at_enefunc_restraints_mod
   use at_enefunc_table_mod
+  use at_enefunc_gbsa_mod
   use at_enefunc_pme_mod
   use at_energy_mod
   use at_boundary_str_mod
@@ -23,7 +24,9 @@ module at_enefunc_amber_mod
   use at_enefunc_str_mod
   use at_energy_str_mod
   use math_libs_mod
+  use dihedral_libs_mod
   use molecules_str_mod
+  use fileio_table_mod
   use fileio_prmtop_mod
   use messages_mod
   use mpi_parallel_mod
@@ -43,6 +46,7 @@ module at_enefunc_amber_mod
   private :: setup_enefunc_angl
   private :: setup_enefunc_dihe
   private :: setup_enefunc_impr
+  private :: setup_enefunc_cmap
   private :: setup_enefunc_nonb
   private :: count_nonb_excl
 
@@ -56,19 +60,21 @@ contains
   !! @param[in]    ene_info   : ENERGY section control parameters information
   !! @param[in]    boundary   : boundary condition
   !! @param[in]    prmtop     : AMBER parameter topology information
+  !! @param[in]    table      : lookup table information
   !! @param[in]    molecule   : molecule information
   !! @param[in]    restraints : restraints information
   !! @param[inout] enefunc    : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine define_enefunc_amber(ene_info, boundary, prmtop, &
+  subroutine define_enefunc_amber(ene_info, boundary, prmtop, table, &
                                   molecule, restraints, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info 
     type(s_boundary),        intent(in)    :: boundary
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_table),           intent(in)    :: table
     type(s_molecule),        intent(in)    :: molecule
     type(s_restraints),      intent(in)    :: restraints
     type(s_enefunc),         intent(inout) :: enefunc
@@ -81,19 +87,23 @@ contains
 
     ! bond
     !
-    call setup_enefunc_bond(prmtop, enefunc)
+    call setup_enefunc_bond(prmtop, molecule, enefunc)
 
     ! angle
     !
-    call setup_enefunc_angl(prmtop, enefunc)
+    call setup_enefunc_angl(prmtop, molecule, enefunc)
 
     ! dihedral
     !
-    call setup_enefunc_dihe(prmtop, enefunc)
+    call setup_enefunc_dihe(prmtop, molecule, enefunc)
 
     ! improper
     !
-    call setup_enefunc_impr(prmtop, enefunc)
+    call setup_enefunc_impr(prmtop, molecule, enefunc)
+
+    ! cmap
+    !
+    call setup_enefunc_cmap(ene_info, prmtop, molecule, enefunc)
 
     ! nonbonded
     !
@@ -101,11 +111,16 @@ contains
 
     ! lookup table
     !
-    call setup_enefunc_table(ene_info, molecule, enefunc)
+    call setup_enefunc_table(ene_info, table, molecule, enefunc)
 
     ! PME
     !
     call define_enefunc_pme(ene_info, boundary, molecule, enefunc)
+
+    ! Implicit solvent
+    !
+    call setup_enefunc_implicit_solvent_amber(ene_info, boundary, &
+                                       molecule, prmtop, enefunc)
 
     ! restraints
     !
@@ -118,8 +133,10 @@ contains
                 enefunc%num_angles, &
                 enefunc%num_dihedrals, &
                 enefunc%num_impropers, &
+                enefunc%num_cmaps*2,   &
                 enefunc%num_restraintfuncs, &
-                enefunc%num_restraintgroups)
+                enefunc%num_restraintgroups,&
+                enefunc%num_morph_sc)
 
     allocate(enefunc%work(MAXWRK,nwork), stat=alloc_stat)
     if (alloc_stat /= 0) call error_msg_alloc
@@ -148,6 +165,8 @@ contains
       write(MsgOut,'(A20,I10,A20,I10)')                         &
            '  torsion_ene     = ', enefunc%num_dihedrals,       &
            '  improper_ene    = ', enefunc%num_impropers
+      write(MsgOut,'(A20,I10)')                                 &
+           '  cmap_ene        = ', enefunc%num_cmaps
       if (.not. ene_info%table) then
         write(MsgOut,'(A20,I10,A20,I10)')                       &
            '  nb_exclusions   = ', found,                       &
@@ -170,55 +189,117 @@ contains
   !> @brief        define BOND term in potential energy function
   !! @authors      NT
   !! @param[in]    prmtop   : AMBER parameter topology information
+  !! @param[in]    molecule : molecule information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_bond(prmtop, enefunc)
+  subroutine setup_enefunc_bond(prmtop, molecule, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
     integer                  :: nbond, i, icnt
     integer                  :: istart, iend
+    character(4), allocatable :: bond_atom_cls(:,:)
+    character(4) :: ci1, ci2
+    integer :: j, bond_id, nbond_p, found
 
 
     nbond = prmtop%num_bondh + prmtop%num_mbonda
+    if (enefunc%qmmm%do_qmmm) then
+      nbond = molecule%num_bonds - enefunc%qmmm%qm_nbonds
+    end if
 
     call alloc_enefunc(enefunc, EneFuncBond, nbond)
 
+    if (enefunc%qmmm%do_qmmm) then
+      allocate(bond_atom_cls(2,prmtop%num_uniqbond))
+      bond_atom_cls(:,:) = ""
+      do i = 1, prmtop%num_bondh
+        bond_id = prmtop%bond_inc_hy(3,i)
+        if (bond_atom_cls(1,bond_id) .eq. "" .or. bond_atom_cls(2,bond_id) .eq. "") then
+          bond_atom_cls(1,bond_id) = prmtop%atom_cls_name(prmtop%bond_inc_hy(1,i)/3+1)
+          bond_atom_cls(2,bond_id) = prmtop%atom_cls_name(prmtop%bond_inc_hy(2,i)/3+1)
+        end if
+      end do
+      do i = 1, prmtop%num_mbonda
+        bond_id = prmtop%bond_wo_hy(3,i)
+        if (bond_atom_cls(1,bond_id) .eq. "" .or. bond_atom_cls(2,bond_id) .eq. "") then
+          bond_atom_cls(1,bond_id) = prmtop%atom_cls_name(prmtop%bond_wo_hy(1,i)/3+1)
+          bond_atom_cls(2,bond_id) = prmtop%atom_cls_name(prmtop%bond_wo_hy(2,i)/3+1)
+        end if
+      end do
+      ! Setup bond terms
+      nbond_p = prmtop%num_uniqbond
+      found = 0
+      do i = 1, nbond
+        
+        ci1 = molecule%atom_cls_name(molecule%bond_list(1, i))
+        ci2 = molecule%atom_cls_name(molecule%bond_list(2, i))
+        enefunc%bond_list(1:2,i)   = molecule%bond_list(1:2,i)
+        
+        do j = 1, nbond_p
+          if ( ( ci1 == bond_atom_cls(1, j) .and.  &
+            ci2 == bond_atom_cls(2, j) ) .or. &
+            ( ci1 == bond_atom_cls(2, j) .and.  &
+            ci2 == bond_atom_cls(1, j) ) ) then
+            enefunc%bond_force_const(i) = prmtop%bond_fcons_uniq(j)
+            enefunc%bond_dist_min(i)    = prmtop%bond_equil_uniq(j)
+            found = found + 1
+!!!
+!            write(*, '(a,i6,a,2(x,i6),2(x,f12.6))') "MM bond ", found, ": ", enefunc%bond_list(1:2,found), enefunc%bond_force_const(found), enefunc%bond_dist_min(found)
+!!!
+            exit
+          end if
+        end do
+        
+        if (j == nbond_p + 1) &
+          write(MsgOut,*) 'Setup_Enefunc_Bond> not found BOND: [', &
+          ci1, ']-[', ci2, '] in parameter file. (ERROR)'
+        
+      end do
+      enefunc%num_bonds = found
+      
+      if (found /= nbond) &
+        call error_msg('Setup_Enefunc_Bond> '//                    &
+                     'Some Bond Paremeters are missing.')
 
-    icnt = 0
-    do i = 1, prmtop%num_bondh
+      deallocate(bond_atom_cls)
+    else
+      icnt = 0
+      do i = 1, prmtop%num_bondh
 
-      icnt = icnt + 1
+        icnt = icnt + 1
 
-      enefunc%bond_list(1,icnt) = prmtop%bond_inc_hy(1,i) / 3 + 1
-      enefunc%bond_list(2,icnt) = prmtop%bond_inc_hy(2,i) / 3 + 1
+        enefunc%bond_list(1,icnt) = prmtop%bond_inc_hy(1,i) / 3 + 1
+        enefunc%bond_list(2,icnt) = prmtop%bond_inc_hy(2,i) / 3 + 1
 
-      enefunc%bond_force_const(icnt) = &
-             prmtop%bond_fcons_uniq(prmtop%bond_inc_hy(3,i))
-      enefunc%bond_dist_min(icnt)    = &
-             prmtop%bond_equil_uniq(prmtop%bond_inc_hy(3,i))
-    end do
+        enefunc%bond_force_const(icnt) = &
+          prmtop%bond_fcons_uniq(prmtop%bond_inc_hy(3,i))
+        enefunc%bond_dist_min(icnt)    = &
+          prmtop%bond_equil_uniq(prmtop%bond_inc_hy(3,i))
+      end do
 
-    do i = 1, prmtop%num_mbonda
+      do i = 1, prmtop%num_mbonda
 
-      icnt = icnt + 1
+        icnt = icnt + 1
 
-      enefunc%bond_list(1,icnt) = prmtop%bond_wo_hy(1,i) / 3 + 1
-      enefunc%bond_list(2,icnt) = prmtop%bond_wo_hy(2,i) / 3 + 1
+        enefunc%bond_list(1,icnt) = prmtop%bond_wo_hy(1,i) / 3 + 1
+        enefunc%bond_list(2,icnt) = prmtop%bond_wo_hy(2,i) / 3 + 1
 
-      enefunc%bond_force_const(icnt) = &
-             prmtop%bond_fcons_uniq(prmtop%bond_wo_hy(3,i))
-      enefunc%bond_dist_min(icnt)    = &
-             prmtop%bond_equil_uniq(prmtop%bond_wo_hy(3,i))
+        enefunc%bond_force_const(icnt) = &
+          prmtop%bond_fcons_uniq(prmtop%bond_wo_hy(3,i))
+        enefunc%bond_dist_min(icnt)    = &
+          prmtop%bond_equil_uniq(prmtop%bond_wo_hy(3,i))
 
-    end do
+      end do
 
-    enefunc%num_bonds = nbond
+      enefunc%num_bonds = nbond
+    end if
 
 
     call get_loop_index(enefunc%num_bonds, istart, iend)
@@ -236,58 +317,131 @@ contains
   !> @brief        define ANGLE term in potential energy function
   !! @authors      NT
   !! @param[in]    prmtop   : AMBER parameter topology information
+  !! @param[in]    molecule : molecule information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_angl(prmtop, enefunc)
+  subroutine setup_enefunc_angl(prmtop, molecule, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
     integer                  :: nangl, i, icnt
     integer                  :: istart, iend
+    character(4), allocatable :: angl_atom_cls(:,:)
+    real(8), allocatable :: angl_fcons(:), angl_equil(:)
+    character(4) :: ci1, ci2, ci3
+    integer :: i1, i2, i3, j, angl_id, nangl_p, angl_found
 
 
     nangl = prmtop%num_anglh + prmtop%num_mangla
+    if (enefunc%qmmm%do_qmmm) then
+      nangl   = molecule%num_angles - enefunc%qmmm%qm_nangles
+    end if
 
     call alloc_enefunc(enefunc, EneFuncAngl, nangl)
 
+    if (enefunc%qmmm%do_qmmm) then
+      allocate(angl_atom_cls(3,prmtop%num_uniqangl))
+      allocate(angl_fcons(prmtop%num_uniqangl))
+      allocate(angl_equil(prmtop%num_uniqangl))
+      angl_atom_cls(:,:) = ""
+      do i = 1, prmtop%num_anglh
+        angl_id = prmtop%angl_inc_hy(4,i)
+        if (angl_atom_cls(1,angl_id) .eq. "" .or. angl_atom_cls(2,angl_id) .eq. "" .or. angl_atom_cls(3,angl_id) .eq. "") then
+          angl_atom_cls(1,angl_id) = prmtop%atom_cls_name(prmtop%angl_inc_hy(1,i)/3+1)
+          angl_atom_cls(2,angl_id) = prmtop%atom_cls_name(prmtop%angl_inc_hy(2,i)/3+1)
+          angl_atom_cls(3,angl_id) = prmtop%atom_cls_name(prmtop%angl_inc_hy(3,i)/3+1)
+          angl_fcons(angl_id) = prmtop%angl_fcons_uniq(angl_id)
+          angl_equil(angl_id) = prmtop%angl_equil_uniq(angl_id)
+        end if
+      end do
+      do i = 1, prmtop%num_mangla
+        angl_id = prmtop%angl_wo_hy(4,i)
+        if (angl_atom_cls(1,angl_id) .eq. "" .or. angl_atom_cls(2,angl_id) .eq. "" .or. angl_atom_cls(3,angl_id) .eq. "") then
+          angl_atom_cls(1,angl_id) = prmtop%atom_cls_name(prmtop%angl_wo_hy(1,i)/3+1)
+          angl_atom_cls(2,angl_id) = prmtop%atom_cls_name(prmtop%angl_wo_hy(2,i)/3+1)
+          angl_atom_cls(3,angl_id) = prmtop%atom_cls_name(prmtop%angl_wo_hy(3,i)/3+1)
+          angl_fcons(angl_id) = prmtop%angl_fcons_uniq(angl_id)
+          angl_equil(angl_id) = prmtop%angl_equil_uniq(angl_id)
+        end if
+      end do
+      ! Define enefunc angle term
+      nangl_p = prmtop%num_uniqangl
+      angl_found = 0
+      do i = 1, nangl
 
-    icnt = 0
-    do i = 1, prmtop%num_anglh
+        ci1 = molecule%atom_cls_name(molecule%angl_list(1,i))
+        ci2 = molecule%atom_cls_name(molecule%angl_list(2,i))
+        ci3 = molecule%atom_cls_name(molecule%angl_list(3,i))
 
-      icnt = icnt + 1
+        do j = 1, nangl_p
+          if ( ( ci1 == angl_atom_cls(1,j) .and.  &
+                 ci2 == angl_atom_cls(2,j) .and.  &
+                 ci3 == angl_atom_cls(3,j) ) .or. &
+               ( ci1 == angl_atom_cls(3,j) .and.  &
+                 ci2 == angl_atom_cls(2,j) .and.  &
+                 ci3 == angl_atom_cls(1,j) ) ) then
+            angl_found = angl_found + 1
+            enefunc%angl_list(1:3,angl_found)    = molecule%angl_list(1:3,i)
+            enefunc%angl_force_const(angl_found) = angl_fcons(j)
+            enefunc%angl_theta_min(angl_found)   = angl_equil(j)
+            !!!
+!            write(*, '(a,i6,a,3(x,i6),2(x,f12.6))') "MM angle ", angl_found, ": ", enefunc%angl_list(1:3,angl_found), enefunc%angl_force_const(angl_found), enefunc%angl_theta_min(angl_found)
+            !!!
 
-      enefunc%angl_list(1,icnt) = prmtop%angl_inc_hy(1,i) / 3 + 1
-      enefunc%angl_list(2,icnt) = prmtop%angl_inc_hy(2,i) / 3 + 1
-      enefunc%angl_list(3,icnt) = prmtop%angl_inc_hy(3,i) / 3 + 1
+            exit
 
-      enefunc%angl_force_const(icnt) = &
-             prmtop%angl_fcons_uniq(prmtop%angl_inc_hy(4,i))
-      enefunc%angl_theta_min(icnt)   = &
-             prmtop%angl_equil_uniq(prmtop%angl_inc_hy(4,i))
+          end if
+        end do
+        if (j == nangl_p + 1) &
+          write(MsgOut,*) 'Setup_Enefunc_Angl> not found ANGLE: [', &
+          ci1, ']-[', ci2, ']-[', ci3, ']  in parameter file. (ERROR)'
 
-    end do
+      end do
 
-    do i = 1, prmtop%num_mangla
+      enefunc%num_angles = nangl
+      deallocate(angl_atom_cls)
+      deallocate(angl_fcons)
+      deallocate(angl_equil)
+    else
+      icnt = 0
+      do i = 1, prmtop%num_anglh
 
-      icnt = icnt + 1
+        icnt = icnt + 1
 
-      enefunc%angl_list(1,icnt) = prmtop%angl_wo_hy(1,i) / 3 + 1
-      enefunc%angl_list(2,icnt) = prmtop%angl_wo_hy(2,i) / 3 + 1
-      enefunc%angl_list(3,icnt) = prmtop%angl_wo_hy(3,i) / 3 + 1
+        enefunc%angl_list(1,icnt) = prmtop%angl_inc_hy(1,i) / 3 + 1
+        enefunc%angl_list(2,icnt) = prmtop%angl_inc_hy(2,i) / 3 + 1
+        enefunc%angl_list(3,icnt) = prmtop%angl_inc_hy(3,i) / 3 + 1
 
-      enefunc%angl_force_const(icnt) = &
-             prmtop%angl_fcons_uniq(prmtop%angl_wo_hy(4,i))
-      enefunc%angl_theta_min(icnt)   = &
-             prmtop%angl_equil_uniq(prmtop%angl_wo_hy(4,i))
+        enefunc%angl_force_const(icnt) = &
+          prmtop%angl_fcons_uniq(prmtop%angl_inc_hy(4,i))
+        enefunc%angl_theta_min(icnt)   = &
+          prmtop%angl_equil_uniq(prmtop%angl_inc_hy(4,i))
 
-    end do
+      end do
 
-    enefunc%num_angles = nangl
+      do i = 1, prmtop%num_mangla
+
+        icnt = icnt + 1
+
+        enefunc%angl_list(1,icnt) = prmtop%angl_wo_hy(1,i) / 3 + 1
+        enefunc%angl_list(2,icnt) = prmtop%angl_wo_hy(2,i) / 3 + 1
+        enefunc%angl_list(3,icnt) = prmtop%angl_wo_hy(3,i) / 3 + 1
+
+        enefunc%angl_force_const(icnt) = &
+          prmtop%angl_fcons_uniq(prmtop%angl_wo_hy(4,i))
+        enefunc%angl_theta_min(icnt)   = &
+          prmtop%angl_equil_uniq(prmtop%angl_wo_hy(4,i))
+
+      end do
+
+      enefunc%num_angles = nangl
+    end if
 
 
     call get_loop_index(enefunc%num_angles, istart, iend)
@@ -305,19 +459,24 @@ contains
   !> @brief        define DIHEDRAL term in potential energy function
   !! @authors      NT
   !! @param[in]    prmtop   : AMBER parameter topology information
+  !! @param[in]    molecule : molecule information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_dihe(prmtop, enefunc)
+  subroutine setup_enefunc_dihe(prmtop, molecule, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
     integer                  :: i, idih
     integer                  :: istart, iend
+    integer, allocatable :: dihe_inc_hy(:,:), dihe_wo_hy(:,:)
+    integer :: dihe_id, found, ndihe, ndihe_p, j
+    integer :: i1, i2, i3, i4, j1, j2, j3, j4
 
 
     enefunc%num_dihedrals = 0
@@ -333,82 +492,199 @@ contains
         enefunc%num_dihedrals = enefunc%num_dihedrals + 1
       end if
     end do
+    write(*, *) "n_dihedrals: ", molecule%num_dihedrals, enefunc%num_dihedrals, enefunc%qmmm%qm_ndihedrals
+    if (enefunc%qmmm%do_qmmm) then
+      enefunc%num_dihedrals = molecule%num_dihedrals - enefunc%qmmm%qm_ndihedrals
+      ndihe = enefunc%num_dihedrals
+    end if
 
     call alloc_enefunc(enefunc, EneFuncDihe, enefunc%num_dihedrals)
 
-    idih = 0
+    if (enefunc%qmmm%do_qmmm) then
 
-    do i = 1, prmtop%num_diheh
+      allocate(dihe_inc_hy(4,prmtop%num_diheh))
+      allocate(dihe_wo_hy(4,prmtop%num_mdihea))
+      do j = 1, prmtop%num_diheh
+        dihe_inc_hy(1:4,j) = prmtop%dihe_inc_hy(1:4,j)
+      end do
+      do j = 1, prmtop%num_mdihea
+        dihe_wo_hy(1:4,j) = prmtop%dihe_wo_hy(1:4,j)
+      end do
+      ! Define enefunc
+      ndihe_p = prmtop%num_uniqdihe
+      found = 0
+      do i = 1, ndihe
+
+        i1 = molecule%dihe_list(1,i)
+        i2 = molecule%dihe_list(2,i)
+        i3 = molecule%dihe_list(3,i)
+        i4 = molecule%dihe_list(4,i)
+
+        do j = 1, prmtop%num_diheh
+          if (dihe_inc_hy(4,j) >= 0) then
+            j1 =      dihe_inc_hy(1,j)/3+1
+            j2 =      dihe_inc_hy(2,j)/3+1
+            j3 = iabs(dihe_inc_hy(3,j))/3+1
+            j4 =      dihe_inc_hy(4,j)/3+1
+            dihe_id = prmtop%dihe_inc_hy(5,j)
+            
+            if ( ( i1 == j1 .and. i2 == j2 .and. i3 == j3 .and. i4 == j4 ) .or. &
+                 ( i1 == j4 .and. i2 == j3 .and. i3 == j2 .and. i4 == j1 ) ) then
+              found = found + 1
+              enefunc%dihe_list(1,found)    = j1
+              enefunc%dihe_list(2,found)    = j2
+              enefunc%dihe_list(3,found)    = j3
+              enefunc%dihe_list(4,found)    = j4
+              enefunc%dihe_force_const(found) = prmtop%dihe_fcons_uniq(dihe_id)
+              enefunc%dihe_periodicity(found) = prmtop%dihe_perio_uniq(dihe_id)
+              enefunc%dihe_phase(found)       = prmtop%dihe_phase_uniq(dihe_id)
+
+              if (prmtop%lscee_scale_factor) then
+                enefunc%dihe_scee(found) = &
+                  1.0_wp / prmtop%scee_scale_fact(dihe_id)
+              else
+                enefunc%dihe_scee(found) = 1.0_wp / 1.2_wp
+              end if
+              if (prmtop%lscnb_scale_factor) then
+                enefunc%dihe_scnb(found) = &
+                  1.0_wp / prmtop%scnb_scale_fact(dihe_id)
+              else
+                enefunc%dihe_scnb(found) = 1.0_wp / 2.0_wp
+              end if
+              ! The same dihedral shouldnot be chosen again
+              dihe_inc_hy(1:4,j) = 0
+              exit
+            end if
+          end if
+        end do
+        do j = 1, prmtop%num_mdihea
+          if (dihe_wo_hy(4,j) >= 0) then
+            j1 =      dihe_wo_hy(1,j)/3+1
+            j2 =      dihe_wo_hy(2,j)/3+1
+            j3 = iabs(dihe_wo_hy(3,j))/3+1
+            j4 =      dihe_wo_hy(4,j)/3+1
+            dihe_id = prmtop%dihe_wo_hy(5,j)
+            
+            if ( ( i1 == j1 .and. i2 == j2 .and. i3 == j3 .and. i4 == j4 ) .or. &
+                 ( i1 == j4 .and. i2 == j3 .and. i3 == j2 .and. i4 == j1 ) ) then
+              found = found + 1
+              enefunc%dihe_list(1,found)    = j1
+              enefunc%dihe_list(2,found)    = j2
+              enefunc%dihe_list(3,found)    = j3
+              enefunc%dihe_list(4,found)    = j4
+              enefunc%dihe_force_const(found) = prmtop%dihe_fcons_uniq(dihe_id)
+              enefunc%dihe_periodicity(found) = prmtop%dihe_perio_uniq(dihe_id)
+              enefunc%dihe_phase(found)       = prmtop%dihe_phase_uniq(dihe_id)
+
+              if (prmtop%lscee_scale_factor) then
+                enefunc%dihe_scee(found) = &
+                  1.0_wp / prmtop%scee_scale_fact(dihe_id)
+              else
+                enefunc%dihe_scee(found) = 1.0_wp / 1.2_wp
+              end if
+              if (prmtop%lscnb_scale_factor) then
+                enefunc%dihe_scnb(found) = &
+                  1.0_wp / prmtop%scnb_scale_fact(dihe_id)
+              else
+                enefunc%dihe_scnb(found) = 1.0_wp / 2.0_wp
+              end if
+              ! The same dihedral shouldnot be chosen again
+              dihe_wo_hy(1:4,j) = 0
+              exit
+            end if
+          end if
+        end do
+          
+      end do
+!!1
+!      write(*, *) "# of dihedrals (incl. impropers) in prmtop ", prmtop%num_diheh + prmtop%num_mdihea
+!      write(*, *) "# of dihedrals found: ", found
+!!1
+
+      enefunc%num_dihedrals = found    
+      deallocate(dihe_inc_hy)
+      deallocate(dihe_wo_hy)
+    else
+      idih = 0
+
+      do i = 1, prmtop%num_diheh
       
-      if (prmtop%dihe_inc_hy(4,i) >= 0) then
+        if (prmtop%dihe_inc_hy(4,i) >= 0) then
 
-        idih = idih + 1
-        enefunc%dihe_list(1,idih) =      prmtop%dihe_inc_hy(1,i)  / 3 + 1
-        enefunc%dihe_list(2,idih) =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
-        enefunc%dihe_list(3,idih) = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
-        enefunc%dihe_list(4,idih) =      prmtop%dihe_inc_hy(4,i)  / 3 + 1
+          idih = idih + 1
+          enefunc%dihe_list(1,idih) =      prmtop%dihe_inc_hy(1,i)  / 3 + 1
+          enefunc%dihe_list(2,idih) =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
+          enefunc%dihe_list(3,idih) = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
+          enefunc%dihe_list(4,idih) =      prmtop%dihe_inc_hy(4,i)  / 3 + 1
 
-        enefunc%dihe_force_const(idih) = &
-             prmtop%dihe_fcons_uniq(prmtop%dihe_inc_hy(5,i))
-        enefunc%dihe_periodicity(idih) = &
-             prmtop%dihe_perio_uniq(prmtop%dihe_inc_hy(5,i))
-        enefunc%dihe_phase(idih)       = &
-             prmtop%dihe_phase_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%dihe_force_const(idih) = &
+            prmtop%dihe_fcons_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%dihe_periodicity(idih) = &
+            prmtop%dihe_perio_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%dihe_phase(idih)       = &
+            prmtop%dihe_phase_uniq(prmtop%dihe_inc_hy(5,i))
 
-        if (prmtop%lscee_scale_factor) then
-          enefunc%dihe_scee(idih) = &
-             1.0_wp / prmtop%scee_scale_fact(prmtop%dihe_inc_hy(5,i))
-        else
-          enefunc%dihe_scee(idih) = 1.0_wp / 1.2_wp
+          if (prmtop%lscee_scale_factor) then
+            enefunc%dihe_scee(idih) = &
+              1.0_wp / prmtop%scee_scale_fact(prmtop%dihe_inc_hy(5,i))
+          else
+            enefunc%dihe_scee(idih) = 1.0_wp / 1.2_wp
+          end if
+
+          if (prmtop%lscnb_scale_factor) then
+            enefunc%dihe_scnb(idih) = &
+              1.0_wp / prmtop%scnb_scale_fact(prmtop%dihe_inc_hy(5,i))
+          else
+            enefunc%dihe_scnb(idih) = 1.0_wp / 2.0_wp
+          end if
+!!!
+!          write(*, '(a,i6,a,4(x,i6),(x,f12.6),x,i0,3(x,f12.6))') "MM dihed ", idih, ": ", enefunc%dihe_list(1:4,idih), enefunc%dihe_force_const(idih), enefunc%dihe_periodicity(idih), enefunc%dihe_phase(idih), enefunc%dihe_scee(idih), enefunc%dihe_scnb(idih)
+!!!
+
         end if
 
-        if (prmtop%lscnb_scale_factor) then
-          enefunc%dihe_scnb(idih) = &
-             1.0_wp / prmtop%scnb_scale_fact(prmtop%dihe_inc_hy(5,i))
-        else
-          enefunc%dihe_scnb(idih) = 1.0_wp / 2.0_wp
+      end do
+
+      ! check dihe_wo_hy array
+      !
+      do i = 1, prmtop%num_mdihea
+
+        if (prmtop%dihe_wo_hy(4,i) >= 0) then
+
+          idih = idih + 1
+          enefunc%dihe_list(1,idih) =      prmtop%dihe_wo_hy(1,i)  / 3 + 1
+          enefunc%dihe_list(2,idih) =      prmtop%dihe_wo_hy(2,i)  / 3 + 1
+          enefunc%dihe_list(3,idih) = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
+          enefunc%dihe_list(4,idih) =      prmtop%dihe_wo_hy(4,i)  / 3 + 1
+
+          enefunc%dihe_force_const(idih) = &
+            prmtop%dihe_fcons_uniq(prmtop%dihe_wo_hy(5,i))
+          enefunc%dihe_periodicity(idih) = &
+            prmtop%dihe_perio_uniq(prmtop%dihe_wo_hy(5,i))
+          enefunc%dihe_phase(idih)       = &
+            prmtop%dihe_phase_uniq(prmtop%dihe_wo_hy(5,i))
+
+          if (prmtop%lscee_scale_factor) then
+            enefunc%dihe_scee(idih) = &
+              1.0_wp / prmtop%scee_scale_fact(prmtop%dihe_wo_hy(5,i))
+          else
+            enefunc%dihe_scee(idih) = 1.0_wp / 1.2_wp
+          end if
+
+          if (prmtop%lscnb_scale_factor) then
+            enefunc%dihe_scnb(idih) = &
+              1.0_wp / prmtop%scnb_scale_fact(prmtop%dihe_wo_hy(5,i))
+          else
+            enefunc%dihe_scnb(idih) = 1.0_wp / 2.0_wp
+          end if
+!!!
+!          write(*, '(a,i6,a,4(x,i6),(x,f12.6),x,i0,3(x,f12.6))') "MM dihed ", idih, ": ", enefunc%dihe_list(1:4,idih), enefunc%dihe_force_const(idih), enefunc%dihe_periodicity(idih), enefunc%dihe_phase(idih), enefunc%dihe_scee(idih), enefunc%dihe_scnb(idih)
+!!!
+
         end if
 
-      end if
-
-    end do
-
-    ! check dihe_wo_hy array
-    !
-    do i = 1, prmtop%num_mdihea
-
-      if (prmtop%dihe_wo_hy(4,i) >= 0) then
-
-        idih = idih + 1
-        enefunc%dihe_list(1,idih) =      prmtop%dihe_wo_hy(1,i)  / 3 + 1
-        enefunc%dihe_list(2,idih) =      prmtop%dihe_wo_hy(2,i)  / 3 + 1
-        enefunc%dihe_list(3,idih) = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
-        enefunc%dihe_list(4,idih) =      prmtop%dihe_wo_hy(4,i)  / 3 + 1
-
-        enefunc%dihe_force_const(idih) = &
-             prmtop%dihe_fcons_uniq(prmtop%dihe_wo_hy(5,i))
-        enefunc%dihe_periodicity(idih) = &
-             prmtop%dihe_perio_uniq(prmtop%dihe_wo_hy(5,i))
-        enefunc%dihe_phase(idih)       = &
-             prmtop%dihe_phase_uniq(prmtop%dihe_wo_hy(5,i))
-
-        if (prmtop%lscee_scale_factor) then
-          enefunc%dihe_scee(idih) = &
-             1.0_wp / prmtop%scee_scale_fact(prmtop%dihe_wo_hy(5,i))
-        else
-          enefunc%dihe_scee(idih) = 1.0_wp / 1.2_wp
-        end if
-
-        if (prmtop%lscnb_scale_factor) then
-          enefunc%dihe_scnb(idih) = &
-             1.0_wp / prmtop%scnb_scale_fact(prmtop%dihe_wo_hy(5,i))
-        else
-          enefunc%dihe_scnb(idih) = 1.0_wp / 2.0_wp
-        end if
-
-      end if
-
-    end do
+      end do
+    end if
 
 
     call get_loop_index(enefunc%num_dihedrals, istart, iend)
@@ -426,19 +702,24 @@ contains
   !> @brief        define IMPROPER dihedral term in potential energy function
   !! @authors      NT
   !! @param[in]    prmtop   : AMBER parameter topology information
+  !! @param[in]    molecule : molecule information
   !! @param[inout] enefunc  : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_impr(prmtop, enefunc)
+  subroutine setup_enefunc_impr(prmtop,  molecule, enefunc)
 
     ! formal arguments
     type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
     type(s_enefunc),         intent(inout) :: enefunc
 
     ! local variables
     integer                  :: i, iimp
     integer                  :: istart, iend
+    integer, allocatable :: dihe_inc_hy(:,:), dihe_wo_hy(:,:)
+    integer :: dihe_id, found, ndihe, ndihe_p, j
+    integer :: i1, i2, i3, i4, j1, j2, j3, j4
 
 
     enefunc%num_impropers = 0
@@ -454,54 +735,141 @@ contains
         enefunc%num_impropers = enefunc%num_impropers + 1
       end if
     end do
+    if (enefunc%qmmm%do_qmmm) then
+      enefunc%num_impropers = molecule%num_impropers - enefunc%qmmm%qm_nimpropers
+      ndihe = enefunc%num_impropers
+    end if
 
     call alloc_enefunc(enefunc, EneFuncImpr, enefunc%num_impropers)
 
-    iimp = 0
+    if (enefunc%qmmm%do_qmmm) then
 
-    do i = 1, prmtop%num_diheh
+      allocate(dihe_inc_hy(4,prmtop%num_diheh))
+      allocate(dihe_wo_hy(4,prmtop%num_mdihea))
+      do j = 1, prmtop%num_diheh
+        dihe_inc_hy(1:4,j) = prmtop%dihe_inc_hy(1:4,j)
+      end do
+      do j = 1, prmtop%num_mdihea
+        dihe_wo_hy(1:4,j) = prmtop%dihe_wo_hy(1:4,j)
+      end do
+      ! Define enefunc
+      ndihe_p = prmtop%num_uniqdihe
+      found = 0
+      do i = 1, ndihe
+
+        i1 = molecule%impr_list(1,i)
+        i2 = molecule%impr_list(2,i)
+        i3 = molecule%impr_list(3,i)
+        i4 = molecule%impr_list(4,i)
+
+        do j = 1, prmtop%num_diheh
+          if (dihe_inc_hy(4,j) < 0) then
+            j1 =      dihe_inc_hy(1,j)/3+1
+            j2 =      dihe_inc_hy(2,j)/3+1
+            j3 = iabs(dihe_inc_hy(3,j))/3+1
+            j4 = iabs(dihe_inc_hy(4,j))/3+1
+            dihe_id = prmtop%dihe_inc_hy(5,j)
+            
+            if ( ( i1 == j1 .and. i2 == j2 .and. i3 == j3 .and. i4 == j4 ) .or. &
+                 ( i1 == j4 .and. i2 == j3 .and. i3 == j2 .and. i4 == j1 ) ) then
+              found = found + 1
+              enefunc%impr_list(1,found)    = j1
+              enefunc%impr_list(2,found)    = j2
+              enefunc%impr_list(3,found)    = j3
+              enefunc%impr_list(4,found)    = j4
+              enefunc%impr_force_const(found) = prmtop%dihe_fcons_uniq(dihe_id)
+              enefunc%impr_periodicity(found) = prmtop%dihe_perio_uniq(dihe_id)
+              enefunc%impr_phase(found)       = prmtop%dihe_phase_uniq(dihe_id)
+
+              ! The same dihedral shouldnot be chosen again
+              dihe_inc_hy(1:4,j) = 0
+              exit
+            end if
+          end if
+        end do
+        do j = 1, prmtop%num_mdihea
+          if (dihe_wo_hy(4,j) < 0) then
+            j1 =      dihe_wo_hy(1,j)/3+1
+            j2 =      dihe_wo_hy(2,j)/3+1
+            j3 = iabs(dihe_wo_hy(3,j))/3+1
+            j4 = iabs(dihe_wo_hy(4,j))/3+1
+            dihe_id = prmtop%dihe_wo_hy(5,j)
+            
+            if ( ( i1 == j1 .and. i2 == j2 .and. i3 == j3 .and. i4 == j4 ) .or. &
+                 ( i1 == j4 .and. i2 == j3 .and. i3 == j2 .and. i4 == j1 ) ) then
+              found = found + 1
+              enefunc%impr_list(1,found)    = j1
+              enefunc%impr_list(2,found)    = j2
+              enefunc%impr_list(3,found)    = j3
+              enefunc%impr_list(4,found)    = j4
+              enefunc%impr_force_const(found) = prmtop%dihe_fcons_uniq(dihe_id)
+              enefunc%impr_periodicity(found) = prmtop%dihe_perio_uniq(dihe_id)
+              enefunc%impr_phase(found)       = prmtop%dihe_phase_uniq(dihe_id)
+
+              ! The same dihedral shouldnot be chosen again
+              dihe_wo_hy(1:4,j) = 0
+              exit
+            end if
+          end if
+        end do
+          
+      end do
+!!1
+!      write(*, *) "# of dihedrals (incl. impropers) in prmtop ", prmtop%num_diheh + prmtop%num_mdihea
+!      write(*, *) "# of improperss found: ", found
+!!1
+
+      enefunc%num_impropers = found    
+      deallocate(dihe_inc_hy)
+      deallocate(dihe_wo_hy)
+    else
+      iimp = 0
+
+      do i = 1, prmtop%num_diheh
       
-      if (prmtop%dihe_inc_hy(4,i) < 0) then
+        if (prmtop%dihe_inc_hy(4,i) < 0) then
 
-        iimp = iimp + 1
-        enefunc%impr_list(1,iimp) =      prmtop%dihe_inc_hy(1,i)  / 3 + 1
-        enefunc%impr_list(2,iimp) =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
-        enefunc%impr_list(3,iimp) = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
-        enefunc%impr_list(4,iimp) = iabs(prmtop%dihe_inc_hy(4,i)) / 3 + 1
+          iimp = iimp + 1
+          enefunc%impr_list(1,iimp) =      prmtop%dihe_inc_hy(1,i)  / 3 + 1
+          enefunc%impr_list(2,iimp) =      prmtop%dihe_inc_hy(2,i)  / 3 + 1
+          enefunc%impr_list(3,iimp) = iabs(prmtop%dihe_inc_hy(3,i)) / 3 + 1
+          enefunc%impr_list(4,iimp) = iabs(prmtop%dihe_inc_hy(4,i)) / 3 + 1
 
-        enefunc%impr_force_const(iimp) = &
-             prmtop%dihe_fcons_uniq(prmtop%dihe_inc_hy(5,i))
-        enefunc%impr_periodicity(iimp) = &
-             prmtop%dihe_perio_uniq(prmtop%dihe_inc_hy(5,i))
-        enefunc%impr_phase(iimp)       = &
-             prmtop%dihe_phase_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%impr_force_const(iimp) = &
+            prmtop%dihe_fcons_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%impr_periodicity(iimp) = &
+            prmtop%dihe_perio_uniq(prmtop%dihe_inc_hy(5,i))
+          enefunc%impr_phase(iimp)       = &
+            prmtop%dihe_phase_uniq(prmtop%dihe_inc_hy(5,i))
 
-      end if
+        end if
 
-    end do
+      end do
 
-    ! check dihe_wo_hy array
-    !
-    do i = 1, prmtop%num_mdihea
+      ! check dihe_wo_hy array
+      !
+      do i = 1, prmtop%num_mdihea
 
-      if (prmtop%dihe_wo_hy(4,i) < 0) then
+        if (prmtop%dihe_wo_hy(4,i) < 0) then
 
-        iimp = iimp + 1
-        enefunc%impr_list(1,iimp) =      prmtop%dihe_wo_hy(1,i)  / 3 + 1
-        enefunc%impr_list(2,iimp) =      prmtop%dihe_wo_hy(2,i)  / 3 + 1
-        enefunc%impr_list(3,iimp) = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
-        enefunc%impr_list(4,iimp) = iabs(prmtop%dihe_wo_hy(4,i)) / 3 + 1
+          iimp = iimp + 1
+          enefunc%impr_list(1,iimp) =      prmtop%dihe_wo_hy(1,i)  / 3 + 1
+          enefunc%impr_list(2,iimp) =      prmtop%dihe_wo_hy(2,i)  / 3 + 1
+          enefunc%impr_list(3,iimp) = iabs(prmtop%dihe_wo_hy(3,i)) / 3 + 1
+          enefunc%impr_list(4,iimp) = iabs(prmtop%dihe_wo_hy(4,i)) / 3 + 1
 
-        enefunc%impr_force_const(iimp) = &
-             prmtop%dihe_fcons_uniq(prmtop%dihe_wo_hy(5,i))
-        enefunc%impr_periodicity(iimp) = &
-             prmtop%dihe_perio_uniq(prmtop%dihe_wo_hy(5,i))
-        enefunc%impr_phase(iimp)       = &
-             prmtop%dihe_phase_uniq(prmtop%dihe_wo_hy(5,i))
+          enefunc%impr_force_const(iimp) = &
+            prmtop%dihe_fcons_uniq(prmtop%dihe_wo_hy(5,i))
+          enefunc%impr_periodicity(iimp) = &
+            prmtop%dihe_perio_uniq(prmtop%dihe_wo_hy(5,i))
+          enefunc%impr_phase(iimp)       = &
+            prmtop%dihe_phase_uniq(prmtop%dihe_wo_hy(5,i))
 
-      end if
+        end if
 
-    end do
+      end do
+
+    end if
 
 
     call get_loop_index(enefunc%num_impropers, istart, iend)
@@ -512,6 +880,124 @@ contains
     return
 
   end subroutine setup_enefunc_impr
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_cmap
+  !> @brief        define cmap term in potential energy function
+  !! @authors      JJ
+  !! @param[in]    ene_info : ENERGY section control parameters information
+  !! @param[in]    prmtop   : AMBER PRMTOP information
+  !! @param[in]    molecule : molecule information
+  !! @param[inout] enefunc  : potential energy functions information
+  !!
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_cmap(ene_info, prmtop, molecule, enefunc)
+
+    ! formal variables
+    type(s_ene_info),        intent(in)    :: ene_info
+    type(s_prmtop),          intent(in)    :: prmtop
+    type(s_molecule),        intent(in)    :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: i, j, k, idih1, idih2, ityp
+    integer                  :: ncmap, ncmap_p, found, ngrid0
+    integer                  :: alloc_stat, dealloc_stat
+    integer                  :: istart, iend
+    character(6)             :: ci1, ci2, ci3, ci4, ci5, ci6, ci7, ci8
+    logical                  :: periodic
+
+    real(wp),    allocatable :: c_ij(:,:,:,:)      ! cmap coeffs
+
+    periodic = ene_info%cmap_pspline
+    if(enefunc%qmmm%do_qmmm) then
+      ncmap    = molecule%num_cmaps - enefunc%qmmm%qm_ncmaps
+    else
+      ncmap    = molecule%num_cmaps
+    endif
+    ncmap_p  = prmtop%num_cmaptype
+    enefunc%num_cmaps = ncmap
+
+    ngrid0 = 0
+    do i = 1, ncmap_p
+      ngrid0 = max(ngrid0, prmtop%cmap_resolution(i))
+    end do
+
+    call alloc_enefunc(enefunc, EneFuncCmap, ncmap, ngrid0)
+    call alloc_enefunc(enefunc, EneFuncCmapType, ncmap_p, ngrid0)
+
+    do i = 1, ncmap
+  
+      enefunc%cmap_list(1:8,i) = molecule%cmap_list(1:8,i)
+      enefunc%cmap_type(    i) = prmtop%cmap_list(6,i)
+
+    end do
+
+    ! allocate local arrays
+    !
+    alloc_stat = 0
+    allocate(c_ij(4,4,ngrid0,ngrid0), stat = alloc_stat )
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    !  derive cmap coefficients by bicubic interpolation
+    !
+    do ityp = 1, ncmap_p
+      enefunc%cmap_resolution(ityp) = prmtop%cmap_resolution(ityp)
+    end do
+
+    do ityp = 1, ncmap_p
+      if (periodic) then
+        call derive_cmap_amber_coefficients_p (ityp, prmtop, c_ij)
+      else
+        call derive_cmap_amber_coefficients_np(ityp, prmtop, c_ij)
+      end if
+
+      ! copy values of C_ij to enefunc%cmap_coef for output
+      !
+      do idih2 = 1, ngrid0
+        do idih1 = 1, ngrid0
+          do j = 1, 4
+            do i = 1, 4
+              enefunc%cmap_coef(i,j,idih1,idih2,ityp)     &
+                = c_ij(i,j,idih1,idih2)
+            end do
+          end do
+        end do
+      end do
+    end do
+
+    !  deallocate local arrays
+    !
+    deallocate(c_ij, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+    ! define cmap interaction list for each processor
+    !
+    call get_loop_index(enefunc%num_cmaps, istart, iend)
+    enefunc%istart_cmap = istart
+    enefunc%iend_cmap   = iend
+
+    ! write summary
+    !
+    if (main_rank) then
+      if (periodic) then
+        write(MsgOut,'(A)')                                       &
+        'Setup_Enefunc_Cmap_Par> '//                              &
+        'Periodic-boundary spline is used to derive cmap coefs.'
+        write(MsgOut,'(A)') ''
+      else
+        write(MsgOut,'(A)')                                       &
+        'Setup_Enefunc_Cmap_Par> Natural spline is used'//        &
+        ' to derive cmap coefs.'
+        write(MsgOut,'(A)') ''
+      end if
+    end if
+
+    return
+
+  end subroutine setup_enefunc_cmap
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

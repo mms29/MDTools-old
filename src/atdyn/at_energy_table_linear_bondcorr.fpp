@@ -24,7 +24,7 @@ module at_energy_table_linear_bondcorr_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -66,7 +66,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -117,7 +117,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -242,8 +242,8 @@ contains
 
       if (iatm > 0) then
         do k = 1, 3
-          force(k,iatm) = force(k,iatm) - force_wk(k,j)
-          force(k,jatm) = force(k,jatm) + force_wk(k,j)
+          force(k,iatm,1) = force(k,iatm,1) - force_wk(k,j)
+          force(k,jatm,1) = force(k,jatm,1) + force_wk(k,j)
         end do
       end if
 
@@ -274,7 +274,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -405,17 +405,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 
@@ -444,7 +444,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -572,8 +572,8 @@ contains
 
       if (iatm > 0) then
         do k = 1, 3
-          force(k,iatm) = force(k,iatm) - force_wk(k,j)
-          force(k,jatm) = force(k,jatm) + force_wk(k,j)
+          force(k,iatm,1) = force(k,iatm,1) - force_wk(k,j)
+          force(k,jatm,1) = force(k,jatm,1) + force_wk(k,j)
         end do
       end if
 
@@ -604,7 +604,7 @@ contains
     type(s_enefunc),  target, intent(in)    :: enefunc
     type(s_molecule), target, intent(in)    :: molecule
     real(wp),                 intent(in)    :: coord(:,:)
-    real(wp),                 intent(inout) :: force(:,:)
+    real(wp),                 intent(inout) :: force(:,:,:)
     real(wp),                 intent(inout) :: virial(3,3)
     real(wp),                 intent(inout) :: eelec
 
@@ -738,17 +738,17 @@ contains
 
     do ii = 1, natom-1
        i = enefunc%table%solute_list(ii)
-       force(1,i) = force(1,i) + force_i(1,ii)
-       force(2,i) = force(2,i) + force_i(2,ii)
-       force(3,i) = force(3,i) + force_i(3,ii)
+       force(1,i,1) = force(1,i,1) + force_i(1,ii)
+       force(2,i,1) = force(2,i,1) + force_i(2,ii)
+       force(3,i,1) = force(3,i,1) + force_i(3,ii)
     end do
 
     do ii = 1, natom-1
        do k = 1, num_nb14_calc(ii)
           j = nb14_calc_list(k,ii)
-          force(1,j) = force(1,j) + force_j(1,k,ii)
-          force(2,j) = force(2,j) + force_j(2,k,ii)
-          force(3,j) = force(3,j) + force_j(3,k,ii)
+          force(1,j,1) = force(1,j,1) + force_j(1,k,ii)
+          force(2,j,1) = force(2,j,1) + force_j(2,k,ii)
+          force(3,j,1) = force(3,j,1) + force_j(3,k,ii)
        end do
     end do
 

@@ -22,7 +22,7 @@ module sp_communicate_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -71,6 +71,13 @@ module sp_communicate_mod
   public  :: update_cell_size_solute
   public  :: update_cell_size_constraints
   public  :: update_random_number
+  ! FEP
+  public  :: communicate_ptl_fep
+  public  :: communicate_solutewater_fep
+  public  :: communicate_constraints_fep
+  public  :: update_cell_boundary_fep
+  public  :: update_cell_boundary_table_fep
+  public  :: update_cell_boundary_constraints_fep
 
 contains
 
@@ -390,7 +397,7 @@ contains
     integer                  :: i, k, ii, ic
     integer                  :: irequest0, irequest1, irequest2, irequest3
     integer                  :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -454,7 +461,7 @@ contains
       end do
       send_size(4) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the size of the data (lower)
       !
       call mpi_irecv(recv_size(1), 1, mpi_integer, iproc_upper(ii), &
@@ -570,7 +577,7 @@ contains
     ! local variable
     integer                  :: i, k, ii, ic, ix
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -621,7 +628,7 @@ contains
         end do
       end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the data (lower)
       !
       call mpi_irecv(buf_recv(1,1), 3*upper_recv(ii), mpi_real8, &
@@ -702,7 +709,7 @@ contains
     ! local variable
     integer                  :: i, k, ii, ic, ix
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -761,7 +768,7 @@ contains
 
       end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the data(lower)
       !
       call mpi_irecv(buf_recv(1,1), 3*upper_recv(ii), mpi_real8, &
@@ -844,7 +851,7 @@ contains
     integer                  :: i, j, k, ii, ic, ix, nadd
     integer                  :: irequest, irequest1, irequest2, irequest3
     integer                  :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -923,7 +930,7 @@ contains
       send_size(1,2) = 2*k + comm%num_cell(ii)
       send_size(2,2) = 8*k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the size of data
       !
       call mpi_irecv(recv_size(1,1), 2, mpi_integer, iproc_upper(ii), &
@@ -1074,7 +1081,7 @@ contains
     integer                  :: i, j, k, ii, ic, ix, nadd, water_atom
     integer                  :: irequest, irequest1, irequest2, irequest3
     integer                  :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -1209,7 +1216,7 @@ contains
       send_size(1,2) = int_size + water_atom*k
       send_size(2,2) = real_size + 6*water_atom*k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the size of data
       !
@@ -1412,7 +1419,7 @@ contains
     integer                      :: list, list1, size
     integer                      :: irequest, irequest1, irequest2, irequest3
     integer                      :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                      :: istatus(mpi_status_size)
 #endif
     real(dp),            pointer :: buf_send(:,:), buf_recv(:,:)
@@ -1623,7 +1630,7 @@ contains
 
       send_size(1,2) = int_size + water_atom*k
       send_size(2,2) = real_size + 6*water_atom*k
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the size of data
       !
@@ -1895,7 +1902,7 @@ contains
     integer                   :: i, j, k, ii, ic, ix, nadd
     integer                   :: irequest, irequest1, irequest2, irequest3
     integer                   :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                   :: istatus(mpi_status_size)
 #endif
 
@@ -2111,7 +2118,7 @@ contains
       send_size(1,2) = k
       send_size(2,2) = j
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
        ! send the size of data
        !
@@ -2380,7 +2387,7 @@ contains
     integer                   :: i, j, k, ii, ic, ix, nadd
     integer                   :: irequest, irequest1, irequest2, irequest3
     integer                   :: irequest4, irequest5, irequest6, irequest7
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                   :: istatus(mpi_status_size)
 #endif
 
@@ -2498,8 +2505,8 @@ contains
         do ix = 1, contact_add(ic)
           int_send(k+1:k+2,1) = buf_contact_integer(1:2,ix,ic)
           k = k + 2
-          buf_send(j+1:j+2,1) = buf_contact_real(1:2,ix,ic)
-          j = j + 2
+          buf_send(j+1:j+3,1) = buf_contact_real(1:3,ix,ic)
+          j = j + 3
         end do
 
         do ix = 1, restraint_add(ic)
@@ -2568,8 +2575,8 @@ contains
         do ix = 1, contact_add(ic)
           int_send(k+1:k+2,2) = buf_contact_integer(1:2,ix,ic)
           k = k + 2
-          buf_send(j+1:j+2,2) = buf_contact_real(1:2,ix,ic)
-          j = j + 2
+          buf_send(j+1:j+3,2) = buf_contact_real(1:3,ix,ic)
+          j = j + 3
         end do
 
         do ix = 1, restraint_add(ic)
@@ -2584,7 +2591,7 @@ contains
       send_size(1,2) = k
       send_size(2,2) = j
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
        ! send the size of data
        !
@@ -2719,8 +2726,8 @@ contains
           do ix = contact_add(ic)+1, contact_add(ic)+nadd
              buf_contact_integer(1:2,ix,ic) = int_recv(k+1:k+2,1)
              k = k + 2
-             buf_contact_real(1:2,ix,ic) = buf_recv(j+1:j+2,1)
-             j = j + 2
+             buf_contact_real(1:3,ix,ic) = buf_recv(j+1:j+3,1)
+             j = j + 3
           end do
           contact_add(ic) = contact_add(ic) + nadd
 
@@ -2794,8 +2801,8 @@ contains
           do ix = contact_add(ic)+1, contact_add(ic)+nadd
              buf_contact_integer(1:2,ix,ic) = int_recv(k+1:k+2,2)
              k = k + 2
-             buf_contact_real(1:2,ix,ic) = buf_recv(j+1:j+2,2)
-             j = j + 2
+             buf_contact_real(1:3,ix,ic) = buf_recv(j+1:j+3,2)
+             j = j + 3
           end do
           contact_add(ic) = contact_add(ic) + nadd
 
@@ -2841,7 +2848,7 @@ contains
     integer                   :: irequest, irequest1, irequest2, irequest3
     integer                   :: irequest4, irequest5, irequest6, irequest7
     integer                   :: id, omp_get_thread_num
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                   :: istatus(mpi_status_size)
 #endif
 
@@ -2943,7 +2950,7 @@ contains
 
       end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
        ! send the data
        !
        call mpi_irecv(int_recv(1,1), 2*upper_recv(ii), mpi_integer,           &
@@ -3127,7 +3134,7 @@ contains
     integer                   :: irequest, irequest1, irequest2, irequest3
     integer                   :: irequest4, irequest5, irequest6, irequest7
     integer                   :: id, omp_get_thread_num
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                   :: istatus(mpi_status_size)
 #endif
 
@@ -3233,7 +3240,7 @@ contains
 
       end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
        ! send the data
        !
@@ -3509,7 +3516,7 @@ contains
     integer                  :: irequest, irequest1, irequest2, irequest3
     integer                  :: irequest4, irequest5, irequest6, irequest7
     integer                  :: id, omp_get_thread_num
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -3620,7 +3627,7 @@ contains
 
       end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
        ! send the data
        !
@@ -3940,7 +3947,7 @@ contains
     ! local variable
     integer                  :: i, k, ii, ic, size
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -4005,7 +4012,7 @@ contains
       end do
       upper_send(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the size of the data
       !
       call mpi_irecv(recv_size(1,1), num_cell(ii), mpi_integer,iproc_upper(ii),&
@@ -4063,7 +4070,7 @@ contains
       end do
       upper_fsend(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the size of the data
       !
@@ -4134,7 +4141,7 @@ contains
     ! local variable
     integer                  :: i, k, ii, ic, size
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -4200,7 +4207,7 @@ contains
       end do
       upper_send(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the size of the data
       !
@@ -4265,7 +4272,7 @@ contains
       end do
       upper_fsend(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the size of the data
       !
       call mpi_irecv(upper_frecv(ii), 1, mpi_integer, iproc_upper(ii), &
@@ -4336,7 +4343,7 @@ contains
     ! local variable
     integer                  :: i, j, k, ii, ic, size, size1
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -4420,7 +4427,7 @@ contains
       end do
       upper_send(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the size of the data
       !
@@ -4499,7 +4506,7 @@ contains
       end do
       upper_fsend(ii) = k
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       ! send the size of the data
       !
       call mpi_irecv(upper_frecv(ii), 1, mpi_integer, iproc_upper(ii), &
@@ -4569,7 +4576,7 @@ contains
     ! local variable
     integer                  :: i, ii, ic
     integer                  :: irequest, irequest1, irequest2, irequest3
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer                  :: istatus(mpi_status_size)
 #endif
 
@@ -4606,7 +4613,7 @@ contains
         buf_send(i,2) = domain%random(ic)
       end do
       
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       ! send the data
       !
@@ -4653,5 +4660,2188 @@ contains
     return
 
   end subroutine update_random_number
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    communicate_ptl_fep
+  !> @brief        Pack the incoming particles data of each boundary cell
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] domain : domain information
+  !! @param[inout] comm   : communication information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine communicate_ptl_fep(domain, comm)
+
+    ! formal arguments
+    type(s_domain),  target, intent(inout) :: domain
+    type(s_comm),    target, intent(inout) :: comm
+
+    ! local variable
+    integer                  :: send_size(2,2), recv_size(2,2)
+    integer                  :: i, j, k, ii, ic, ix, nadd
+    integer                  :: irequest, irequest1, irequest2, irequest3
+    integer                  :: irequest4, irequest5, irequest6, irequest7
+#ifdef HAVE_MPI_GENESIS
+    integer                  :: istatus(mpi_status_size)
+#endif
+
+    real(dp),        pointer :: buf_send(:,:), buf_recv(:,:), buf_real(:,:,:)
+    integer,         pointer :: if_lower_send(:,:), if_upper_send(:,:)
+    integer,         pointer :: if_lower_recv(:,:), if_upper_recv(:,:)
+    integer,         pointer :: iproc_upper(:), iproc_lower(:)
+    integer,         pointer :: ptl_add(:)
+    integer,         pointer :: int_send(:,:), int_recv(:,:), buf_int(:,:,:)
+
+
+    iproc_upper   => domain%iproc_upper
+    iproc_lower   => domain%iproc_lower
+    ptl_add       => domain%ptl_add
+    buf_int       => domain%buf_integer
+    buf_real      => domain%buf_real
+
+    buf_send      => comm%buf_send
+    buf_recv      => comm%buf_recv
+    int_send      => comm%int_send
+    int_recv      => comm%int_recv
+    if_lower_send => comm%if_lower_send
+    if_upper_send => comm%if_upper_send
+    if_lower_recv => comm%if_lower_recv
+    if_upper_recv => comm%if_upper_recv
+
+    do ii = 3, 1, -1
+
+      ! Pack outgoing data (lower)
+      !
+      k = 0
+
+      do i = 1, comm%num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+        int_send(i,1) = ptl_add(ic)
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do j = 1, 8
+            buf_send(8*(k-1)+j,1) = buf_real(j,ix,ic)
+          end do
+
+          int_send(3*k-2+comm%num_cell(ii),1) = buf_int(1,ix,ic)
+          int_send(3*k-1+comm%num_cell(ii),1) = buf_int(2,ix,ic)
+          int_send(3*k  +comm%num_cell(ii),1) = buf_int(3,ix,ic)
+
+        end do
+      end do
+
+      send_size(1,1) = 3*k + comm%num_cell(ii)
+      send_size(2,1) = 8*k 
+
+      ! pack the outgoing date (upper)
+      !
+      k = 0
+
+      do i = 1, comm%num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+        int_send(i,2) = ptl_add(ic)
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do j = 1, 8
+            buf_send(8*(k-1)+j,2) = buf_real(j,ix,ic)
+          end do
+
+          int_send(3*k-2+comm%num_cell(ii),2) = buf_int(1,ix,ic)
+          int_send(3*k-1+comm%num_cell(ii),2) = buf_int(2,ix,ic)
+          int_send(3*k  +comm%num_cell(ii),2) = buf_int(3,ix,ic)
+
+        end do
+      end do
+
+      send_size(1,2) = 3*k + comm%num_cell(ii)
+      send_size(2,2) = 8*k
+
+#ifdef HAVE_MPI_GENESIS
+      ! send the size of data
+      !
+      call mpi_irecv(recv_size(1,1), 2, mpi_integer, iproc_upper(ii), &
+                     iproc_upper(ii),       &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(send_size(1,1), 2, mpi_integer, iproc_lower(ii), &
+                     my_city_rank,       &
+                     mpi_comm_city, irequest1, ierror)
+      call mpi_irecv(recv_size(1,2), 2, mpi_integer, iproc_lower(ii), &
+                     my_city_rank+nproc_city,       &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(send_size(1,2), 2, mpi_integer, iproc_upper(ii), &
+                     iproc_upper(ii)+nproc_city,       &
+                     mpi_comm_city,  irequest3, ierror)
+
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,1), recv_size(1,1), mpi_integer,      &
+                     iproc_upper(ii),                                 &
+                     iproc_upper(ii),       &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(int_send(1,1), send_size(1,1), mpi_integer,      &
+                     iproc_lower(ii),                                 &
+                     my_city_rank,       &
+                     mpi_comm_city, irequest1, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,2), recv_size(1,2), mpi_integer,      &
+                     iproc_lower(ii),                                 &
+                     my_city_rank+nproc_city,       &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(int_send(1,2), send_size(1,2), mpi_integer,      &
+                     iproc_upper(ii),                                 &
+                     iproc_upper(ii)+nproc_city,       &
+                     mpi_comm_city, irequest3, ierror)
+
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+
+      call mpi_irecv(buf_recv(1,1), recv_size(2,1), mpi_real8,      &
+                     iproc_upper(ii),                               &
+                     iproc_upper(ii)+2*nproc_city,     &
+                     mpi_comm_city, irequest4, ierror)                
+      call mpi_isend(buf_send(1,1), send_size(2,1), mpi_real8,      &
+                     iproc_lower(ii),                               &
+                     my_city_rank+2*nproc_city,     &
+                     mpi_comm_city, irequest5, ierror)                
+                                                                      
+      call mpi_irecv(buf_recv(1,2), recv_size(2,2), mpi_real8,      &
+                     iproc_lower(ii),                               &
+                     my_city_rank+3*nproc_city,     &
+                     mpi_comm_city, irequest6, ierror)                
+      call mpi_isend(buf_send(1,2), send_size(2,2), mpi_real8,      &
+                     iproc_upper(ii),                               &
+                     iproc_upper(ii)+3*nproc_city,     &
+                     mpi_comm_city, irequest7, ierror)
+
+      call mpi_wait(irequest4, istatus, ierror)
+      call mpi_wait(irequest5, istatus, ierror)
+      call mpi_wait(irequest6, istatus, ierror)
+      call mpi_wait(irequest7, istatus, ierror)
+#endif
+
+      ! get the imcoming data
+      ! 
+      k = 0
+
+      do i = 1, comm%num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        nadd = int_recv(i,1)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd 
+
+          k = k + 1
+          do j = 1, 8
+            buf_real(j,ix,ic) = buf_recv(8*(k-1)+j,1)
+          end do
+
+          buf_int(1,ix,ic) = int_recv(3*k-2+comm%num_cell(ii),1)
+          buf_int(2,ix,ic) = int_recv(3*k-1+comm%num_cell(ii),1)
+          buf_int(3,ix,ic) = int_recv(3*k  +comm%num_cell(ii),1)
+
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+
+      ! get the imcoming data
+      ! 
+      k = 0
+      do i = 1, comm%num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        nadd = int_recv(i,2)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd
+
+          k = k + 1
+          do j = 1, 8
+            buf_real(j,ix,ic) = buf_recv(8*(k-1)+j,2)
+          end do
+
+          buf_int(1,ix,ic) = int_recv(3*k-2+comm%num_cell(ii),2)
+          buf_int(2,ix,ic) = int_recv(3*k-1+comm%num_cell(ii),2)
+          buf_int(3,ix,ic) = int_recv(3*k  +comm%num_cell(ii),2)
+
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+ 
+    end do
+
+    return
+
+  end subroutine communicate_ptl_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    communicate_solutewater_fep
+  !> @brief        Pack the incoming particles data of each boundary cell
+  !! @authors      NK, HO
+  !! @param[inout] domain : domain information
+  !! @param[inout] comm   : communication information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine communicate_solutewater_fep(enefunc, domain, comm)
+
+    ! formal arguments
+    type(s_enefunc), target, intent(inout) :: enefunc
+    type(s_domain),  target, intent(inout) :: domain
+    type(s_comm),    target, intent(inout) :: comm
+
+    ! local variable
+    integer                  :: send_size(2,2), recv_size(2,2)
+    integer                  :: real_size, int_size
+    integer                  :: i, j, k, ii, ic, ix, nadd, water_atom
+    integer                  :: irequest, irequest1, irequest2, irequest3
+    integer                  :: irequest4, irequest5, irequest6, irequest7
+#ifdef HAVE_MPI_GENESIS
+    integer                  :: istatus(mpi_status_size)
+#endif
+
+    real(dp),        pointer :: buf_send(:,:), buf_recv(:,:)
+    real(dp),        pointer :: buf_real(:,:,:), water_move_real(:,:,:)
+    integer,         pointer :: if_lower_send(:,:), if_upper_send(:,:)
+    integer,         pointer :: if_lower_recv(:,:), if_upper_recv(:,:)
+    integer,         pointer :: iproc_upper(:), iproc_lower(:), num_cell(:)
+    integer,         pointer :: ptl_add(:), water_move(:)
+    integer,         pointer :: buf_int(:,:,:), water_move_int(:,:,:)
+    integer,         pointer :: int_send(:,:), int_recv(:,:)
+
+
+    iproc_upper     => domain%iproc_upper
+    iproc_lower     => domain%iproc_lower
+    ptl_add         => domain%ptl_add
+    buf_real        => domain%buf_real
+    buf_int         => domain%buf_integer
+    water_move      => domain%water%move
+    water_move_real => domain%water%move_real
+    water_move_int  => domain%water%move_integer
+
+    buf_send        => comm%buf_send
+    buf_recv        => comm%buf_recv
+    int_send        => comm%int_send
+    int_recv        => comm%int_recv
+    if_lower_send   => comm%if_lower_send
+    if_upper_send   => comm%if_upper_send
+    if_lower_recv   => comm%if_lower_recv
+    if_upper_recv   => comm%if_upper_recv
+    num_cell        => comm%num_cell
+
+    if (enefunc%table%tip4) then
+      water_atom = 4
+    else
+      water_atom = 3
+    end if
+    
+    do ii = 3, 1, -1
+
+      ! Pack outgoing data (lower)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+        int_send(2*i-1,1) = ptl_add(ic)
+        int_send(2*i  ,1) = water_move(ic)
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do j = 1, 8
+            buf_send(8*(k-1)+j,1) = buf_real(j,ix,ic)
+          end do
+
+          int_send(3*k-2+2*num_cell(ii),1) = buf_int(1,ix,ic)
+          int_send(3*k-1+2*num_cell(ii),1) = buf_int(2,ix,ic)
+          int_send(3*k+2*num_cell(ii),1) = buf_int(3,ix,ic)
+
+        end do
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + 2*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+
+        do ix = 1, water_move(ic)
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            buf_send(real_size+6*water_atom*(k-1)+j,1) = water_move_real(j,ix,ic)
+          end do
+
+          do j = 1, 2*water_atom
+            int_send(int_size+2*water_atom*(k-1)+j,1) = water_move_int(j,ix,ic)
+          end do
+
+        end do
+      end do
+
+      send_size(1,1) = int_size + 2*water_atom*k
+      send_size(2,1) = real_size + 6*water_atom*k
+
+      ! pack the outgoing date (upper)
+      !
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+        int_send(2*i-1,2) = ptl_add(ic)
+        int_send(2*i  ,2) = water_move(ic)
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do j = 1, 8
+            buf_send(8*(k-1)+j,2) = buf_real(j,ix,ic)
+          end do
+
+          int_send(3*k-2+2*num_cell(ii),2) = buf_int(1,ix,ic)
+          int_send(3*k-1+2*num_cell(ii),2) = buf_int(2,ix,ic)
+          int_send(3*k+2*num_cell(ii),2) = buf_int(3,ix,ic)
+
+        end do
+      end do
+
+      real_size = 8*k
+      int_size  = 3*k + 2*num_cell(ii)
+      k = 0
+
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+        do ix = 1, water_move(ic)
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            buf_send(real_size+6*water_atom*(k-1)+j,2) =  water_move_real(j,ix,ic)
+          end do
+
+          do j = 1, 2*water_atom
+            int_send(int_size+2*water_atom*(k-1)+j,2) = water_move_int(j,ix,ic)
+          end do
+
+        end do
+      end do
+
+      send_size(1,2) = int_size + 2*water_atom*k
+      send_size(2,2) = real_size + 6*water_atom*k
+
+#ifdef HAVE_MPI_GENESIS
+
+      ! send the size of data
+      !
+      call mpi_irecv(recv_size(1,1), 2, mpi_integer, iproc_upper(ii),     &
+                     iproc_upper(ii),           &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(send_size(1,1), 2, mpi_integer, iproc_lower(ii),     &
+                     my_city_rank,           &
+                     mpi_comm_city, irequest1, ierror)
+      call mpi_irecv(recv_size(1,2), 2, mpi_integer, iproc_lower(ii),     &
+                     my_city_rank+nproc_city,           &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(send_size(1,2), 2, mpi_integer, iproc_upper(ii),     &
+                     iproc_upper(ii)+nproc_city,           &
+                     mpi_comm_city, irequest3, ierror)
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,1), recv_size(1,1), mpi_integer,          &
+                     iproc_upper(ii),                                     &
+                     iproc_upper(ii),           &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(int_send(1,1), send_size(1,1), mpi_integer,          &
+                     iproc_lower(ii),                                     &
+                     my_city_rank,           &
+                     mpi_comm_city, irequest1, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,2), recv_size(1,2), mpi_integer,          &
+                     iproc_lower(ii),                                     &
+                     my_city_rank+nproc_city,           &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(int_send(1,2), send_size(1,2), mpi_integer,          &
+                     iproc_upper(ii),                                     &
+                     iproc_upper(ii)+nproc_city,           &
+                     mpi_comm_city, irequest3, ierror)
+
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+      call mpi_irecv(buf_recv(1,1), recv_size(2,1), mpi_real8,          &
+                     iproc_upper(ii),                                   &
+                     iproc_upper(ii)+2*nproc_city,         &
+                     mpi_comm_city, irequest4, ierror)
+      call mpi_isend(buf_send(1,1), send_size(2,1), mpi_real8,          &
+                     iproc_lower(ii),                                   &
+                     my_city_rank+2*nproc_city,         &
+                     mpi_comm_city, irequest5, ierror)
+
+      call mpi_irecv(buf_recv(1,2), recv_size(2,2), mpi_real8,          &
+                     iproc_lower(ii),                                   &
+                     my_city_rank+3*nproc_city,         &
+                     mpi_comm_city, irequest6, ierror)
+      call mpi_isend(buf_send(1,2), send_size(2,2), mpi_real8,          &
+                     iproc_upper(ii),                                   &
+                     iproc_upper(ii)+3*nproc_city,         &
+                     mpi_comm_city, irequest7, ierror)
+
+      call mpi_wait(irequest4, istatus, ierror)
+      call mpi_wait(irequest5, istatus, ierror)
+      call mpi_wait(irequest6, istatus, ierror)
+      call mpi_wait(irequest7, istatus, ierror)
+#endif
+
+      ! get the imcoming data
+      ! 
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        nadd = int_recv(2*i-1,1)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd
+
+          k = k + 1
+          do j = 1, 8
+            buf_real(j,ix,ic) = buf_recv(8*(k-1)+j,1)
+          end do
+
+          buf_int(1,ix,ic) = int_recv(3*k-2+2*num_cell(ii),1)
+          buf_int(2,ix,ic) = int_recv(3*k-1+2*num_cell(ii),1)
+          buf_int(3,ix,ic) = int_recv(3*k+2*num_cell(ii),1)
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+
+      real_size = 8*k
+      int_size  = 3*k + 2*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        nadd = int_recv(2*i,1)
+
+        do ix = water_move(ic)+1, water_move(ic)+nadd
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            water_move_real(j,ix,ic) = buf_recv(real_size+6*water_atom*(k-1)+j,1)
+          end do
+
+          do j = 1, 2*water_atom
+            water_move_int(j,ix,ic) = int_recv(int_size+2*water_atom*(k-1)+j,1)
+          end do
+        end do
+
+        water_move(ic) = water_move(ic) + nadd
+
+      end do
+
+      ! get the imcoming data
+      ! 
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        nadd = int_recv(2*i-1,2)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd
+
+          k = k + 1
+          do j = 1, 8
+            buf_real(j,ix,ic) = buf_recv(8*(k-1)+j,2)
+          end do
+
+          buf_int(1,ix,ic) = int_recv(3*k-2+2*num_cell(ii),2)
+          buf_int(2,ix,ic) = int_recv(3*k-1+2*num_cell(ii),2)
+          buf_int(3,ix,ic) = int_recv(3*k+2*num_cell(ii),2)
+
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + 2*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        nadd = int_recv(2*i,2)
+
+        do ix = water_move(ic)+1, water_move(ic)+nadd
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            water_move_real(j,ix,ic) = buf_recv(real_size+6*water_atom*(k-1)+j,2)
+          end do
+
+          do j = 1, 2*water_atom
+            water_move_int(j,ix,ic) = int_recv(int_size+2*water_atom*(k-1)+j,2)
+          end do
+
+        end do
+
+        water_move(ic) = water_move(ic) + nadd
+
+      end do
+
+    end do
+
+    return
+
+  end subroutine communicate_solutewater_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    communicate_constraints_fep
+  !> @brief        Pack the incoming particles data of each boundary cell
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] domain      : domain information
+  !! @param[inout] comm        : communication information
+  !! @param[inout] constraints : constraints information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine communicate_constraints_fep(domain, comm, constraints)
+
+    ! formal arguments
+    type(s_domain),      target, intent(inout) :: domain
+    type(s_comm),        target, intent(inout) :: comm
+    type(s_constraints), target, intent(inout) :: constraints
+
+    ! local variable
+    integer                      :: send_size(2,2), recv_size(2,2)
+    integer                      :: real_size, int_size
+    integer                      :: i, j, k, l, ii, ic, ix, nadd, water_atom
+    integer                      :: list, list1, size
+    integer                      :: irequest, irequest1, irequest2, irequest3
+    integer                      :: irequest4, irequest5, irequest6, irequest7
+#ifdef HAVE_MPI_GENESIS
+    integer                      :: istatus(mpi_status_size)
+#endif
+    real(dp),            pointer :: buf_send(:,:), buf_recv(:,:)
+    real(dp),            pointer :: buf_real(:,:,:), water_move_real(:,:,:)
+    real(dp),            pointer :: HGr_move_real(:,:,:,:)
+    integer,             pointer :: if_lower_send(:,:), if_upper_send(:,:)
+    integer,             pointer :: if_lower_recv(:,:), if_upper_recv(:,:)
+    integer,             pointer :: iproc_upper(:), iproc_lower(:), num_cell(:)
+    integer,             pointer :: ptl_add(:), water_move(:)
+    integer,             pointer :: buf_int(:,:,:), water_move_int(:,:,:)
+    integer,             pointer :: HGr_move(:,:), HGr_move_int(:,:,:,:)
+    integer,             pointer :: int_send(:,:), int_recv(:,:)
+
+
+    iproc_upper     => domain%iproc_upper
+    iproc_lower     => domain%iproc_lower
+    ptl_add         => domain%ptl_add
+    buf_real        => domain%buf_real
+    buf_int         => domain%buf_integer
+    water_move      => domain%water%move
+    water_move_real => domain%water%move_real
+    water_move_int  => domain%water%move_integer
+
+    buf_send        => comm%buf_send
+    buf_recv        => comm%buf_recv
+    int_send        => comm%int_send
+    int_recv        => comm%int_recv
+    if_lower_send   => comm%if_lower_send
+    if_upper_send   => comm%if_upper_send
+    if_lower_recv   => comm%if_lower_recv
+    if_upper_recv   => comm%if_upper_recv
+    num_cell        => comm%num_cell
+
+    HGr_move        => constraints%HGr_move
+    HGr_move_int    => constraints%HGr_move_int
+    HGr_move_real   => constraints%HGr_move_real
+
+    if (constraints%tip4) then
+      water_atom = 4
+    else
+      water_atom = 3
+    end if
+    
+    size = constraints%connect + 2
+    do ii = 3, 1, -1
+
+      ! Pack outgoing data (lower)
+      !
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+
+        int_send(size*(i-1)+1,1) = ptl_add(ic)
+        int_send(size*(i-1)+2,1) = water_move(ic)
+
+        do j = 1, constraints%connect
+          int_send(size*(i-1)+j+2,1) = HGr_move(j,ic)
+        end do
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do list = 1, 8
+            buf_send(8*(k-1)+list,1) = buf_real(list,ix,ic)
+          end do
+
+          do list = 1, 3
+            list1 = 3*(k-1) + list + size*num_cell(ii)
+            int_send(list1,1) = buf_int(list,ix,ic)
+          end do
+
+        end do
+
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + size*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+        do j = 1, constraints%connect
+          do ix = 1, HGr_move(j,ic)
+            do l = 1, j+1
+
+              k = k + 1
+              do list = 1, 9
+                buf_send(real_size+9*(k-1)+list,1) = &
+                     HGr_move_real(9*(l-1)+list,ix,j,ic)
+              end do
+
+              do list = 1, 3
+                list1 = 3*(k-1) + list + int_size
+                int_send(list1,1) = HGr_move_int(3*(l-1)+list,ix,j,ic)
+              end do
+
+            end do
+          end do
+        end do
+        
+      end do
+
+      real_size = real_size + 9*k
+      int_size = int_size + 3*k
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_send(i,ii)
+        do ix = 1, water_move(ic)
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            buf_send(real_size+6*water_atom*(k-1)+j,1) = water_move_real(j,ix,ic)
+          end do
+
+          do j = 1, 2*water_atom
+            int_send(int_size+2*water_atom*(k-1)+j,1) = water_move_int(j,ix,ic)
+          end do
+
+        end do
+      end do
+
+      send_size(1,1) = int_size + 2*water_atom*k
+      send_size(2,1) = real_size + 6*water_atom*k
+
+      ! pack the outgoing date (upper)
+      !
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+
+        int_send(size*(i-1)+1,2) = ptl_add(ic)
+        int_send(size*(i-1)+2,2) = water_move(ic)
+
+        do j = 1, constraints%connect
+          int_send(size*(i-1)+j+2,2) = HGr_move(j,ic)
+        end do
+
+        do ix = 1, ptl_add(ic)
+
+          k = k + 1
+          do list = 1, 8
+            buf_send(8*(k-1)+list,2) = buf_real(list,ix,ic)
+          end do
+
+          do list = 1, 3
+            list1 = 3*(k-1) + list + size*num_cell(ii)
+            int_send(list1,2) = buf_int(list,ix,ic)
+          end do
+
+        end do
+
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + size*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+        do j = 1, constraints%connect
+          do ix = 1, HGr_move(j,ic)
+
+            do l = 1, j+1
+
+              k = k + 1
+              do list = 1, 9
+                buf_send(real_size+9*(k-1)+list,2) = &
+                     HGr_move_real(9*(l-1)+list,ix,j,ic)
+              end do
+
+              do list = 1, 3
+                list1 = 3*(k-1) + list + int_size
+                int_send(list1,2) = HGr_move_int(3*(l-1)+list,ix,j,ic)
+              end do
+
+            end do
+          end do
+        end do
+
+      end do
+
+      real_size = real_size + 9*k
+      int_size  = int_size + 3*k
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_send(i,ii)
+        do ix = 1, water_move(ic)
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            buf_send(real_size+6*water_atom*(k-1)+j,2) =  water_move_real(j,ix,ic)
+          end do
+
+          do j = 1, 2*water_atom
+            int_send(int_size+2*water_atom*(k-1)+j,2) = water_move_int(j,ix,ic)
+          end do
+
+        end do
+      end do
+
+      send_size(1,2) = int_size + 2*water_atom*k
+      send_size(2,2) = real_size + 6*water_atom*k
+#ifdef HAVE_MPI_GENESIS
+
+      ! send the size of data
+      !
+      call mpi_irecv(recv_size(1,1), 2, mpi_integer, iproc_upper(ii),     &
+                     iproc_upper(ii),           &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(send_size(1,1), 2, mpi_integer, iproc_lower(ii),     &
+                     my_city_rank,           &
+                     mpi_comm_city, irequest1, ierror)
+      call mpi_irecv(recv_size(1,2), 2, mpi_integer, iproc_lower(ii),     &
+                     my_city_rank+nproc_city,           &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(send_size(1,2), 2, mpi_integer, iproc_upper(ii),     &
+                     iproc_upper(ii)+nproc_city,           &
+                     mpi_comm_city, irequest3, ierror)
+
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,1), recv_size(1,1), mpi_integer,          &
+                     iproc_upper(ii),                                     &
+                     iproc_upper(ii),           &
+                     mpi_comm_city, irequest, ierror)
+      call mpi_isend(int_send(1,1), send_size(1,1), mpi_integer,          &
+                     iproc_lower(ii),                                     &
+                     my_city_rank,           &
+                     mpi_comm_city, irequest1, ierror)
+
+      ! send the data
+      !
+      call mpi_irecv(int_recv(1,2), recv_size(1,2), mpi_integer,          &
+                     iproc_lower(ii),                                     &
+                     my_city_rank+nproc_city,           &
+                     mpi_comm_city, irequest2, ierror)
+      call mpi_isend(int_send(1,2), send_size(1,2), mpi_integer,          &
+                     iproc_upper(ii),                                     &
+                     iproc_upper(ii)+nproc_city,           &
+                     mpi_comm_city, irequest3, ierror)
+
+      call mpi_wait(irequest,  istatus, ierror)
+      call mpi_wait(irequest1, istatus, ierror)
+      call mpi_wait(irequest2, istatus, ierror)
+      call mpi_wait(irequest3, istatus, ierror)
+
+      call mpi_irecv(buf_recv(1,1), recv_size(2,1), mpi_real8,          &
+                     iproc_upper(ii),                                   &
+                     iproc_upper(ii)+2*nproc_city,         &
+                     mpi_comm_city, irequest4, ierror)
+      call mpi_isend(buf_send(1,1), send_size(2,1), mpi_real8,          &
+                     iproc_lower(ii),                                   &
+                     my_city_rank+2*nproc_city,         &
+                     mpi_comm_city, irequest5, ierror)
+
+      call mpi_irecv(buf_recv(1,2), recv_size(2,2), mpi_real8,          &
+                     iproc_lower(ii),                                   &
+                     my_city_rank+3*nproc_city,         &
+                     mpi_comm_city, irequest6, ierror)
+      call mpi_isend(buf_send(1,2), send_size(2,2), mpi_real8,          &
+                     iproc_upper(ii),                                   &
+                     iproc_upper(ii)+3*nproc_city,         &
+                     mpi_comm_city, irequest7, ierror)
+
+      call mpi_wait(irequest4, istatus, ierror)
+      call mpi_wait(irequest5, istatus, ierror)
+      call mpi_wait(irequest6, istatus, ierror)
+      call mpi_wait(irequest7, istatus, ierror)
+#endif
+
+      ! get the imcoming data (from upper)
+      ! 
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        nadd = int_recv(size*(i-1)+1,1)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd
+
+          k = k + 1
+          do list = 1, 8
+            buf_real(list,ix,ic) = buf_recv(8*(k-1)+list,1)
+          end do
+
+          do list = 1, 3
+            list1 = 3*(k-1) + list + size*num_cell(ii)
+            buf_int(list,ix,ic) = int_recv(list1,1)
+          end do
+
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + size*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        do j = 1, constraints%connect
+
+          nadd = int_recv(size*(i-1)+j+2,1)
+          do ix = HGr_move(j,ic)+1, HGr_move(j,ic)+nadd
+
+            do l = 1, j+1
+
+              k = k + 1
+              do list = 1, 9
+                HGr_move_real(9*(l-1)+list,ix,j,ic) = &
+                     buf_recv(real_size+9*(k-1)+list,1)
+              end do
+
+              do list = 1, 3
+                list1 = 3*(k-1) + list + int_size
+                HGr_move_int(3*(l-1)+list,ix,j,ic) = int_recv(list1,1)
+              end do
+
+            end do
+          end do
+
+          HGr_move(j,ic) = HGr_move(j,ic) + nadd
+
+        end do
+      end do
+
+      real_size = real_size + 9*k
+      int_size  = int_size + 3*k
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_upper_recv(i,ii)
+        nadd = int_recv(size*(i-1)+2,1)
+
+        do ix = water_move(ic)+1, water_move(ic)+nadd
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            water_move_real(j,ix,ic) = buf_recv(real_size+6*water_atom*(k-1)+j,1)
+          end do
+
+          do j = 1, 2*water_atom
+            water_move_int(j,ix,ic) = int_recv(int_size+2*water_atom*(k-1)+j,1)
+          end do
+
+        end do
+
+        water_move(ic) = water_move(ic) + nadd
+
+      end do
+
+      ! get the imcoming data (from lower)
+      ! 
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        nadd = int_recv(size*(i-1)+1,2)
+
+        do ix = ptl_add(ic)+1, ptl_add(ic)+nadd
+
+          k = k + 1
+          do list = 1, 8
+            buf_real(list,ix,ic) = buf_recv(8*(k-1)+list,2)
+          end do
+
+          do list = 1, 3
+            list1 = 3*(k-1) + list + size*num_cell(ii)
+            buf_int(list,ix,ic) = int_recv(list1,2)
+          end do
+
+        end do
+
+        ptl_add(ic) = ptl_add(ic) + nadd
+
+      end do
+
+      real_size = 8*k
+      int_size = 3*k + size*num_cell(ii)
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        do j = 1, constraints%connect
+
+          nadd = int_recv(size*(i-1)+j+2,2)
+          do ix = HGr_move(j,ic)+1, HGr_move(j,ic)+nadd
+            do l = 1, j+1
+
+              k = k + 1
+              do list = 1, 9
+                HGr_move_real(9*(l-1)+list,ix,j,ic) = &
+                     buf_recv(real_size+9*(k-1)+list,2)
+              end do
+
+              do list = 1, 3
+                list1 = 3*(k-1) + list + int_size
+                HGr_move_int(3*(l-1)+list,ix,j,ic) = int_recv(list1,2)
+              end do
+
+            end do
+          end do
+
+          HGr_move(j,ic) = HGr_move(j,ic) + nadd
+
+        end do
+
+      end do
+
+      real_size = real_size + 9*k
+      int_size = int_size + 3*k
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = if_lower_recv(i,ii)
+        nadd = int_recv(size*(i-1)+2,2)
+
+        do ix = water_move(ic)+1, water_move(ic)+nadd
+
+          k = k + 1
+          do j = 1, 6*water_atom
+            water_move_real(j,ix,ic) = buf_recv(real_size+6*water_atom*(k-1)+j,2)
+          end do
+
+          do j = 1, 2*water_atom
+            water_move_int(j,ix,ic) = int_recv(int_size+2*water_atom*(k-1)+j,2)
+          end do
+
+        end do
+
+        water_move(ic) = water_move(ic) + nadd
+
+      end do
+
+    end do
+
+    return
+
+  end subroutine communicate_constraints_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_cell_boundary_fep
+  !> @brief        Update coordinates of the boundary cell for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] domain   : domain information
+  !! @param[inout] comm     : communication information
+  !! @param[inout] boundary : boundary information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_cell_boundary_fep(domain, comm, boundary)
+   
+    ! formal arguments
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_comm),     target, intent(inout) :: comm
+    type(s_boundary), target, intent(inout) :: boundary
+
+    ! local variable
+    real(dp)                  :: x_shift, y_shift, z_shift
+    real(dp)                  :: move(3)
+    integer                   :: i, k, ii, ic, ix
+    integer                   :: irequest, irequest1, irequest2, irequest3
+    integer                   :: irequest4, irequest5, irequest6, irequest7
+    integer                   :: id, omp_get_thread_num
+#ifdef HAVE_MPI_GENESIS
+    integer                   :: istatus(mpi_status_size)
+#endif
+
+    real(dp),         pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),         pointer :: trans(:,:,:)
+    real(wp),         pointer :: charge(:,:)
+    real(dp),         pointer :: mass(:,:) 
+    real(dp),         pointer :: buf_send(:,:), buf_recv(:,:)
+    real(dp),         pointer :: bsize_x, bsize_y, bsize_z
+    integer,          pointer :: num_cell(:)
+    integer,          pointer :: ic_lower_send(:,:), ic_upper_send(:,:)
+    integer,          pointer :: ic_lower_recv(:,:), ic_upper_recv(:,:)
+    integer,          pointer :: iproc_upper(:), iproc_lower(:)
+    integer,          pointer :: upper_recv(:), lower_recv(:)
+    integer,          pointer :: upper_send(:), lower_send(:)
+    integer,          pointer :: int_send(:,:), int_recv(:,:)
+    integer,          pointer :: ncell_local, ncell_bd, natom(:), atmcls(:,:)
+    integer,          pointer :: id_l2g(:,:), id_g2l(:,:)
+    integer,          pointer :: fepgrp(:,:)
+
+
+    ncell_local   => domain%num_cell_local
+    ncell_bd      => domain%num_cell_boundary
+    natom         => domain%num_atom
+    coord         => domain%coord
+    velocity      => domain%velocity
+    charge        => domain%charge
+    mass          => domain%mass
+    atmcls        => domain%atom_cls_no
+    id_l2g        => domain%id_l2g
+    id_g2l        => domain%id_g2l
+    iproc_upper   => domain%iproc_upper
+    iproc_lower   => domain%iproc_lower
+    trans         => domain%trans_vec
+
+    num_cell      => comm%num_cell
+    int_send      => comm%int_send
+    int_recv      => comm%int_recv
+    buf_send      => comm%buf_send
+    buf_recv      => comm%buf_recv
+    ic_lower_send => comm%ic_lower_send
+    ic_upper_send => comm%ic_upper_send
+    ic_lower_recv => comm%ic_lower_recv
+    ic_upper_recv => comm%ic_upper_recv
+    upper_recv    => comm%recv_coord_upper_size
+    lower_recv    => comm%recv_coord_lower_size
+    upper_send    => comm%send_coord_upper_size
+    lower_send    => comm%send_coord_lower_size
+
+    bsize_x       => boundary%box_size_x
+    bsize_y       => boundary%box_size_y
+    bsize_z       => boundary%box_size_z
+
+    fepgrp        => domain%fepgrp
+
+    do ii = 1, 3
+
+      ! Pack the data (lower)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_lower_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,1) = coord(1,ix,ic)
+          buf_send(8*k-6,1) = coord(2,ix,ic)
+          buf_send(8*k-5,1) = coord(3,ix,ic)
+          buf_send(8*k-4,1) = velocity(1,ix,ic)
+          buf_send(8*k-3,1) = velocity(2,ix,ic)
+          buf_send(8*k-2,1) = velocity(3,ix,ic)
+          buf_send(8*k-1,1) = charge(ix,ic)
+          buf_send(8*k,1)   = mass(ix,ic)
+          int_send(3*k-2,1) = atmcls(ix,ic)
+          int_send(3*k-1,1) = id_l2g(ix,ic)
+          int_send(3*k,1)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+      ! pack the data (upper)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_upper_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,2) = coord(1,ix,ic)
+          buf_send(8*k-6,2) = coord(2,ix,ic)
+          buf_send(8*k-5,2) = coord(3,ix,ic)
+          buf_send(8*k-4,2) = velocity(1,ix,ic)
+          buf_send(8*k-3,2) = velocity(2,ix,ic)
+          buf_send(8*k-2,2) = velocity(3,ix,ic)
+          buf_send(8*k-1,2) = charge(ix,ic)
+          buf_send(8*k,2)   = mass(ix,ic)
+          int_send(3*k-2,2) = atmcls(ix,ic)
+          int_send(3*k-1,2) = id_l2g(ix,ic)
+          int_send(3*k,2)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+#ifdef HAVE_MPI_GENESIS
+       ! send the data
+       !
+       call mpi_irecv(int_recv(1,1), 3*upper_recv(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii),              &
+                      mpi_comm_city, irequest, ierror)
+       call mpi_isend(int_send(1,1), 3*lower_send(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank,              &
+                      mpi_comm_city, irequest1, ierror)
+       call mpi_irecv(int_recv(1,2), 3*lower_recv(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank+nproc_city,              &
+                      mpi_comm_city, irequest2, ierror)
+       call mpi_isend(int_send(1,2), 3*upper_send(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii)+nproc_city,              &
+                      mpi_comm_city, irequest3, ierror)
+
+       call mpi_wait(irequest,  istatus, ierror)
+       call mpi_wait(irequest1, istatus, ierror)
+       call mpi_wait(irequest2, istatus, ierror)
+       call mpi_wait(irequest3, istatus, ierror)
+
+       call mpi_irecv(buf_recv(1,1), 8*upper_recv(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii),            &
+                      mpi_comm_city, irequest4, ierror)
+       call mpi_isend(buf_send(1,1), 8*lower_send(ii),  mpi_real8,          &
+                      iproc_lower(ii),                                      &
+                      my_city_rank,            &
+                      mpi_comm_city, irequest5, ierror)
+       call mpi_irecv(buf_recv(1,2), 8*lower_recv(ii), mpi_real8,           &
+                      iproc_lower(ii),                                      &
+                      my_city_rank+nproc_city,            &
+                      mpi_comm_city, irequest6, ierror)
+       call mpi_isend(buf_send(1,2), 8*upper_send(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii)+nproc_city,            &
+                      mpi_comm_city, irequest7, ierror)
+
+       call mpi_wait(irequest4, istatus, ierror)
+       call mpi_wait(irequest5, istatus, ierror)
+       call mpi_wait(irequest6, istatus, ierror)
+       call mpi_wait(irequest7, istatus, ierror)
+#endif
+
+       ! get the data of the boundary cells
+       ! 
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_upper_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,1)
+           coord(2,ix,ic)    = buf_recv(8*k-6,1)
+           coord(3,ix,ic)    = buf_recv(8*k-5,1)
+           velocity(1,ix,ic) = buf_recv(8*k-4,1)
+           velocity(2,ix,ic) = buf_recv(8*k-3,1)
+           velocity(3,ix,ic) = buf_recv(8*k-2,1)
+           charge(ix,ic)     = buf_recv(8*k-1,1)
+           mass(ix,ic)       = buf_recv(8*k,1)
+           atmcls(ix,ic)     = int_recv(3*k-2,1)
+           id_l2g(ix,ic)     = int_recv(3*k-1,1)
+           fepgrp(ix,ic)     = int_recv(3*k,1)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_lower_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,2)
+           coord(2,ix,ic)    = buf_recv(8*k-6,2)
+           coord(3,ix,ic)    = buf_recv(8*k-5,2)
+           velocity(1,ix,ic) = buf_recv(8*k-4,2)
+           velocity(2,ix,ic) = buf_recv(8*k-3,2)
+           velocity(3,ix,ic) = buf_recv(8*k-2,2)
+           charge(ix,ic)     = buf_recv(8*k-1,2)
+           mass(ix,ic)       = buf_recv(8*k,2)
+           atmcls(ix,ic)     = int_recv(3*k-2,2)
+           id_l2g(ix,ic)     = int_recv(3*k-1,2)
+           fepgrp(ix,ic)     = int_recv(3*k,2)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+    end do
+
+    !$omp parallel                                                &
+    !$omp private(id, i, ix, x_shift, y_shift, z_shift, move, ic)   
+
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+
+    ! check the translation for each particle
+    !
+    do i = id+1, ncell_local, nthread
+       do ix = 1, natom(i)
+
+         !coordinate shifted against the origin
+         !
+         x_shift = coord(1,ix,i)-boundary%origin_x
+         y_shift = coord(2,ix,i)-boundary%origin_y
+         z_shift = coord(3,ix,i)-boundary%origin_z
+
+         !coordinate shifted to the first quadrant and set into the boundary box
+         move(1) = bsize_x*0.5_dp-bsize_x*anint(x_shift/bsize_x)
+         move(2) = bsize_y*0.5_dp-bsize_y*anint(y_shift/bsize_y)
+         move(3) = bsize_z*0.5_dp-bsize_z*anint(z_shift/bsize_z)
+         x_shift = x_shift + move(1)
+         y_shift = y_shift + move(2)
+         z_shift = z_shift + move(3)
+         trans(1,ix,i) = move(1)-boundary%origin_x
+         trans(2,ix,i) = move(2)-boundary%origin_y
+         trans(3,ix,i) = move(3)-boundary%origin_z
+
+       end do
+    end do
+
+    do i = id+1, ncell_bd, nthread
+
+      ic = i + ncell_local
+      do ix = 1, natom(ic)
+
+         !coordinate shifted against the origin
+         !
+         x_shift = coord(1,ix,ic)-boundary%origin_x
+         y_shift = coord(2,ix,ic)-boundary%origin_y
+         z_shift = coord(3,ix,ic)-boundary%origin_z
+
+         !coordinate shifted to the first quadrant and set into the boundary box
+         move(1) = bsize_x*0.5_dp-bsize_x*anint(x_shift/bsize_x)
+         move(2) = bsize_y*0.5_dp-bsize_y*anint(y_shift/bsize_y)
+         move(3) = bsize_z*0.5_dp-bsize_z*anint(z_shift/bsize_z)
+         trans(1,ix,ic) = move(1)-boundary%origin_x
+         trans(2,ix,ic) = move(2)-boundary%origin_y
+         trans(3,ix,ic) = move(3)-boundary%origin_z
+
+      end do
+    end do
+
+    !$omp end parallel
+
+    return
+
+  end subroutine update_cell_boundary_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_cell_boundary_table_fep
+  !> @brief        Update coordinates of the boundary cell with table
+  !! @authors      NK, HO
+  !! @param[inout] domain   : domain information
+  !! @param[inout] comm     : communication information
+  !! @param[inout] boundary : boundary information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_cell_boundary_table_fep(enefunc, domain, comm, boundary)
+
+    ! formal arguments
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_comm),     target, intent(inout) :: comm
+    type(s_boundary), target, intent(inout) :: boundary
+
+    ! local variable
+    real(dp)                  :: x_shift, y_shift, z_shift
+    real(dp)                  :: move(3)
+    integer                   :: i, k, j, ii, ic, ix, iwater
+    integer                   :: irequest, irequest1, irequest2, irequest3
+    integer                   :: irequest4, irequest5, irequest6, irequest7
+    integer                   :: id, omp_get_thread_num
+#ifdef HAVE_MPI_GENESIS
+    integer                   :: istatus(mpi_status_size)
+#endif
+
+    real(dp),         pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),         pointer :: trans(:,:,:)
+    real(wp),         pointer :: charge(:,:)
+    real(dp),         pointer :: mass(:,:)           
+    real(dp),         pointer :: buf_send(:,:), buf_recv(:,:)
+    real(dp),         pointer :: bsize_x, bsize_y, bsize_z
+    integer,          pointer :: num_cell(:)
+    integer,          pointer :: ic_lower_send(:,:), ic_upper_send(:,:)
+    integer,          pointer :: ic_lower_recv(:,:), ic_upper_recv(:,:)
+    integer,          pointer :: iproc_upper(:), iproc_lower(:)
+    integer,          pointer :: upper_recv(:), lower_recv(:)
+    integer,          pointer :: upper_send(:), lower_send(:)
+    integer,          pointer :: int_send(:,:), int_recv(:,:)
+    integer,          pointer :: ncell_local, ncell_bd, natom(:), nsolute(:)
+    integer,          pointer :: nwater(:), water_list(:,:,:), atmcls(:,:)
+    integer,          pointer :: id_l2g(:,:), id_g2l(:,:)
+    integer,          pointer :: fepgrp(:,:)
+
+
+    ncell_local   => domain%num_cell_local
+    ncell_bd      => domain%num_cell_boundary
+    natom         => domain%num_atom
+    nsolute       => domain%num_solute
+    nwater        => domain%num_water
+    water_list    => domain%water_list
+    coord         => domain%coord
+    velocity      => domain%velocity
+    charge        => domain%charge
+    mass          => domain%mass
+    atmcls        => domain%atom_cls_no
+    id_l2g        => domain%id_l2g
+    id_g2l        => domain%id_g2l
+    iproc_upper   => domain%iproc_upper
+    iproc_lower   => domain%iproc_lower
+    trans         => domain%trans_vec
+
+    num_cell      => comm%num_cell
+    int_send      => comm%int_send
+    int_recv      => comm%int_recv
+    buf_send      => comm%buf_send
+    buf_recv      => comm%buf_recv
+    ic_lower_send => comm%ic_lower_send
+    ic_upper_send => comm%ic_upper_send
+    ic_lower_recv => comm%ic_lower_recv
+    ic_upper_recv => comm%ic_upper_recv
+    upper_recv    => comm%recv_coord_upper_size
+    lower_recv    => comm%recv_coord_lower_size
+    upper_send    => comm%send_coord_upper_size
+    lower_send    => comm%send_coord_lower_size
+
+    bsize_x       => boundary%box_size_x
+    bsize_y       => boundary%box_size_y
+    bsize_z       => boundary%box_size_z
+
+    fepgrp        => domain%fepgrp
+
+    do ii = 1, 3
+
+      ! Pack the data (lower)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_lower_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,1) = coord(1,ix,ic)
+          buf_send(8*k-6,1) = coord(2,ix,ic)
+          buf_send(8*k-5,1) = coord(3,ix,ic)
+          buf_send(8*k-4,1) = velocity(1,ix,ic)
+          buf_send(8*k-3,1) = velocity(2,ix,ic)
+          buf_send(8*k-2,1) = velocity(3,ix,ic)
+          buf_send(8*k-1,1) = charge(ix,ic)
+          buf_send(8*k,1)   = mass(ix,ic)
+          int_send(3*k-2,1) = atmcls(ix,ic)
+          int_send(3*k-1,1) = id_l2g(ix,ic)
+          int_send(3*k,1)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+      ! pack the data (upper)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_upper_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,2) = coord(1,ix,ic)
+          buf_send(8*k-6,2) = coord(2,ix,ic)
+          buf_send(8*k-5,2) = coord(3,ix,ic)
+          buf_send(8*k-4,2) = velocity(1,ix,ic)
+          buf_send(8*k-3,2) = velocity(2,ix,ic)
+          buf_send(8*k-2,2) = velocity(3,ix,ic)
+          buf_send(8*k-1,2) = charge(ix,ic)
+          buf_send(8*k,2)   = mass(ix,ic)
+          int_send(3*k-2,2) = atmcls(ix,ic)
+          int_send(3*k-1,2) = id_l2g(ix,ic)
+          int_send(3*k,2)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+#ifdef HAVE_MPI_GENESIS
+
+       ! send the data
+       !
+       call mpi_irecv(int_recv(1,1), 3*upper_recv(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii),              &
+                      mpi_comm_city, irequest, ierror)
+       call mpi_isend(int_send(1,1), 3*lower_send(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank,              &
+                      mpi_comm_city, irequest1, ierror)
+       call mpi_irecv(int_recv(1,2), 3*lower_recv(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank+nproc_city,              &
+                      mpi_comm_city, irequest2, ierror)
+       call mpi_isend(int_send(1,2), 3*upper_send(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii)+nproc_city,              &
+                      mpi_comm_city, irequest3, ierror)
+
+       call mpi_wait(irequest,  istatus, ierror)
+       call mpi_wait(irequest1, istatus, ierror)
+       call mpi_wait(irequest2, istatus, ierror)
+       call mpi_wait(irequest3, istatus, ierror)
+
+       call mpi_irecv(buf_recv(1,1), 8*upper_recv(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii),            &
+                      mpi_comm_city, irequest4, ierror)
+       call mpi_isend(buf_send(1,1), 8*lower_send(ii),  mpi_real8,          &
+                      iproc_lower(ii),                                      &
+                      my_city_rank,            &
+                      mpi_comm_city, irequest5, ierror)
+       call mpi_irecv(buf_recv(1,2), 8*lower_recv(ii), mpi_real8,           &
+                      iproc_lower(ii),                                      &
+                      my_city_rank+nproc_city,            &
+                      mpi_comm_city, irequest6, ierror)
+       call mpi_isend(buf_send(1,2), 8*upper_send(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii)+nproc_city,            &
+                      mpi_comm_city, irequest7, ierror)
+
+       call mpi_wait(irequest4, istatus, ierror)
+       call mpi_wait(irequest5, istatus, ierror)
+       call mpi_wait(irequest6, istatus, ierror)
+       call mpi_wait(irequest7, istatus, ierror)
+       call mpi_barrier(mpi_comm_country,ierror)
+#endif
+
+       ! get the data of the boundary cells
+       ! 
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_upper_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,1)
+           coord(2,ix,ic)    = buf_recv(8*k-6,1)
+           coord(3,ix,ic)    = buf_recv(8*k-5,1)
+           velocity(1,ix,ic) = buf_recv(8*k-4,1)
+           velocity(2,ix,ic) = buf_recv(8*k-3,1)
+           velocity(3,ix,ic) = buf_recv(8*k-2,1)
+           charge(ix,ic)     = buf_recv(8*k-1,1)
+           mass(ix,ic)       = buf_recv(8*k,1)
+           atmcls(ix,ic)     = int_recv(3*k-2,1)
+           id_l2g(ix,ic)     = int_recv(3*k-1,1)
+           fepgrp(ix,ic)     = int_recv(3*k,1)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_lower_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,2)
+           coord(2,ix,ic)    = buf_recv(8*k-6,2)
+           coord(3,ix,ic)    = buf_recv(8*k-5,2)
+           velocity(1,ix,ic) = buf_recv(8*k-4,2)
+           velocity(2,ix,ic) = buf_recv(8*k-3,2)
+           velocity(3,ix,ic) = buf_recv(8*k-2,2)
+           charge(ix,ic)     = buf_recv(8*k-1,2)
+           mass(ix,ic)       = buf_recv(8*k,2)
+           atmcls(ix,ic)     = int_recv(3*k-2,2)
+           id_l2g(ix,ic)     = int_recv(3*k-1,2)
+           fepgrp(ix,ic)     = int_recv(3*k,2)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+    end do
+
+    !$omp parallel default(shared)                                             &
+    !$omp private(id, i, j, ix, x_shift, y_shift, z_shift, move, ic, iwater)   
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+
+    ! check the translation for each particle
+    !
+    do i = id+1, ncell_local, nthread
+
+      do ix = 1, nsolute(i)
+
+        !coordinate shifted against the origin
+        !
+        x_shift = coord(1,ix,i) - boundary%origin_x
+        y_shift = coord(2,ix,i) - boundary%origin_y
+        z_shift = coord(3,ix,i) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        !
+        move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+        x_shift = x_shift + move(1)
+        y_shift = y_shift + move(2)
+        z_shift = z_shift + move(3)
+        trans(1,ix,i) = move(1) - boundary%origin_x
+        trans(2,ix,i) = move(2) - boundary%origin_y
+        trans(3,ix,i) = move(3) - boundary%origin_z
+      end do
+
+      if (enefunc%table%tip4) then
+
+        do ix = nsolute(i)+1, natom(i)-3, 4
+
+          x_shift = coord(1,ix,i) - boundary%origin_x
+          y_shift = coord(2,ix,i) - boundary%origin_y
+          z_shift = coord(3,ix,i) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1, 4
+            trans(1,ix-1+j,i) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,i) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,i) = move(3) - boundary%origin_z
+          end do
+
+        end do
+
+      else
+  
+        do ix = nsolute(i)+1, natom(i)-2, 3
+  
+          x_shift = coord(1,ix,i) - boundary%origin_x
+          y_shift = coord(2,ix,i) - boundary%origin_y
+          z_shift = coord(3,ix,i) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+  
+          do j = 1,3
+            trans(1,ix-1+j,i) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,i) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,i) = move(3) - boundary%origin_z
+          end do
+  
+        end do
+
+      end if
+
+    end do
+
+    do i = id+1, ncell_bd, nthread
+
+      ic = i + ncell_local
+      do ix = 1, nsolute(ic)
+
+        !coordinate shifted against the origin
+        !
+        x_shift = coord(1,ix,ic) - boundary%origin_x
+        y_shift = coord(2,ix,ic) - boundary%origin_y
+        z_shift = coord(3,ix,ic) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        !
+        move(1) = bsize_x*0.5_dp-bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp-bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp-bsize_z*anint(z_shift/bsize_z)
+        trans(1,ix,ic) = move(1) - boundary%origin_x
+        trans(2,ix,ic) = move(2) - boundary%origin_y
+        trans(3,ix,ic) = move(3) - boundary%origin_z
+      end do
+
+      iwater = 0
+
+      if (enefunc%table%tip4) then
+
+        do ix = nsolute(ic)+1, natom(ic)-3, 4
+
+          iwater = iwater + 1
+          x_shift = coord(1,ix,ic) - boundary%origin_x
+          y_shift = coord(2,ix,ic) - boundary%origin_y
+          z_shift = coord(3,ix,ic) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1,4
+            trans(1,ix-1+j,ic) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,ic) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,ic) = move(3) - boundary%origin_z
+            water_list(j,iwater,ic) = ix-1+j
+          end do
+
+        end do
+
+      else
+
+        do ix = nsolute(ic)+1, natom(ic)-2, 3
+
+          iwater = iwater + 1
+          x_shift = coord(1,ix,ic) - boundary%origin_x
+          y_shift = coord(2,ix,ic) - boundary%origin_y
+          z_shift = coord(3,ix,ic) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1,3
+            trans(1,ix-1+j,ic) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,ic) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,ic) = move(3) - boundary%origin_z
+            water_list(j,iwater,ic) = ix-1+j
+          end do
+
+        end do
+
+      end if
+      nwater(ic) = iwater
+
+    end do
+    !$omp end parallel
+
+    return
+
+  end subroutine update_cell_boundary_table_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_cell_boundary_constraints_fep
+  !> @brief        Update coordinates of the boundary cell with constraint
+  !                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[inout] domain      : domain information
+  !! @param[inout] comm        : communication information
+  !! @param[inout] boundary    : boundary information
+  !! @param[inout] constraints : constraints information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_cell_boundary_constraints_fep(domain, comm, boundary, &
+                                              constraints)
+
+    ! formal arguments
+    type(s_domain),      target, intent(inout) :: domain
+    type(s_comm),        target, intent(inout) :: comm
+    type(s_boundary),    target, intent(inout) :: boundary
+    type(s_constraints), target, intent(inout) :: constraints
+
+    ! local variable
+    real(dp)                 :: x_shift, y_shift, z_shift
+    real(dp)                 :: move(3)
+    integer                  :: i, k, j, ii, ic, ix, iwater, list
+    integer                  :: irequest, irequest1, irequest2, irequest3
+    integer                  :: irequest4, irequest5, irequest6, irequest7
+    integer                  :: id, omp_get_thread_num
+#ifdef HAVE_MPI_GENESIS
+    integer                  :: istatus(mpi_status_size)
+#endif
+
+    real(dp),        pointer :: coord(:,:,:), velocity(:,:,:)
+    real(wp),        pointer :: trans(:,:,:)
+    real(wp),        pointer :: charge(:,:)
+    real(dp),        pointer :: mass(:,:)           
+    real(dp),        pointer :: buf_send(:,:), buf_recv(:,:)
+    real(dp),        pointer :: bsize_x, bsize_y, bsize_z
+    integer,         pointer :: num_cell(:)
+    integer,         pointer :: ic_lower_send(:,:), ic_upper_send(:,:)
+    integer,         pointer :: ic_lower_recv(:,:), ic_upper_recv(:,:)
+    integer,         pointer :: iproc_upper(:), iproc_lower(:)
+    integer,         pointer :: upper_recv(:), lower_recv(:)
+    integer,         pointer :: upper_send(:), lower_send(:)
+    integer,         pointer :: int_send(:,:), int_recv(:,:)
+    integer,         pointer :: ncell_local, ncell_bd, natom(:), nsolute(:)
+    integer,         pointer :: nwater(:), water_list(:,:,:), atmcls(:,:)
+    integer,         pointer :: id_l2g(:,:), id_g2l(:,:)
+    integer,         pointer :: No_HGr(:), HGr_local(:,:),HGr_bond_list(:,:,:,:)
+    integer,         pointer :: fepgrp(:,:)
+
+
+    ncell_local   => domain%num_cell_local
+    ncell_bd      => domain%num_cell_boundary
+    natom         => domain%num_atom
+    nsolute       => domain%num_solute
+    nwater        => domain%num_water
+    water_list    => domain%water_list
+    coord         => domain%coord
+    velocity      => domain%velocity
+    charge        => domain%charge
+    mass          => domain%mass
+    atmcls        => domain%atom_cls_no
+    id_l2g        => domain%id_l2g
+    id_g2l        => domain%id_g2l
+    iproc_upper   => domain%iproc_upper
+    iproc_lower   => domain%iproc_lower
+    trans         => domain%trans_vec
+    fepgrp        => domain%fepgrp
+
+    num_cell      => comm%num_cell
+    int_send      => comm%int_send
+    int_recv      => comm%int_recv
+    buf_send      => comm%buf_send
+    buf_recv      => comm%buf_recv
+    ic_lower_send => comm%ic_lower_send
+    ic_upper_send => comm%ic_upper_send
+    ic_lower_recv => comm%ic_lower_recv
+    ic_upper_recv => comm%ic_upper_recv
+    upper_recv    => comm%recv_coord_upper_size
+    lower_recv    => comm%recv_coord_lower_size
+    upper_send    => comm%send_coord_upper_size
+    lower_send    => comm%send_coord_lower_size
+
+    bsize_x       => boundary%box_size_x
+    bsize_y       => boundary%box_size_y
+    bsize_z       => boundary%box_size_z
+
+    No_HGr        => constraints%No_HGr
+    HGr_local     => constraints%HGr_local
+    HGr_bond_list => constraints%HGr_bond_list
+
+
+    do ii = 1, 3
+
+      ! Pack the data (lower)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_lower_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,1) = coord(1,ix,ic)
+          buf_send(8*k-6,1) = coord(2,ix,ic)
+          buf_send(8*k-5,1) = coord(3,ix,ic)
+          buf_send(8*k-4,1) = velocity(1,ix,ic)
+          buf_send(8*k-3,1) = velocity(2,ix,ic)
+          buf_send(8*k-2,1) = velocity(3,ix,ic)
+          buf_send(8*k-1,1) = charge(ix,ic)
+          buf_send(8*k,1)   = mass(ix,ic)
+          int_send(3*k-2,1) = atmcls(ix,ic)
+          int_send(3*k-1,1) = id_l2g(ix,ic)
+          int_send(3*k,1)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+      ! pack the data (upper)
+      !
+
+      k = 0
+      do i = 1, num_cell(ii)
+
+        ic = ic_upper_send(i,ii)
+        do ix = 1, natom(ic)
+          k = k + 1
+          buf_send(8*k-7,2) = coord(1,ix,ic)
+          buf_send(8*k-6,2) = coord(2,ix,ic)
+          buf_send(8*k-5,2) = coord(3,ix,ic)
+          buf_send(8*k-4,2) = velocity(1,ix,ic)
+          buf_send(8*k-3,2) = velocity(2,ix,ic)
+          buf_send(8*k-2,2) = velocity(3,ix,ic)
+          buf_send(8*k-1,2) = charge(ix,ic)
+          buf_send(8*k,2)   = mass(ix,ic)
+          int_send(3*k-2,2) = atmcls(ix,ic)
+          int_send(3*k-1,2) = id_l2g(ix,ic)
+          int_send(3*k,2)   = fepgrp(ix,ic)
+        end do
+
+      end do
+
+#ifdef HAVE_MPI_GENESIS
+
+       ! send the data
+       !
+       call mpi_irecv(int_recv(1,1), 3*upper_recv(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii),              &
+                      mpi_comm_city, irequest, ierror)
+       call mpi_isend(int_send(1,1), 3*lower_send(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank,              &
+                      mpi_comm_city, irequest1, ierror)
+       call mpi_irecv(int_recv(1,2), 3*lower_recv(ii), mpi_integer,           &
+                      iproc_lower(ii),                                        &
+                      my_city_rank+nproc_city,              &
+                      mpi_comm_city, irequest2, ierror)
+       call mpi_isend(int_send(1,2), 3*upper_send(ii), mpi_integer,           &
+                      iproc_upper(ii),                                        &
+                      iproc_upper(ii)+nproc_city,              &
+                      mpi_comm_city, irequest3, ierror)
+
+       call mpi_wait(irequest,  istatus, ierror)
+       call mpi_wait(irequest1, istatus, ierror)
+       call mpi_wait(irequest2, istatus, ierror)
+       call mpi_wait(irequest3, istatus, ierror)
+
+       call mpi_irecv(buf_recv(1,1), 8*upper_recv(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii),            &
+                      mpi_comm_city, irequest4, ierror)
+       call mpi_isend(buf_send(1,1), 8*lower_send(ii),  mpi_real8,          &
+                      iproc_lower(ii),                                      &
+                      my_city_rank,            &
+                      mpi_comm_city, irequest5, ierror)
+
+       call mpi_irecv(buf_recv(1,2), 8*lower_recv(ii), mpi_real8,           &
+                      iproc_lower(ii),                                      &
+                      my_city_rank+nproc_city,            &
+                      mpi_comm_city, irequest6, ierror)
+       call mpi_isend(buf_send(1,2), 8*upper_send(ii), mpi_real8,           &
+                      iproc_upper(ii),                                      &
+                      iproc_upper(ii)+nproc_city,            &
+                      mpi_comm_city, irequest7, ierror)
+
+       call mpi_wait(irequest4, istatus, ierror)
+       call mpi_wait(irequest5, istatus, ierror)
+       call mpi_wait(irequest6, istatus, ierror)
+       call mpi_wait(irequest7, istatus, ierror)
+#endif
+
+       ! get the data of the boundary cells
+       ! 
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_upper_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,1)
+           coord(2,ix,ic)    = buf_recv(8*k-6,1)
+           coord(3,ix,ic)    = buf_recv(8*k-5,1)
+           velocity(1,ix,ic) = buf_recv(8*k-4,1)
+           velocity(2,ix,ic) = buf_recv(8*k-3,1)
+           velocity(3,ix,ic) = buf_recv(8*k-2,1)
+           charge(ix,ic)     = buf_recv(8*k-1,1)
+           mass(ix,ic)       = buf_recv(8*k,1)
+           atmcls(ix,ic)     = int_recv(3*k-2,1)
+           id_l2g(ix,ic)     = int_recv(3*k-1,1)
+           fepgrp(ix,ic)     = int_recv(3*k,1)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+
+       k = 0
+       do i = 1, num_cell(ii)
+
+         ic = ic_lower_recv(i,ii)
+         do ix = 1, natom(ic)
+           k = k + 1
+           coord(1,ix,ic)    = buf_recv(8*k-7,2)
+           coord(2,ix,ic)    = buf_recv(8*k-6,2)
+           coord(3,ix,ic)    = buf_recv(8*k-5,2)
+           velocity(1,ix,ic) = buf_recv(8*k-4,2)
+           velocity(2,ix,ic) = buf_recv(8*k-3,2)
+           velocity(3,ix,ic) = buf_recv(8*k-2,2)
+           charge(ix,ic)     = buf_recv(8*k-1,2)
+           mass(ix,ic)       = buf_recv(8*k,2)
+           atmcls(ix,ic)     = int_recv(3*k-2,2)
+           id_l2g(ix,ic)     = int_recv(3*k-1,2)
+           fepgrp(ix,ic)     = int_recv(3*k,2)
+           id_g2l(1,id_l2g(ix,ic)) = ic
+           id_g2l(2,id_l2g(ix,ic)) = ix
+          end do
+
+       end do
+    end do
+
+    !$omp parallel default(shared)                                             &
+    !$omp private(id, i, j, k, ix, x_shift, y_shift, z_shift, move, ic, iwater,&
+    !$omp         list)   
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+
+    ! check the translation for each particle
+    !
+    do i = id+1, ncell_local, nthread
+
+      do ix = 1, No_HGr(i)
+
+        !coordinate shifted against the origin
+        !
+        x_shift = coord(1,ix,i) - boundary%origin_x
+        y_shift = coord(2,ix,i) - boundary%origin_y
+        z_shift = coord(3,ix,i) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        !
+        move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+        x_shift = x_shift + move(1)
+        y_shift = y_shift + move(2)
+        z_shift = z_shift + move(3)
+        trans(1,ix,i) = move(1) - boundary%origin_x
+        trans(2,ix,i) = move(2) - boundary%origin_y
+        trans(3,ix,i) = move(3) - boundary%origin_z
+
+      end do
+
+      k = No_HGr(i)
+      do j = 1, constraints%connect
+
+        do ix = 1, HGr_local(j,i)
+          list = HGr_bond_list(1,ix,j,i)
+          x_shift = coord(1,list,i) - boundary%origin_x
+          y_shift = coord(2,list,i) - boundary%origin_y
+          z_shift = coord(3,list,i) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do list = 1, j+1
+            k = k + 1
+            trans(1,k,i) = move(1) - boundary%origin_x
+            trans(2,k,i) = move(2) - boundary%origin_y
+            trans(3,k,i) = move(3) - boundary%origin_z
+          end do
+
+        end do
+      end do
+      nsolute(i) = k
+
+      if (constraints%tip4) then
+
+        do ix = nsolute(i)+1, natom(i)-3, 4
+
+          x_shift = coord(1,ix,i) - boundary%origin_x
+          y_shift = coord(2,ix,i) - boundary%origin_y
+          z_shift = coord(3,ix,i) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1, 4
+            trans(1,ix-1+j,i) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,i) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,i) = move(3) - boundary%origin_z
+          end do
+
+        end do
+
+      else
+
+        do ix = nsolute(i)+1, natom(i)-2, 3
+  
+          x_shift = coord(1,ix,i) - boundary%origin_x
+          y_shift = coord(2,ix,i) - boundary%origin_y
+          z_shift = coord(3,ix,i) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+  
+          do j = 1, 3
+            trans(1,ix-1+j,i) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,i) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,i) = move(3) - boundary%origin_z
+          end do
+  
+        end do
+      end if
+
+    end do
+
+    do i = id+1, ncell_bd, nthread
+      ic = i + ncell_local
+
+      do ix = 1, No_HGr(ic)
+
+        !coordinate shifted against the origin
+        !
+        x_shift = coord(1,ix,ic) - boundary%origin_x
+        y_shift = coord(2,ix,ic) - boundary%origin_y
+        z_shift = coord(3,ix,ic) - boundary%origin_z
+
+        !coordinate shifted to the first quadrant and set into the boundary box
+        !
+        move(1) = bsize_x*0.5_dp-bsize_x*anint(x_shift/bsize_x)
+        move(2) = bsize_y*0.5_dp-bsize_y*anint(y_shift/bsize_y)
+        move(3) = bsize_z*0.5_dp-bsize_z*anint(z_shift/bsize_z)
+        trans(1,ix,ic) = move(1) - boundary%origin_x
+        trans(2,ix,ic) = move(2) - boundary%origin_y
+        trans(3,ix,ic) = move(3) - boundary%origin_z
+      end do
+
+      k = No_HGr(ic)
+      do j = 1, constraints%connect
+        do ix = 1, HGr_local(j,ic)
+
+          k = k + 1
+          HGr_bond_list(1,ix,j,ic) = k
+          x_shift = coord(1,k,ic) - boundary%origin_x
+          y_shift = coord(2,k,ic) - boundary%origin_y
+          z_shift = coord(3,k,ic) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+          trans(1,k,ic) = move(1) - boundary%origin_x
+          trans(2,k,ic) = move(2) - boundary%origin_y
+          trans(3,k,ic) = move(3) - boundary%origin_z
+
+          do list = 2, j+1
+            k = k + 1
+            HGr_bond_list(list,ix,j,ic) = k
+            trans(1,k,ic) = move(1) - boundary%origin_x
+            trans(2,k,ic) = move(2) - boundary%origin_y
+            trans(3,k,ic) = move(3) - boundary%origin_z
+          end do
+
+        end do
+      end do
+      nsolute(ic) = k
+
+      iwater = 0
+
+      if (constraints%tip4) then
+
+        do ix = nsolute(ic)+1, natom(ic)-3, 4
+
+          iwater = iwater + 1
+          x_shift = coord(1,ix,ic) - boundary%origin_x
+          y_shift = coord(2,ix,ic) - boundary%origin_y
+          z_shift = coord(3,ix,ic) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1, 4
+            trans(1,ix-1+j,ic) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,ic) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,ic) = move(3) - boundary%origin_z
+            water_list(j,iwater,ic) = ix-1+j
+          end do
+
+        end do
+
+      else
+
+        do ix = nsolute(ic)+1, natom(ic)-2, 3
+
+          iwater = iwater + 1
+          x_shift = coord(1,ix,ic) - boundary%origin_x
+          y_shift = coord(2,ix,ic) - boundary%origin_y
+          z_shift = coord(3,ix,ic) - boundary%origin_z
+          move(1) = bsize_x*0.5_dp - bsize_x*anint(x_shift/bsize_x)
+          move(2) = bsize_y*0.5_dp - bsize_y*anint(y_shift/bsize_y)
+          move(3) = bsize_z*0.5_dp - bsize_z*anint(z_shift/bsize_z)
+
+          do j = 1,3
+            trans(1,ix-1+j,ic) = move(1) - boundary%origin_x
+            trans(2,ix-1+j,ic) = move(2) - boundary%origin_y
+            trans(3,ix-1+j,ic) = move(3) - boundary%origin_z
+            water_list(j,iwater,ic) = ix-1+j
+          end do
+
+        end do
+
+      end if
+
+      nwater(ic) = iwater
+
+    end do
+    !$omp end parallel
+
+    return
+
+  end subroutine update_cell_boundary_constraints_fep
 
 end module sp_communicate_mod

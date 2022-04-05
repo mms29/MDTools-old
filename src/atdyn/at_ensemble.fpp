@@ -96,6 +96,12 @@ contains
         write(MsgOut,'(A)') '# isotropy      = ISO       # [ISO,SEMI-ISO,ANISO,XY-FIXED]'
         write(MsgOut,'(A)') ' '
 
+      case ('bd')
+
+        write(MsgOut,'(A)') '[ENSEMBLE]'
+        write(MsgOut,'(A)') '# temperature   = 298.15    # initial and target temperature (K)'
+        write(MsgOut,'(A)') ' '
+
       end select
 
     else
@@ -107,6 +113,12 @@ contains
         write(MsgOut,'(A)') '[ENSEMBLE]'
         write(MsgOut,'(A)') 'ensemble      = NVE       # [NVE,NVT,NPT,NPAT,NPgT]'
         write(MsgOut,'(A)') 'tpcontrol     = NO        # [NO,BERENDSEN,BUSSI,LANGEVIN]'
+        write(MsgOut,'(A)') ' '
+
+      case ('bd')
+
+        write(MsgOut,'(A)') '[ENSEMBLE]'
+        write(MsgOut,'(A)') '# temperature   = 298.15    # initial and target temperature (K)'
         write(MsgOut,'(A)') ' '
 
       end select
@@ -487,6 +499,11 @@ contains
     end if
     if (enefunc%eef1_use) then
       call setup_eef1_temperature(ens_info%temperature, enefunc)
+    end if
+    if (enefunc%cg_ele_calc) then
+      if ( ens_info%temperature > EPS ) then
+        enefunc%cg_ele_sol_T = ens_info%temperature
+      end if
     end if
 
     return

@@ -6,6 +6,11 @@
 #  (c) Copyright 2014 RIKEN. All rights reserved.
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
+if INTERNAL_LAPACK
+  INT_LAPACK_LIB=$(LAPACK_LIB3)
+else
+  INT_LAPACK_LIB=
+endif
 
 SUBDIRS := ../../libana .
 
@@ -32,7 +37,7 @@ rst_upgrade_SOURCES = \
 EXTRA_DIST = \
 	Makefile.depends 
 
-rst_upgrade_ADDLIB = ../../../lib/lib.a
+rst_upgrade_ADDLIB = ../../../lib/lib.a $(INT_LAPACK_LIB)
 rst_upgrade_ADDLIBANA = ../../libana/libana.a
 
 SUFFIXES = .fpp

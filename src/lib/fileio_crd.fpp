@@ -28,8 +28,8 @@ module fileio_crd_mod
   type, public :: s_crd
 
      integer                       :: num_atoms = 0
-     character(4),     allocatable :: atom_name(:)
-     character(6),     allocatable :: residue_name(:)
+     character(4),     allocatable :: atom_name(:)    
+     character(6),     allocatable :: residue_name(:) 
      character(4),     allocatable :: segment_name(:)
      integer,          allocatable :: atom_no(:)
      integer,          allocatable :: residue_no(:)
@@ -306,7 +306,7 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
-  !  Subroutine    read_crd
+  !  Subroutine    read_crds
   !> @brief        read data from CHARMM CRD file
   !! @authors      YS, JJ, TM, KYMD
   !! @param[in]    file : unit number of CHARMM CRD file
@@ -341,7 +341,7 @@ contains
       read(file,'(a120)') line
 
       if (natm >= 100000 .or. flag == '  EXT') then
-        read(line,'(i10,i10,2x,a8,2x,a8,3f20.10,2x,a8,2x,a8)') &
+        read(line,'(i10,i10,2x,a8,2x,a8,3f20.10,2x,a8,2x,a8)') &      
              crd%atom_no(i),              &
              crd%residue_no(i),           &
              cres_nm,                     &
@@ -415,7 +415,12 @@ contains
     if (ioext) then
       write(file,'(i10,''  EXT'')') natm
       do i = 1, natm
-          write(file,'(i10,i10,1x,a9,1x,a9,3f20.10,1x,a9,1x,i9)') &
+          ! SI: Original source code
+          !write(file,'(i10,i10,1x,a9,1x,a9,3f20.10,1x,a9,1x,i9)') &
+          ! SI: Correct CHARMM EXT Format
+          !write(line,'(i10,i10,2x,a8,2x,a8,3f20.10,2x,a8,2x,a8)') &
+          ! SI: Pseudo CHARMM EXT Format for GENESIS
+          write(file, '(i10,i10,2x,a4,6x,a4,4x,3f20.10,2x,a4,6x,i0)') &
                 crd%atom_no(i),              &
                 crd%residue_no(i),           &
                 crd%residue_name(i),         &

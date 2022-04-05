@@ -20,6 +20,7 @@ program atdyn
   use at_setup_mpi_mod
   use at_remd_mod
   use at_rpath_mod
+  use at_morph_mod
   use at_minimize_mod
   use at_vibration_mod
   use at_dynamics_mod
@@ -35,6 +36,7 @@ program atdyn
   use at_ensemble_str_mod
   use at_output_str_mod
   use at_remd_str_mod
+  use at_morph_str_mod
   use at_rpath_str_mod
   use at_constraints_str_mod
   use at_boundary_str_mod
@@ -48,7 +50,7 @@ program atdyn
   use string_mod
   use messages_mod
   use mpi_parallel_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -60,6 +62,8 @@ program atdyn
   integer, parameter  :: GenesisREMD  = 3
   integer, parameter  :: GenesisRPATH = 4
   integer, parameter  :: GenesisVIB   = 5
+  integer, parameter  :: GenesisBD    = 6
+  integer, parameter  :: GenesisMORPH = 7
 
   ! local variables
   character(MaxFilename)      :: ctrl_filename
@@ -77,13 +81,20 @@ program atdyn
   type(s_remd)                :: remd
   type(s_rpath)               :: rpath
   type(s_vibration)           :: vibration
+  type(s_morph)               :: morph
   integer                     :: omp_get_max_threads
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   call mpi_init(ierror)
   call mpi_comm_rank(mpi_comm_world, my_world_rank, ierror)
   call mpi_comm_size(mpi_comm_world, nproc_world,   ierror)
   main_rank = (my_world_rank == 0)
+#ifdef QSIMULATE
+  nprow = 1
+  npcol = nproc_world
+  call sl_init(scalapack_context, nprow, npcol)
+  call blacs_gridinfo(scalapack_context, nprow, npcol, my_prow, my_pcol)
+#endif
 #else
   my_world_rank = 0
   nproc_world   = 1
@@ -104,18 +115,18 @@ program atdyn
   !
   call usage(ctrl_filename)
 
-
   ! get run mode from control file
   !
   call get_genesis_mode(ctrl_filename, genesis_run_mode)
-
 
   ! run genesis
   !
   call atomic_decomposition_genesis(ctrl_filename, genesis_run_mode)
 
-
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
+#ifdef QSIMULATE
+  call blacs_exit(1)
+#endif
   call mpi_finalize(ierror)
 #endif
 
@@ -139,6 +150,8 @@ contains
     character(*),            intent(in)    :: ctrl_filename
     integer,                 intent(inout) :: genesis_run_mode
 
+    integer                                :: nthread
+
 
     if (find_ctrlfile_section(ctrl_filename, 'REMD')) then
       genesis_run_mode = GenesisREMD
@@ -155,10 +168,14 @@ contains
     else if (find_ctrlfile_section(ctrl_filename, 'VIBRATION')) then
       genesis_run_mode = GenesisVIB
 
+    else if (find_ctrlfile_section(ctrl_filename, 'MORPH')) then
+      genesis_run_mode = GenesisMORPH
+
     else
       call error_msg('Get_Genesis_Mode> ERROR: Unknown control file format.')
 
     end if
+
 
     return
 
@@ -224,12 +241,16 @@ contains
 
       call control_rpath(ctrl_filename, ctrl_data)
 
+
     case (GenesisVIB)
 
       call control_vib(ctrl_filename, ctrl_data)
 
-    end select
+    case (GenesisMORPH)
 
+      call control_morph(ctrl_filename, ctrl_data)
+
+    end select
 
     ! [Step2] Setup MPI
     !
@@ -240,7 +261,7 @@ contains
 
     select case (genesis_run_mode)
 
-    case (GenesisMD,GenesisMIN)
+    case (GenesisMD,GenesisMIN,GenesisMORPH)
 
       call setup_mpi_md  (ctrl_data%ene_info)
 
@@ -273,7 +294,6 @@ contains
       call setup_atdyn_md  (ctrl_data, output, molecule, enefunc,     &
                             pairlist, dynvars, dynamics, constraints, &
                             ensemble, boundary)
-
     case (GenesisMIN)
 
       call setup_atdyn_min (ctrl_data, output, molecule, enefunc,     &
@@ -296,6 +316,10 @@ contains
       call setup_atdyn_vib (ctrl_data, output, molecule, enefunc,     &
                             pairlist, dynvars, vibration, boundary)
 
+    case (GenesisMORPH)
+
+      call setup_atdyn_morph (ctrl_data, output, molecule, enefunc,     &
+                            pairlist, dynvars, morph, boundary)
     end select
 
 
@@ -308,14 +332,16 @@ contains
 
     if (enefunc%qmmm%do_qmmm .and. &
         (genesis_run_mode == GenesisMIN .or. genesis_run_mode == GenesisVIB)) then
-
       if (enefunc%qmmm%qm_debug) then
         call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                             enefunc%nonb_limiter,  &
                             dynvars%coord,     &
+                            dynvars%trans,     &
+                            dynvars%coord_pbc, &
                             dynvars%energy,    &
                             dynvars%temporary, &
                             dynvars%force,     &
+                            dynvars%force_omp, &
                             dynvars%virial,    &
                             dynvars%virial_extern)
 
@@ -328,9 +354,12 @@ contains
           call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                               enefunc%nonb_limiter,  &
                               dynvars%coord,     &
+                              dynvars%trans,     &
+                              dynvars%coord_pbc, &
                               dynvars%energy,    &
                               dynvars%temporary, &
                               dynvars%force,     &
+                              dynvars%force_omp, &
                               dynvars%virial,    &
                               dynvars%virial_extern)
 
@@ -347,15 +376,18 @@ contains
       end if
 
     else
-
       call compute_energy(molecule, enefunc, pairlist, boundary, .true., &
                           enefunc%nonb_limiter,  &
                           dynvars%coord,     &
+                          dynvars%trans,     &
+                          dynvars%coord_pbc, &
                           dynvars%energy,    &
                           dynvars%temporary, &
                           dynvars%force,     &
+                          dynvars%force_omp, &
                           dynvars%virial,    &
-                          dynvars%virial_extern)
+                          dynvars%virial_extern, &
+                          constraints)
 
       call output_energy(dynvars%step, enefunc, dynvars%energy)
 
@@ -404,8 +436,13 @@ contains
         write(MsgOut,'(A)') ' '
       end if
 
-      call run_rpath(output, molecule, enefunc, dynvars, minimize, dynamics, &
-                     pairlist, boundary, constraints, ensemble, rpath)
+      call run_rpath(ctrl_data%inp_info, ctrl_data%out_info, &
+                     ctrl_data%qmmm_info, ctrl_data%rpath_info, &
+                     ctrl_data%sel_info, &
+                     output, molecule, enefunc, &
+                     dynvars, minimize, dynamics, pairlist, boundary, &
+                     constraints, ensemble, rpath)  
+
 
     case (GenesisVIB)
 
@@ -416,6 +453,16 @@ contains
 
       call run_vib(molecule, enefunc, dynvars, vibration,  &
                    output, pairlist, boundary)
+
+    case (GenesisMORPH)
+
+      if (main_rank) then
+        write(MsgOut,'(A)') '[STEP5] Perform Morphing Simulation'
+        write(MsgOut,'(A)') ' '
+      end if
+
+       call run_morph(output, molecule, enefunc, dynvars, morph, &
+                              boundary, pairlist)
 
     end select
 
@@ -449,7 +496,6 @@ contains
     ! output process time
     !
     call output_time
-
 
     return
 

@@ -39,7 +39,7 @@ module sp_energy_mod
   use constants_mod
   use math_libs_mod
   use string_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -51,12 +51,13 @@ module sp_energy_mod
   ! structures
   type, public :: s_ene_info
     integer               :: forcefield       = ForcefieldCHARMM
+    character(20)         :: forcefield_char  = 'CHARMM'
     integer               :: electrostatic    = ElectrostaticPME
     real(wp)              :: switchdist       = 10.0_wp
     real(wp)              :: cutoffdist       = 12.0_wp
     real(wp)              :: pairlistdist     = 13.5_wp
     real(wp)              :: dielec_const     = 1.0_wp
-    real(wp)              :: dmin_size_cg     = 20.0_wp
+    real(wp)              :: dmin_size_cg     = 0.0_wp
     logical               :: vdw_force_switch = .false.
     logical               :: vdw_shift        = .false.
     logical               :: cmap_pspline     = .false.
@@ -80,10 +81,13 @@ module sp_energy_mod
     integer               :: dispersion_corr  = Disp_corr_NONE
     real(wp)              :: minimum_contact  = 0.5_wp
     real(wp)              :: err_minimum_contact = 0.3_wp
+    logical               :: vacuum           = .false.
   end type s_ene_info
 
   ! varibles
   logical, save           :: etitle = .true.
+  !FEP
+  logical, save           :: etitle_fep = .true.
 
   ! subroutines
   public  :: show_ctrl_energy
@@ -106,6 +110,17 @@ module sp_energy_mod
   private :: output_energy_gromacs
   private :: reduce_ene
   private :: compute_stats
+  !FEP
+  public  :: compute_energy_fep
+  public  :: output_energy_fep
+  private :: compute_energy_charmm_fep
+  private :: compute_energy_amber_fep
+  private :: compute_energy_gro_amber_fep
+  private :: output_energy_genesis_fep
+  public  :: compute_energy_short_fep
+  private :: compute_energy_charmm_short_fep
+  private :: compute_energy_amber_short_fep
+  private :: compute_energy_gro_amber_short_fep
 
 contains
 
@@ -149,6 +164,7 @@ contains
         write(MsgOut,'(A)') '# table_density = 20.0      # number of bins used for lookup table'
         write(MsgOut,'(A)') '# output_style  = GENESIS   # format of energy output [GENESIS,CHARMM,NAMD,GROMACS]'
         write(MsgOut,'(A)') '# dispersion_corr = NONE    # dispersion correction [NONE,Energy,EPress]'
+        write(MsgOut,'(A)') '# vacuum = NO               # vacuum option'
         if (run_mode == 'min') then
           write(MsgOut,'(A)') '# contact_check   = YES     # check atomic clash'
           write(MsgOut,'(A)') '# nonb_limiter    = YES     # avoid failure due to atomic clash'
@@ -212,6 +228,8 @@ contains
 
     call read_ctrlfile_type   (handle, Section, 'forcefield',    &
                                ene_info%forcefield, ForceFieldTypes)
+    call read_ctrlfile_string (handle, Section, 'forcefield',    &
+                               ene_info%forcefield_char)
     call read_ctrlfile_type   (handle, Section, 'electrostatic', &
                                ene_info%electrostatic, ElectrostaticTypes)
     call read_ctrlfile_real   (handle, Section, 'switchdist',    &
@@ -263,9 +281,19 @@ contains
                                ene_info%nonb_limiter)
     call read_ctrlfile_real   (handle, Section, 'minimum_contact', &
                                ene_info%minimum_contact)
-
+    call read_ctrlfile_logical(handle, Section, 'vacuum',     &
+                               ene_info%vacuum)
     call end_ctrlfile_section(handle)
 
+
+    ! check vacuum
+    !
+    if (ene_info%vacuum) then
+      ! Tables are not used.
+      ene_info%table = .false.
+      ! Switch functions are not used.
+      ene_info%vdw_force_switch = .false.
+    end if
 
     ! check table
     !
@@ -335,9 +363,9 @@ contains
     ! error check for each FFs
     !
     if (ene_info%forcefield == ForcefieldAMBER) then
-      if (ene_info%electrostatic /= ElectrostaticPME) then
-        call error_msg('Read_Ctrl_Energy> CUTOFF is not allowed in amber')
-      endif
+!      if (ene_info%electrostatic /= ElectrostaticPME) then
+!        call error_msg('Read_Ctrl_Energy> CUTOFF is not allowed in amber')
+!      endif
 
       if (ene_info%switchdist /= ene_info%cutoffdist) then
         if (main_rank)      &
@@ -365,6 +393,10 @@ contains
       endif
 
     endif
+
+    if (ene_info%dmin_size_cg > EPS) then
+      ene_info%dsize_cg = .true.
+    end if
 
     if (ene_info%forcefield == ForcefieldGROMARTINI) then
       ene_info%dsize_cg  = .true.
@@ -440,6 +472,15 @@ contains
         ene_info%structure_check == StructureCheckNone) then
       ene_info%structure_check = StructureCheckFirst
     endif
+
+    ! error check for CUTOFF and vacuum
+    !
+    if (ene_info%vacuum) then
+      if (ene_info%electrostatic /= ElectrostaticCutoff) then
+        call error_msg( &
+         'Read_Ctrl_Energy> vacuum is not allowed unless CUTOFF is used')
+      end if
+    end if
 
     ! write parameters to MsgOut
     !
@@ -543,24 +584,31 @@ contains
       end if
 
       if (ene_info%nonb_limiter) then
-        write(MsgOut,'(A)') '  nonb_limiter    =     yes'
+        write(MsgOut,'(A)') '  nonb_limiter    =        yes'
         write(MsgOut,'(A,F10.3)') ' minimum_contact  = ', &
              ene_info%minimum_contact
       else
-        write(MsgOut,'(A)') '  nonb_limiter    =      no'
+        write(MsgOut,'(A)') '  nonb_limiter    =         no'
       endif
       if (ene_info%contact_check) then
-        write(MsgOut,'(A)') '  contact_check   =     yes'
+        write(MsgOut,'(A)') '  contact_check   =        yes'
         write(MsgOut,'(A,F10.3)') '  minimum_contact = ', &
              ene_info%minimum_contact
       else
-        write(MsgOut,'(A)') '  contact_check   =      no'
+        write(MsgOut,'(A)') '  contact_check   =         no'
       endif
       if (ene_info%structure_check /= StructureCheckNone) then
         write(MsgOut,'(A20,A6)')                             &
               '  structure_check = ',                        &
               trim(StructureCheckTypes(ene_info%structure_check))
       endif
+
+      ! if vacuum
+      if (ene_info%vacuum) then
+        write(MsgOut,'(A)') '  vacuum          =     yes'
+      else
+        write(MsgOut,'(A)') '  vacuum          =      no'
+      end if
 
       write(MsgOut,'(A)') ' '
 
@@ -714,12 +762,12 @@ contains
                               force, force_long, force_omp, force_pbc,    &
                               virial_cell, virial, virial_ext)
 
-    case (ForcefieldAAGO)
+    case (ForcefieldAAGO, ForcefieldCAGO)
 
-      call compute_energy_go(domain, enefunc, pairlist, boundary,  &
-                             coord, reduce, nonb_ene, energy,      &
-                             force, force_long, force_omp,         &
-                             virial_long, virial, virial_ext)
+      call compute_energy_go(domain, enefunc, pairlist, boundary,         &
+                             coord, reduce, nonb_ene, energy,             &
+                             coord_pbc, force, force_long, force_omp,     &
+                             force_pbc, virial_long, virial, virial_ext)
 
     end select
 
@@ -1092,7 +1140,7 @@ contains
       call error_msg('Compute_Energy_Charmm> Unknown boundary condition')
 
     end select
- 
+
     if (real_calc) then
     
       ! bond energy
@@ -1515,7 +1563,7 @@ contains
       call compute_energy_angle(domain, enefunc, coord, &
                               force_omp, eangle_omp, eurey_omp)
 
-      ! dihedral energy
+      ! dihedral and cmap energy
       !
       if (enefunc%gamd_use) then
         if (enefunc%gamd%boost_dih .or. enefunc%gamd%boost_dual) then
@@ -1532,6 +1580,8 @@ contains
             call compute_energy_dihed(domain, enefunc, coord, &
                                   force_omp, edihed_omp)
           end if
+          call compute_energy_cmap(domain, enefunc, coord, &
+                                  force_omp, ecmap_omp)
 
         end if
 
@@ -1544,6 +1594,9 @@ contains
           call compute_energy_dihed(domain, enefunc, coord, &
                                 force_omp, edihed_omp)
         end if
+
+        call compute_energy_cmap(domain, enefunc, coord, &
+                                force_omp, ecmap_omp)
 
       end if
 
@@ -1713,6 +1766,7 @@ contains
       energy%urey_bradley       = energy%urey_bradley       + eurey_omp(id)
       energy%dihedral           = energy%dihedral           + edihed_omp(id)
       energy%improper           = energy%improper           + eimprop_omp(id)
+      energy%cmap               = energy%cmap               + ecmap_omp(id)
       energy%electrostatic      = energy%electrostatic      + elec_omp(id)
       energy%van_der_waals      = energy%van_der_waals      + evdw_omp(id)
       energy%restraint_position = energy%restraint_position + eposi_omp(id)
@@ -1726,6 +1780,7 @@ contains
                  + energy%urey_bradley  &
                  + energy%dihedral      &
                  + energy%improper      &
+                 + energy%cmap          &
                  + energy%electrostatic &
                  + energy%van_der_waals &
                  + energy%restraint_position
@@ -2277,8 +2332,9 @@ contains
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine compute_energy_go(domain, enefunc, pairlist, boundary, coord,   &
-                               reduce, nonb_ene, energy, force, force_long,  &
-                               force_omp, virial_long, virial, virial_ext)
+                               reduce, nonb_ene, energy, coord_pbc,          &
+                               force, force_long, force_omp, force_pbc,      &
+                               virial_long, virial, virial_ext)
 
     ! formal arguments
     type(s_domain),          intent(in)    :: domain
@@ -2289,9 +2345,11 @@ contains
     logical,                 intent(in)    :: reduce
     logical,                 intent(in)    :: nonb_ene
     type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
     real(dp),                intent(inout) :: force(:,:,:)
     real(dp),                intent(inout) :: force_long(:,:,:)
     real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
     real(dp),                intent(inout) :: virial_long(3,3)
     real(dp),                intent(inout) :: virial(3,3)
     real(dp),                intent(inout) :: virial_ext(3,3)
@@ -2327,8 +2385,10 @@ contains
     virial_ext (1:3,1:3)               = 0.0_dp
 
     force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
     virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
     virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    elec_omp      (1:nthread)         = 0.0_dp
     ebond_omp     (1:nthread)         = 0.0_dp
     eangle_omp    (1:nthread)         = 0.0_dp
     eurey_omp     (1:nthread)         = 0.0_dp
@@ -2362,23 +2422,56 @@ contains
 
     ! improper energy
     !
-    if (enefunc%forcefield == ForceFieldAAGO)          &
+    if (enefunc%forcefield == ForceFieldAAGO)            &
       call compute_energy_improp(domain, enefunc, coord, &
                                  force_omp, eimprop_omp)
 
     ! contact energy
     !
     call timer(TimerNonBond, TimerOn)
-    if (enefunc%forcefield == ForceFieldAAGO) then
-      call compute_energy_contact_126(domain, enefunc, coord,  &
-                                      force_omp, econtact_omp, &
-                                      enoncontact_omp)
+
+    if (boundary%type == BoundaryTypePBC) then
+
+      if (enefunc%forcefield == ForcefieldAAGO) then
+
+        call error_msg('Compute_Energy_Go> PBC is not supported for AAGO')
+
+      else if (enefunc%forcefield == ForcefieldCAGO) then
+
+        call compute_energy_contact_1210_pbc(domain, enefunc, coord,       &
+                                       coord_pbc, force_pbc, econtact_omp)
+
+      end if
+
+    else     
+
+      if (enefunc%forcefield == ForceFieldAAGO) then
+
+        call compute_energy_contact_126(domain, enefunc, coord,  &
+                                       force_omp, econtact_omp,  &
+                                       enoncontact_omp)
+
+      else if (enefunc%forcefield == ForcefieldCAGO) then
+
+        call compute_energy_contact_1210(domain, enefunc, coord, &
+                                       force_omp, econtact_omp)
+
+      end if 
+
     end if
 
     ! non-contact energy
     !
-    call compute_energy_noncontact_nobc(domain, enefunc, pairlist, coord, &
-                                        force_omp, enoncontact_omp)
+    if (boundary%type == BoundaryTypePBC) then
+
+      call compute_energy_noncontact_pbc(domain, enefunc, pairlist, coord,  &
+                                         coord_pbc, force_pbc, enoncontact_omp)
+    else
+    
+      call compute_energy_noncontact_nobc(domain, enefunc, pairlist, coord, &
+                                          force_omp, enoncontact_omp)
+
+    end if
     call timer(TimerNonBond, TimerOff)
 
     ! restraint energy
@@ -2396,9 +2489,10 @@ contains
     !$omp schedule(dynamic,1)
     do i = 1, ncell
       do ix = 1, domain%num_atom(i)
-        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1) + force_pbc(1:3,ix,i,1)
         do id = 2, nthread
-          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id) &
+                                          + force_pbc(1:3,ix,i,id)
         end do
         force(1:3,ix,i) = force_tmp(1:3)
       end do
@@ -2540,7 +2634,7 @@ contains
       if (enefunc%pme_use) then
 
         call compute_energy_nonbond_pme_short(domain, enefunc, pairlist, &
-                              nonb_ene, coord_pbc,  &
+                              npt, nonb_ene, coord_pbc,  &
                               force_omp, force_pbc, &
                               virial_cell, virial_omp, elec_omp, evdw_omp)
 
@@ -2744,7 +2838,7 @@ contains
       if (enefunc%pme_use) then
 
         call compute_energy_nonbond_pme_short(domain, enefunc, pairlist, &
-                              nonb_ene, coord_pbc,  &
+                              npt, nonb_ene, coord_pbc,  &
                               force_omp, force_pbc, &
                               virial_cell, virial_omp, elec_omp, evdw_omp)
 
@@ -2780,6 +2874,11 @@ contains
       call compute_energy_dihed(domain, enefunc, coord, &
                               force_omp, edihed_omp)
     end if
+
+    ! cmap energy
+    !
+    call compute_energy_cmap(domain, enefunc, coord, &
+                              force_omp, ecmap_omp)
 
     ! improper energy
     !
@@ -2941,7 +3040,7 @@ contains
       if (enefunc%pme_use) then
 
         call compute_energy_nonbond_pme_short(domain, enefunc, pairlist, &
-                              nonb_ene, coord_pbc,  &
+                              npt, nonb_ene, coord_pbc,  &
                               force_omp, force_pbc, &
                               virial_cell, virial_omp, elec_omp, evdw_omp)
 
@@ -3242,7 +3341,8 @@ contains
       endif
     endif
 
-    if (enefunc%forcefield == ForcefieldAAGO) then
+    if (enefunc%forcefield == ForcefieldAAGO .or. &
+        enefunc%forcefield == ForcefieldCAGO) then
 
       write(category(ifm),frmt) 'NATIVE_CONTACT'
       values(ifm) = energy%contact
@@ -3642,7 +3742,7 @@ contains
     type(s_energy),          intent(inout) :: energy
     real(dp),                intent(inout) :: virial(3,3)
     
-#ifdef MPI 
+#ifdef HAVE_MPI_GENESIS 
 
     ! local variables      
     real(dp)                 :: before_reduce(19), after_reduce(19)
@@ -3703,7 +3803,7 @@ contains
     ! formal arguments
     type(s_energy),          intent(inout) :: energy
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     ! local variables
     real(dp)                 :: before_reduce(8), after_reduce(8)
@@ -3847,5 +3947,2084 @@ contains
     return
 
   end subroutine compute_stats
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_fep
+  !> @brief        compute potential energy for FEP calculations
+  !! @authors      NK
+  !! @param[in]    domain        : domain information
+  !! @param[in]    enefunc       : potential energy functions information
+  !! @param[in]    pairlist      : pair list information
+  !! @param[in]    boundary      : boundary information
+  !! @param[in]    coord         : coordinates of target systems
+  !! @param[in]    npt           : flag for NPT or not
+  !! @param[in]    reduce        : flag for reduce energy and virial
+  !! @param[in]    nonb_ene      : flag for calculate nonbonded energy
+  !! @param[in]    nonb_limiter  : flag for nonbond limiter
+  !! @param[inout] energy        : energy information
+  !! @param[input] coord_pbc     : !TODO
+  !! @param[inout] force         : forces of target systems
+  !! @param[inout] force_omp     : temprary forces of target systems
+  !! @param[inout] force_pbc     : !TODO
+  !! @param[inout] virial_cell   : !TODO
+  !! @param[inout] virial        : virial term of target systems
+  !! @param[inout] virial_ext    : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_fep(domain, enefunc, pairlist, boundary, coord,  &
+                            npt, reduce, nonb_ene, merge_force,          &
+                            nonb_limiter, energy,  &
+                            coord_pbc, force, force_long, force_omp,     &
+                            force_pbc, virial_cell, virial, virial_long, &
+                            virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: reduce
+    logical,                 intent(in)    :: nonb_ene
+    logical,                 intent(in)    :: merge_force
+    logical,                 intent(in)    :: nonb_limiter
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(dp),                intent(inout) :: force_long(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_long(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variables
+    real(dp)                 :: volume
+
+    call timer(TimerEnergy, TimerOn)
+
+    if (enefunc%gamd_use) &
+      call error_msg('Compute_Energy> GaMD is not available in FEP')
+
+    select case (enefunc%forcefield)
+
+    case (ForcefieldCHARMM)
+
+      call compute_energy_charmm_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, reduce, nonb_ene, merge_force,         &
+                              nonb_limiter,                               &
+                              energy, coord_pbc, force, force_long,       &
+                              force_omp, force_pbc, virial_cell, virial,  &
+                              virial_long, virial_ext)
+
+    case (ForcefieldAMBER)
+      call compute_energy_amber_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, reduce, nonb_ene, merge_force,         &
+                              nonb_limiter,                               &
+                              energy, coord_pbc, force, force_long,       &
+                              force_omp, force_pbc, virial_cell, virial,  &
+                              virial_long, virial_ext)
+
+    case (ForcefieldGROAMBER)
+
+      call compute_energy_gro_amber_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, reduce, nonb_ene, merge_force,         &
+                              nonb_limiter,                               &
+                              energy, coord_pbc, force, force_long,       &
+                              force_omp, force_pbc, virial_cell, virial,  &
+                              virial_long, virial_ext)
+
+    case (ForcefieldGROMARTINI)
+
+      call error_msg('Compute_Energy> gro_martini is not available in FEP')
+
+    case (ForcefieldAAGO)
+
+      call error_msg('Compute_Energy> AAGO is not available in FEP')
+
+    end select
+
+    ! Dispersion correction
+    if (enefunc%dispersion_corr /= Disp_corr_NONE) then
+      volume =  boundary%box_size_x_ref * &
+                boundary%box_size_y_ref * &
+                boundary%box_size_z_ref
+
+      energy%disp_corr_energy = enefunc%dispersion_energy_preserve &
+        + enefunc%lambljA*enefunc%dispersion_energy_vanish &
+        + enefunc%lambljB*enefunc%dispersion_energy_appear
+      energy%disp_corr_energy = energy%disp_corr_energy / volume
+
+      if (enefunc%dispersion_corr == Disp_corr_EPress) then
+        energy%disp_corr_virial = enefunc%dispersion_virial_preserve &
+          + enefunc%lambljA*enefunc%dispersion_virial_vanish &
+          + enefunc%lambljB*enefunc%dispersion_virial_appear
+        energy%disp_corr_virial= energy%disp_corr_virial / volume
+        if (replica_main_rank .or. main_rank) then
+          virial(1,1) = virial(1,1) + real(energy%disp_corr_virial,dp)
+          virial(2,2) = virial(2,2) + real(energy%disp_corr_virial,dp)
+          virial(3,3) = virial(3,3) + real(energy%disp_corr_virial,dp)
+        endif
+      end if
+
+    end if
+
+    if (enefunc%rpath_sum_mf_flag) then
+      call compute_stats(enefunc)
+    end if
+
+    call timer(TimerEnergy, TimerOff)
+
+    return
+
+  end subroutine compute_energy_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    output_energy_fep
+  !> @brief        output energy for FEP calculations
+  !! @authors      NK
+  !! @param[in]    step    : step
+  !! @param[in]    enefunc : potential energy functions information
+  !! @param[in]    energy  : energy information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine output_energy_fep(step, enefunc, energy)
+
+    ! formal arguments
+    integer,                 intent(in)    :: step
+    type(s_enefunc),         intent(in)    :: enefunc
+    type(s_energy),          intent(in)    :: energy
+
+    if (.not. main_rank) return
+
+    select case (enefunc%output_style)
+
+    case (OutputStyleGENESIS)
+
+      call output_energy_genesis_fep(step, enefunc, energy)
+
+    case (OutputStyleCHARMM)
+
+      call output_energy_charmm(step, enefunc, energy)
+
+    case (OutputStyleNAMD)
+
+      call output_energy_namd(step, energy)
+
+    case (OutputStyleGROMACS)
+
+      call output_energy_gromacs(step, energy)
+
+    end select
+
+    return
+
+  end subroutine output_energy_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_charmm_fep
+  !> @brief        compute potential energy with charmm force field for FEP
+  !! @authors      NK, HO
+  !! @param[in]    domain        : domain information
+  !! @param[in]    enefunc       : potential energy functions information
+  !! @param[in]    pairlist      : pair list information
+  !! @param[in]    boundary      : boundary information
+  !! @param[in]    coord         : coordinates of target systems
+  !! @param[in]    npt           : flag for NPT or not
+  !! @param[in]    reduce        : flag for reduce energy and virial
+  !! @param[in]    nonb_ene      : flag for calculate nonbonded energy
+  !! @param[in]    nonb_limiter  : flag for nonbond limiter
+  !! @param[inout] energy        : energy information
+  !! @param[input] coord_pbc     : !TODO
+  !! @param[inout] force         : forces of target systems
+  !! @param[inout] force_omp     : temprary forces of target systems
+  !! @param[inout] force_pbc     : !TODO
+  !! @param[inout] virial_cell   : !TODO
+  !! @param[inout] virial        : virial term of target systems
+  !! @param[inout] virial_ext    : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_charmm_fep(domain, enefunc, pairlist, boundary,    &
+                                   coord, npt, reduce, nonb_ene, merge_force,  &
+                                   nonb_limiter,                               &
+                                   energy, coord_pbc, force, force_long,       &
+                                   force_omp, force_pbc, virial_cell, virial,  &
+                                   virial_long, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: reduce
+    logical,                 intent(in)    :: nonb_ene
+    logical,                 intent(in)    :: merge_force
+    logical,                 intent(in)    :: nonb_limiter
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(dp),                intent(inout) :: force_long(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_long(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp    (nthread)
+    real(dp)                 :: evdw_omp    (nthread)
+    real(dp)                 :: ebond_omp   (nthread)
+    real(dp)                 :: eangle_omp  (nthread)
+    real(dp)                 :: eurey_omp   (nthread)
+    real(dp)                 :: edihed_omp  (nthread)
+    real(dp)                 :: eimprop_omp (nthread)
+    real(dp)                 :: ecmap_omp   (nthread)
+    real(dp)                 :: eposi_omp   (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, j, k, ix, ic, jc
+    integer                  :: omp_get_thread_num
+    integer                  :: dimno_i, dimno_j
+    integer                  :: atom_i, atom_j
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    call timer(TimerTest1, TimerOn)
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force      (1:3,1:natom,1:ncell) = 0.0_dp
+    force_long (1:3,1:natom,1:ncell) = 0.0_dp
+    virial     (1:3,1:3)             = 0.0_dp
+    virial_long(1:3,1:3)             = 0.0_dp
+    virial_ext (1:3,1:3)             = 0.0_dp
+
+#ifndef USE_GPU
+    !$omp parallel do
+    do id = 1, nthread
+      force_omp(1:3,1:natom,1:ncell,id) = 0.0_wp
+      force_pbc(1:3,1:natom,1:ncell,id) = 0.0_wp
+    end do
+    !$omp end parallel do
+#else
+    !$omp parallel do
+    do id = 1, nthread
+      force_omp(1:3,1:natom,1:ncell,id) = 0.0_wp
+    end do
+    !$omp end parallel do
+    !$omp parallel do
+    do i = 1, ncell
+      force_pbc(1:3,1:natom,i,1) = 0.0_wp
+    end do
+    !$omp end parallel do
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell) = 0.0_dp
+    ebond_omp     (1:nthread) = 0.0_dp
+    eangle_omp    (1:nthread) = 0.0_dp
+    eurey_omp     (1:nthread) = 0.0_dp
+    edihed_omp    (1:nthread) = 0.0_dp
+    eimprop_omp   (1:nthread) = 0.0_dp
+    ecmap_omp     (1:nthread) = 0.0_dp
+    elec_omp      (1:nthread) = 0.0_dp
+    evdw_omp      (1:nthread) = 0.0_dp
+    eposi_omp     (1:nthread) = 0.0_dp
+
+    call timer(TimerTest1, TimerOff)
+
+    ! setup for emfit
+    !
+    if (enefunc%do_emfit) then
+      call emfit_pre(domain, boundary, coord)
+    end if
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_fep(domain, enefunc, pairlist, &
+                              boundary, npt, nonb_ene, nonb_limiter, &
+                              coord_pbc,                &
+                              force_long,               &
+                              force_omp, force_pbc,     &
+                              virial_cell, virial_omp,  &
+                              elec_omp, evdw_omp)
+
+        if (.not.merge_force) then
+          do id = 1, nthread
+            do k = 1, 3
+              virial_long(k,k) = virial_long(k,k) + virial_omp(k,k,id)
+            end do
+          end do
+          virial_omp(1:3,1:3,1:nthread) = 0.0_dp
+        end if
+
+      else
+
+        call compute_energy_nonbond_cutoff_fep(domain, enefunc, pairlist, &
+                              nonb_ene, force_pbc, virial_omp, &
+                              elec_omp, evdw_omp)
+
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Charmm> Unknown boundary condition')
+
+    end select
+
+    if (real_calc) then
+
+      ! bond energy
+      !
+      call compute_energy_bond_fep(domain, enefunc, coord,  &
+        force_omp, ebond_omp)
+
+      ! angle energy
+      !
+      call compute_energy_angle_fep(domain, enefunc, coord,  &
+        force_omp, eangle_omp, eurey_omp)
+
+      ! dihedral energy
+      !
+      if (enefunc%local_restraint) then
+        call compute_energy_dihed_localres_fep(domain, enefunc, coord, &
+          force_omp, edihed_omp)
+      else
+        call compute_energy_dihed_fep(domain, enefunc, coord, &
+          force_omp, edihed_omp)
+      end if
+
+      ! improper energy
+      !
+      call compute_energy_improp_fep(domain, enefunc, coord, &
+        force_omp, eimprop_omp)
+
+      ! cmap energy
+      !
+      call compute_energy_cmap_fep(domain, enefunc, coord, &
+        force_omp, ecmap_omp)
+
+      ! 1-4 interaction
+      !
+      call timer(TimerTest2, TimerOn)
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond14_table_linear_fep(domain, enefunc, &
+                              force_omp, elec_omp, evdw_omp)
+
+        call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+
+      end if
+      call timer(TimerTest2, TimerOff)
+
+      call timer(TimerTest3, TimerOn)
+
+      ! virial for bonding
+      !
+      if (nonb_ene .or. npt) then
+
+        !$omp parallel default(shared) private(id, i, ix, k)
+#ifdef OMP
+        id = omp_get_thread_num()
+#else
+        id = 0
+#endif
+        do i = 1, ncell
+          do ix = 1, domain%num_atom(i)
+            do k = 1, 3
+              virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                                     coord(k,ix,i)*force_omp(k,ix,i,id+1)
+            end do
+          end do
+        end do
+        !$omp end parallel
+
+      end if
+      call timer(TimerTest3, TimerOff)
+
+      ! restraint energy
+      !
+      if (enefunc%restraint) &
+        call compute_energy_restraints_fep(.true., .true., domain, boundary, &
+                              enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,           &
+                              eposi_omp, energy%restraint_rmsd,                &
+                              energy%rmsd, energy%restraint_distance,          &
+                              energy%restraint_emfit, energy%emcorr)
+
+    end if
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    call timer(TimerTest4, TimerOn)
+
+    ! virial with periodic boundary condition
+    !
+    if (enefunc%pme_use .and. (nonb_ene .or. npt)) then
+
+      !$omp parallel default(shared) private(id, i, ix, ic, jc, trans, k)
+#ifdef OMP
+      id = omp_get_thread_num()
+#else
+      id = 0
+#endif
+#ifndef USE_GPU
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                domain%translated(k,ix,i)*force_pbc(k,ix,i,id+1)
+          end do
+        end do
+      end do
+      do i = id+1, maxcell, nthread
+        ic = domain%cell_pairlist1(1,i)
+        jc = domain%cell_pairlist1(2,i)
+        if (domain%virial_check(jc,ic) == 1) then
+          trans(1:3) = domain%cell_move(1:3,jc,ic) * domain%system_size(1:3)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1)   &
+                                   - trans(k)*virial_cell(k,i)
+          end do
+        end if
+      end do
+#else
+      !$omp do schedule(dynamic,1)
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                                   domain%translated(k,ix,i)*force_pbc(k,ix,i,1)
+          end do
+        end do
+      end do
+#endif
+      !$omp end parallel
+
+    end if
+    call timer(TimerTest4, TimerOff)
+
+    call timer(TimerTest5, TimerOn)
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+        if (merge_force) force_tmp(1:3) = force_tmp(1:3) + force_long(1:3,ix,i)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    do id = 1, nthread
+
+      virial    (1:3,1:3) = virial    (1:3,1:3) + virial_omp    (1:3,1:3,id)
+      virial_ext(1:3,1:3) = virial_ext(1:3,1:3) + virial_ext_omp(1:3,1:3,id)
+
+      energy%bond               = energy%bond               + ebond_omp(id)
+      energy%angle              = energy%angle              + eangle_omp(id)
+      energy%urey_bradley       = energy%urey_bradley       + eurey_omp(id)
+      energy%dihedral           = energy%dihedral           + edihed_omp(id)
+      energy%improper           = energy%improper           + eimprop_omp(id)
+      energy%cmap               = energy%cmap               + ecmap_omp(id)
+      energy%electrostatic      = energy%electrostatic      + elec_omp(id)
+      energy%van_der_waals      = energy%van_der_waals      + evdw_omp(id)
+      energy%restraint_position = energy%restraint_position + eposi_omp(id)
+    end do
+
+    call timer(TimerTest5, TimerOff)
+
+    ! total energy
+    !
+    energy%total = energy%bond          &
+                 + energy%angle         &
+                 + energy%urey_bradley  &
+                 + energy%dihedral      &
+                 + energy%cmap          &
+                 + energy%improper      &
+                 + energy%electrostatic &
+                 + energy%van_der_waals &
+                 + energy%restraint_position
+
+    if (reduce) &
+      call reduce_ene(energy, virial)
+
+    return
+
+  end subroutine compute_energy_charmm_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_amber_fep
+  !> @brief        compute potential energy with AMBER99 force field
+  !! @authors      NK, HO
+  !! @param[in]    domain        : domain information
+  !! @param[in]    enefunc       : potential energy functions information
+  !! @param[in]    pairlist      : pair list information
+  !! @param[in]    boundary      : boundary information
+  !! @param[in]    coord         : coordinates of target systems
+  !! @param[in]    npt           : flag for NPT or not
+  !! @param[in]    reduce        : flag for reduce energy and virial
+  !! @param[in]    nonb_ene      : flag for calculate nonbonded energy
+  !! @param[in]    nonb_limiter  : flag for nonbond limiter
+  !! @param[inout] energy        : energy information
+  !! @param[input] coord_pbc     : !TODO
+  !! @param[inout] force         : forces of target systems
+  !! @param[inout] force_omp     : temprary forces of target systems
+  !! @param[inout] force_pbc     : !TODO
+  !! @param[inout] virial_cell   : !TODO
+  !! @param[inout] virial        : virial term of target systems
+  !! @param[inout] virial_ext    : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_amber_fep(domain, enefunc, pairlist, boundary, coord,  &
+                                  npt, reduce, nonb_ene, merge_force,          &
+                                  nonb_limiter,                                &
+                                  energy, coord_pbc, force, force_long,        &
+                                  force_omp, force_pbc, virial_cell, virial,   &
+                                  virial_long, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: reduce
+    logical,                 intent(in)    :: nonb_ene
+    logical,                 intent(in)    :: merge_force
+    logical,                 intent(in)    :: nonb_limiter
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(dp),                intent(inout) :: force_long(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_long(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp   (nthread)
+    real(dp)                 :: evdw_omp   (nthread)
+    real(dp)                 :: ebond_omp  (nthread)
+    real(dp)                 :: eangle_omp (nthread)
+    real(dp)                 :: eurey_omp  (nthread)
+    real(dp)                 :: edihed_omp (nthread)
+    real(dp)                 :: eimprop_omp(nthread)
+    real(dp)                 :: ecmap_omp  (nthread)
+    real(dp)                 :: eposi_omp  (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, ix, ic, jc, k
+    integer                  :: omp_get_thread_num
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force      (1:3,1:natom,1:ncell) = 0.0_dp
+    force_long (1:3,1:natom,1:ncell) = 0.0_dp
+    virial     (1:3,1:3)             = 0.0_dp
+    virial_long(1:3,1:3)             = 0.0_dp
+    virial_ext (1:3,1:3)             = 0.0_dp
+
+#ifndef USE_GPU
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+#else
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1) = 0.0_wp
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell) = 0.0_dp
+    ebond_omp     (1:nthread) = 0.0_dp
+    eangle_omp    (1:nthread) = 0.0_dp
+    eurey_omp     (1:nthread) = 0.0_dp
+    edihed_omp    (1:nthread) = 0.0_dp
+    eimprop_omp   (1:nthread) = 0.0_dp
+    ecmap_omp     (1:nthread) = 0.0_dp
+    elec_omp      (1:nthread) = 0.0_dp
+    evdw_omp      (1:nthread) = 0.0_dp
+    eposi_omp     (1:nthread) = 0.0_dp
+
+    ! setup for emfit
+    !
+    if (enefunc%do_emfit) then
+      call emfit_pre(domain, boundary, coord)
+    end if
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_fep(domain, enefunc, pairlist, boundary, &
+                              npt, nonb_ene, nonb_limiter, coord_pbc, &
+                              force_long,               &
+                              force_omp, force_pbc,     &
+                              virial_cell, virial_omp,  &
+                              elec_omp, evdw_omp)
+
+        if (.not.merge_force) then
+          do id = 1, nthread
+            do k = 1, 3
+              virial_long(k,k) = virial_long(k,k) + virial_omp(k,k,id)
+            end do
+          end do
+          virial_omp(1:3,1:3,1:nthread) = 0.0_dp
+        end if
+
+      else
+
+        call compute_energy_nonbond_cutoff_fep(domain, enefunc, pairlist, &
+                              nonb_ene, force_pbc, virial_omp, &
+                              elec_omp, evdw_omp)
+
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Amber> Unknown boundary condition')
+
+    end select
+
+    if (real_calc) then
+
+      ! bond energy
+      !
+      call compute_energy_bond_fep(domain, enefunc, coord,  &
+        force_omp, ebond_omp)
+
+      ! angle energy
+      !
+      call compute_energy_angle_fep(domain, enefunc, coord,  &
+        force_omp, eangle_omp, eurey_omp)
+
+      ! dihedral energy
+      !
+      if (enefunc%local_restraint) then
+        call compute_energy_dihed_localres_fep(domain, enefunc, coord, &
+          force_omp, edihed_omp)
+      else
+        call compute_energy_dihed_fep(domain, enefunc, coord, &
+          force_omp, edihed_omp)
+      end if
+
+      ! improper energy
+      !
+      call compute_energy_improp_cos_fep(domain, enefunc, coord, &
+        force_omp, eimprop_omp)
+
+      ! 1-4 interaction with linear table
+      !
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond14_table_linear_fep(domain, enefunc, &
+                              force_omp, elec_omp, evdw_omp)
+
+        call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+
+      end if
+
+      ! virial for bonding
+      !
+      if (nonb_ene .or. npt) then
+
+        !$omp parallel default(shared) private(id, i, ix, k)
+#ifdef OMP
+        id = omp_get_thread_num()
+#else
+        id = 0
+#endif
+        do i = 1, ncell
+          do ix = 1, domain%num_atom(i)
+            do k = 1, 3
+              virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                                     coord(k,ix,i)*force_omp(k,ix,i,id+1)
+            end do
+          end do
+        end do
+        !$omp end parallel
+
+      end if
+
+      ! restraint energy
+      !
+      if (enefunc%restraint) &
+        call compute_energy_restraints_fep(.true., .true., domain, boundary, &
+                              enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,           &
+                              eposi_omp, energy%restraint_rmsd,                &
+                              energy%rmsd, energy%restraint_distance,          &
+                              energy%restraint_emfit, energy%emcorr)
+
+    end if
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    ! virial with periodic boundary condition
+    !
+    if (enefunc%pme_use .and. (nonb_ene .or. npt)) then
+
+      !$omp parallel default(shared) private(id, i, ix, ic, jc, trans, k)
+#ifdef OMP
+      id = omp_get_thread_num()
+#else
+      id = 0
+#endif
+#ifndef USE_GPU
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                domain%translated(k,ix,i)*force_pbc(k,ix,i,id+1)
+          end do
+        end do
+      end do
+      do i = id+1, maxcell, nthread
+        ic = domain%cell_pairlist1(1,i)
+        jc = domain%cell_pairlist1(2,i)
+        if (domain%virial_check(jc,ic) == 1) then
+          trans(1:3) = domain%cell_move(1:3,jc,ic) * domain%system_size(1:3)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) &
+                                 - trans(k)*virial_cell(k,i)
+          end do
+        end if
+      end do
+#else
+      !$omp do schedule(dynamic,1)
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                domain%translated(k,ix,i)*force_pbc(k,ix,i,1)
+          end do
+        end do
+      end do
+#endif
+      !$omp end parallel
+
+    end if
+
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+        if (merge_force) force_tmp(1:3) = force_tmp(1:3) + force_long(1:3,ix,i)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    do id = 1, nthread
+
+      virial    (1:3,1:3) = virial    (1:3,1:3) + virial_omp    (1:3,1:3,id)
+      virial_ext(1:3,1:3) = virial_ext(1:3,1:3) + virial_ext_omp(1:3,1:3,id)
+
+      energy%bond               = energy%bond               + ebond_omp(id)
+      energy%angle              = energy%angle              + eangle_omp(id)
+      energy%urey_bradley       = energy%urey_bradley       + eurey_omp(id)
+      energy%dihedral           = energy%dihedral           + edihed_omp(id)
+      energy%improper           = energy%improper           + eimprop_omp(id)
+      energy%electrostatic      = energy%electrostatic      + elec_omp(id)
+      energy%van_der_waals      = energy%van_der_waals      + evdw_omp(id)
+      energy%restraint_position = energy%restraint_position + eposi_omp(id)
+    end do
+
+    ! total energy
+    !
+    energy%total = energy%bond          &
+                 + energy%angle         &
+                 + energy%urey_bradley  &
+                 + energy%dihedral      &
+                 + energy%improper      &
+                 + energy%electrostatic &
+                 + energy%van_der_waals &
+                 + energy%restraint_position
+
+    if (reduce) &
+      call reduce_ene(energy, virial)
+
+    return
+
+  end subroutine compute_energy_amber_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_gro_amber_fep
+  !> @brief        compute potential energy with GROMACS-AMBER force field
+  !                for FEP
+  !! @authors      HO
+  !! @param[in]    domain      : domain information
+  !! @param[in]    enefunc     : potential energy functions information
+  !! @param[in]    pairlist    : pair list information
+  !! @param[in]    boundary    : boundary information
+  !! @param[in]    coord       : coordinates of target systems
+  !! @param[in]    npt         : flag for NPT or not
+  !! @param[in]    reduce      : flag for reduce energy and virial
+  !! @param[in]    nonb_ene    : flag for calculate nonbonded energy
+  !! @param[in]    nonb_limiter  : flag for nonbond limiter
+  !! @param[inout] energy      : energy information
+  !! @param[input] coord_pbc   : !TODO
+  !! @param[inout] force       : forces of target systems
+  !! @param[inout] force_omp   : temprary forces of target systems
+  !! @param[inout] force_pbc   : !TODO
+  !! @param[inout] virial_cell : !TODO
+  !! @param[inout] virial      : virial term of target systems
+  !! @param[inout] virial_ext  : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_gro_amber_fep(domain, enefunc, pairlist, boundary, &
+                                   coord, npt, reduce, nonb_ene, merge_force,  &
+                                   nonb_limiter,                               &
+                                   energy, coord_pbc, force, force_long,       &
+                                   force_omp, force_pbc, virial_cell, virial,  &
+                                   virial_long, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: reduce
+    logical,                 intent(in)    :: nonb_ene
+    logical,                 intent(in)    :: merge_force
+    logical,                 intent(in)    :: nonb_limiter
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(dp),                intent(inout) :: force_long(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_long(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp    (nthread)
+    real(dp)                 :: evdw_omp    (nthread)
+    real(dp)                 :: ebond_omp   (nthread)
+    real(dp)                 :: eangle_omp  (nthread)
+    real(dp)                 :: eurey_omp   (nthread)
+    real(dp)                 :: edihed_omp  (nthread)
+    real(dp)                 :: erbdihed_omp(nthread)
+    real(dp)                 :: eposi_omp   (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, ix, ic, jc, k
+    integer                  :: omp_get_thread_num
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force      (1:3,1:natom,1:ncell)   = 0.0_dp
+    force_long (1:3,1:natom,1:ncell)   = 0.0_dp
+    virial     (1:3,1:3)               = 0.0_dp
+    virial_long(1:3,1:3)               = 0.0_dp
+    virial_ext (1:3,1:3)               = 0.0_dp
+
+#ifndef USE_GPU
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+#else
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1) = 0.0_wp
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell)     = 0.0_dp
+    ebond_omp     (1:nthread)         = 0.0_dp
+    eangle_omp    (1:nthread)         = 0.0_dp
+    eurey_omp     (1:nthread)         = 0.0_dp
+    edihed_omp    (1:nthread)         = 0.0_dp
+    erbdihed_omp  (1:nthread)         = 0.0_dp
+    elec_omp      (1:nthread)         = 0.0_dp
+    evdw_omp      (1:nthread)         = 0.0_dp
+    eposi_omp     (1:nthread)         = 0.0_dp
+
+    ! setup for emfit
+    !
+    if (enefunc%do_emfit) then
+      call emfit_pre(domain, boundary, coord)
+    end if
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_fep(domain, enefunc, pairlist, boundary, &
+                              npt, nonb_ene, nonb_limiter, coord_pbc,        &
+                              force_long,               &
+                              force_omp, force_pbc,     &
+                              virial_cell, virial_omp,  &
+                              elec_omp, evdw_omp)
+        if (.not.merge_force) then
+          do id = 1, nthread
+            do k = 1, 3
+              virial_long(k,k) = virial_long(k,k) + virial_omp(k,k,id)
+            end do
+          end do
+          virial_omp(1:3,1:3,1:nthread) = 0.0_dp
+        end if
+
+      else
+
+        call compute_energy_nonbond_cutoff_fep(domain, enefunc, pairlist, &
+                              nonb_ene, force_pbc, virial_omp, &
+                              elec_omp, evdw_omp)
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Gro_Amber> Unknown boundary condition')
+
+    end select
+
+    if (real_calc) then
+    
+      ! bond energy
+      !
+      call compute_energy_bond_fep(domain, enefunc, coord, &
+                              force_omp, ebond_omp)
+
+      ! angle energy
+      !
+      call compute_energy_angle_fep(domain, enefunc, coord, &
+                              force_omp, eangle_omp, eurey_omp)
+
+      ! dihedral energy
+      !
+      call compute_energy_dihed_fep(domain, enefunc, coord, &
+                              force_omp, edihed_omp)
+  
+      ! Ryckaert-Bellemans dihedral energy
+      !
+      call compute_energy_rb_dihed_fep(domain, enefunc, coord, &
+                              force_omp, erbdihed_omp)
+
+      if (enefunc%pme_use) then
+ 
+        call compute_energy_nonbond14_table_linear_fep(domain, enefunc, force_omp, &
+                              elec_omp, evdw_omp)
+
+        call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+ 
+      end if
+
+      ! virial for bonding
+      !
+      if (nonb_ene .or. npt) then
+
+        !$omp parallel default(shared) private(id, i, ix, k)
+#ifdef OMP
+        id = omp_get_thread_num()
+#else
+        id = 0
+#endif
+        do i = 1, ncell
+          do ix = 1, domain%num_atom(i)
+            do k = 1, 3
+              virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                                     coord(k,ix,i)*force_omp(k,ix,i,id+1)
+            end do
+          end do
+        end do
+        !$omp end parallel
+
+      end if
+
+      ! restraint energy
+      !
+      if (enefunc%restraint) &
+        call compute_energy_restraints_fep(.true., .true., domain, boundary, enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,           &
+                              eposi_omp, energy%restraint_rmsd,                &
+                              energy%rmsd, energy%restraint_distance,          &
+                              energy%restraint_emfit, energy%emcorr)
+    end if
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    ! virial with periodic boundary condition
+    !
+    if (enefunc%pme_use .and. (nonb_ene .or. npt)) then
+
+      !$omp parallel default(shared) private(id, i, ix, ic, jc, trans, k)
+#ifdef OMP
+      id = omp_get_thread_num()
+#else
+      id = 0
+#endif
+#ifndef USE_GPU
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                domain%translated(k,ix,i)*force_pbc(k,ix,i,id+1)
+          end do
+        end do
+      end do
+      do i = id+1, maxcell, nthread
+        ic = domain%cell_pairlist1(1,i)
+        jc = domain%cell_pairlist1(2,i)
+        if (domain%virial_check(jc,ic) == 1) then
+          trans(1:3) = domain%cell_move(1:3,jc,ic) * domain%system_size(1:3)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) - &
+                                   trans(k)*virial_cell(k,i)
+          end do
+        end if
+      end do
+#else
+      !$omp do schedule(dynamic,1)
+      do i = 1, ncell
+        do ix = 1, domain%num_atom(i)
+          do k = 1, 3
+            virial_omp(k,k,id+1) = virial_omp(k,k,id+1) + &
+                                   domain%translated(k,ix,i)*force_pbc(k,ix,i,1)
+          end do
+        end do
+      end do
+#endif
+      !$omp end parallel
+
+    end if
+
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+        if (merge_force) force_tmp(1:3) = force_tmp(1:3) + force_long(1:3,ix,i)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    do id = 1, nthread
+
+      virial    (1:3,1:3) = virial    (1:3,1:3) + virial_omp    (1:3,1:3,id)
+      virial_ext(1:3,1:3) = virial_ext(1:3,1:3) + virial_ext_omp(1:3,1:3,id)
+
+      energy%bond               = energy%bond               + ebond_omp(id)
+      energy%angle              = energy%angle              + eangle_omp(id)
+      energy%urey_bradley       = energy%urey_bradley       + eurey_omp(id)
+      energy%dihedral           = energy%dihedral           + edihed_omp(id)
+      energy%dihedral           = energy%dihedral           + erbdihed_omp(id)
+      energy%electrostatic      = energy%electrostatic      + elec_omp(id)
+      energy%van_der_waals      = energy%van_der_waals      + evdw_omp(id)
+      energy%restraint_position = energy%restraint_position + eposi_omp(id)
+
+    end do
+
+    ! total energy
+    !
+    energy%total = energy%bond          &
+                 + energy%angle         &
+                 + energy%urey_bradley  &
+                 + energy%dihedral      &
+                 + energy%improper      &
+                 + energy%electrostatic &
+                 + energy%van_der_waals &
+                 + energy%restraint_position
+
+    if (reduce) &
+      call reduce_ene(energy, virial)
+
+    return
+
+  end subroutine compute_energy_gro_amber_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    output_energy_genesis_fep
+  !> @brief        output energy in GENESIS style for FEP calculation
+  !! @authors      NK
+  !! @param[in]    step    : step
+  !! @param[in]    enefunc : information of potential functions
+  !! @param[in]    energy  : energy information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine output_energy_genesis_fep(step, enefunc, energy)
+
+    ! formal arguments
+    integer,                 intent(in)    :: step
+    type(s_enefunc),         intent(in)    :: enefunc
+    type(s_energy),          intent(in)    :: energy
+
+    ! local variables
+    integer,parameter        :: clength=16, flength=4
+    integer                  :: i, ifm
+    character(16)            :: title
+    character(16)            :: category(999)
+    character                :: frmt*5, frmt_res*10, rfrmt*7
+    character                :: rfrmt_cont*9,frmt_cont*7
+    real(dp)                 :: values(999)
+    real(dp)                 :: ene_restraint
+
+
+    write(title,'(A16)') 'STEP'
+    write(frmt,'(A2,I2,A)') '(A',clength,')'
+    write(frmt_cont,'(A2,I2,A3)') '(A',clength,',$)'
+    write(frmt_res,'(A2,I2,A6)') '(A',clength-3,',I3.3)'
+    write(rfrmt,'(A2,I2,A1,I1,A1)') '(F',clength,'.',flength,')'
+    write(rfrmt_cont,'(A2,I2,A1,I1,A3)') '(F',clength,'.',flength,',$)'
+
+    ifm = 1
+
+    if (enefunc%num_bond_all > 0) then
+      write(category(ifm),frmt) 'BOND'
+      values(ifm) = energy%bond
+      ifm = ifm+1
+    endif
+
+    if (enefunc%num_angl_all > 0) then
+      write(category(ifm),frmt) 'ANGLE'
+      values(ifm) = energy%angle
+      ifm = ifm+1
+
+      if (enefunc%forcefield == ForcefieldCHARMM) then
+        write(category(ifm),frmt) 'UREY-BRADLEY'
+        values(ifm) = energy%urey_bradley
+        ifm = ifm+1
+      endif
+    endif
+
+    if (enefunc%num_dihe_all > 0 .or. enefunc%num_rb_dihe_all > 0) then
+      write(category(ifm),frmt) 'DIHEDRAL'
+      values(ifm) = energy%dihedral
+      ifm = ifm+1
+    endif
+
+    if (enefunc%num_impr_all > 0 ) then
+      write(category(ifm),frmt) 'IMPROPER'
+      values(ifm) = energy%improper
+      ifm = ifm+1
+    endif
+
+    if (enefunc%forcefield == ForcefieldCHARMM) then
+
+      if (enefunc%num_cmap_all > 0 ) then
+
+        write(category(ifm),frmt) 'CMAP'
+        values(ifm) = energy%cmap
+        ifm = ifm+1
+      endif
+    endif
+
+    if (enefunc%forcefield == ForcefieldAAGO) then
+
+      write(category(ifm),frmt) 'NATIVE_CONTACT'
+      values(ifm) = energy%contact
+      ifm = ifm+1
+
+      write(category(ifm),frmt) 'NON-NATIVE_CONT'
+      values(ifm) = energy%noncontact
+      ifm = ifm+1
+
+    else
+
+      write(category(ifm),frmt) 'VDWAALS'
+      values(ifm) = energy%van_der_waals
+      ifm = ifm+1
+
+      if (enefunc%dispersion_corr /= Disp_Corr_NONE) then
+        write(category(ifm),frmt) 'DISP-CORR_ENE'
+        values(ifm) = energy%disp_corr_energy
+        ifm = ifm+1
+      endif
+
+      write(category(ifm),frmt) 'ELECT'
+      values(ifm) = energy%electrostatic
+      ifm = ifm+1
+
+    end if
+
+    if (enefunc%num_restraintfuncs > 0) then
+      if (enefunc%restraint_rmsd) then
+        write(category(ifm),frmt) 'RMSD'
+        values(ifm) = energy%rmsd
+        ifm = ifm+1
+      endif
+
+      if (enefunc%restraint_emfit) then
+        write(category(ifm),frmt) 'EMCORR'
+        values(ifm) = energy%emcorr
+        ifm = ifm+1
+      end if
+
+      ene_restraint =   energy%restraint_distance &
+                      + energy%restraint_position &
+                      + energy%restraint_rmsd     &
+                      + energy%restraint_emfit
+      write(category(ifm),frmt) 'RESTRAINT_TOTAL'
+      values(ifm) = ene_restraint
+      ifm = ifm+1
+
+    endif
+
+    ! FEP
+    write(MsgOut,'(A,F5.2)') "lambljA   = ", enefunc%lambljA
+    write(MsgOut,'(A,F5.2)') "lambljB   = ", enefunc%lambljB
+    write(MsgOut,'(A,F5.2)') "lambelA   = ", enefunc%lambelA
+    write(MsgOut,'(A,F5.2)') "lambelB   = ", enefunc%lambelB
+    write(MsgOut,'(A,F5.2)') "lambbondA = ", enefunc%lambbondA
+    write(MsgOut,'(A,F5.2)') "lambbondB = ", enefunc%lambbondB
+
+    if (etitle) then
+
+      write(MsgOut,'(A,$)') title
+
+      do i = 1, ifm-1
+
+        if (i == ifm-1) then
+          write(MsgOut,frmt) category(i)
+        else
+          write(MsgOut,frmt_cont) category(i)
+        endif
+      end do
+
+      write(MsgOut,'(A80)') ' --------------- --------------- --------------- --------------- ---------------'
+      etitle = .false.
+    end if
+
+    write(MsgOut,'(6x,I10,$)') step
+
+    do i = 1, ifm-1
+      if (i == ifm-1) then
+        write(MsgOut,rfrmt) values(i)
+      else
+        write(MsgOut,rfrmt_cont) values(i)
+      endif
+    end do
+
+    write(MsgOut,'(A)') ''
+
+    return
+
+  end subroutine output_energy_genesis_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_short_fep
+  !> @brief        compute potential energy with short range interaction for FEP
+  !! @authors      HO
+  !! @param[in]    domain      : domain information
+  !! @param[in]    enefunc     : potential energy functions information
+  !! @param[in]    pairlist    : pair list information
+  !! @param[in]    boundary    : boundary information
+  !! @param[in]    coord       : coordinates of target systems
+  !! @param[in]    npt         : flag for npt
+  !! @param[in]    nonb_ene    : flag for calculate nonbonded energy
+  !! @param[inout] energy      : energy information
+  !! @param[input] coord_pbc   : !TODO
+  !! @param[inout] force       : forces of target systems
+  !! @param[inout] force_omp   : temprary forces of target systems
+  !! @param[inout] force_pbc   : !TODO
+  !! @param[inout] virial_cell : !TODO
+  !! @param[inout] virial      : virial term of target systems
+  !! @param[inout] virial_ext  : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_short_fep(domain, enefunc, pairlist, boundary, coord, &
+                                  npt, nonb_ene, energy, coord_pbc, &
+                                  force, force_omp, force_pbc, &
+                                  virial_cell, virial, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: nonb_ene
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+
+    call timer(TimerEnergy, TimerOn)
+
+
+    select case (enefunc%forcefield)
+
+    case (ForcefieldCHARMM)
+
+      call compute_energy_charmm_short_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, nonb_ene, energy, coord_pbc,           &
+                              force, force_omp, force_pbc,                &
+                              virial_cell, virial, virial_ext)
+
+    case (ForcefieldAMBER)
+
+      call compute_energy_amber_short_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, nonb_ene, energy, coord_pbc,           &
+                              force, force_omp, force_pbc,                &
+                              virial_cell, virial, virial_ext)
+
+    case (ForcefieldGROAMBER)
+
+      call compute_energy_gro_amber_short_fep( &
+                              domain, enefunc, pairlist, boundary, coord, &
+                              npt, nonb_ene, energy, coord_pbc,           &
+                              force, force_omp, force_pbc,                &
+                              virial_cell, virial, virial_ext)
+
+    case (ForcefieldGROMARTINI)
+
+      call error_msg('Compute_Energy_Short> gro_martini is not available in FEP')
+
+    case (ForcefieldAAGO)
+
+      call error_msg('Compute_Energy_Short> AAGO is not available in FEP')
+
+    end select
+
+
+    call timer(TimerEnergy, TimerOff)
+
+    return
+
+  end subroutine compute_energy_short_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_charmm_short_fep
+  !> @brief        compute potential energy with charmm force field for FEP
+  !! @authors      HO
+  !! @param[in]    domain      : domain information
+  !! @param[in]    enefunc     : potential energy functions information
+  !! @param[in]    pairlist    : pair list information
+  !! @param[in]    boundary    : boundary information
+  !! @param[in]    coord       : coordinates of target systems
+  !! @param[in]    npt         : flag for npt
+  !! @param[in]    nonb_ene    : flag for calculate nonbonded energy
+  !! @param[inout] energy      : energy information
+  !! @param[input] coord_pbc   : !TODO
+  !! @param[inout] force       : forces of target systems
+  !! @param[inout] force_omp   : temprary forces of target systems
+  !! @param[inout] force_pbc   : !TODO
+  !! @param[inout] virial_cell : !TODO
+  !! @param[inout] virial      : virial term of target systems
+  !! @param[inout] virial_ext  : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_charmm_short_fep(domain, enefunc, pairlist, boundary, &
+                                   coord, npt, nonb_ene, energy, coord_pbc, &
+                                   force, force_omp, force_pbc, &
+                                   virial_cell, virial, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: nonb_ene
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp   (nthread)
+    real(dp)                 :: evdw_omp   (nthread)
+    real(dp)                 :: ebond_omp  (nthread)
+    real(dp)                 :: eangle_omp (nthread)
+    real(dp)                 :: eurey_omp  (nthread)
+    real(dp)                 :: edihed_omp (nthread)
+    real(dp)                 :: eimprop_omp(nthread)
+    real(dp)                 :: ecmap_omp  (nthread)
+    real(dp)                 :: eposi_omp  (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, k, ix, ic, jc
+    integer                  :: omp_get_thread_num
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force     (1:3,1:natom,1:ncell) = 0.0_dp
+    virial    (1:3,1:3)             = 0.0_dp
+    virial_ext(1:3,1:3)             = 0.0_dp
+
+#ifndef USE_GPU
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+#else
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1) = 0.0_wp
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell) = 0.0_dp
+    ebond_omp     (1:nthread) = 0.0_dp
+    eangle_omp    (1:nthread) = 0.0_dp
+    eurey_omp     (1:nthread) = 0.0_dp
+    edihed_omp    (1:nthread) = 0.0_dp
+    eimprop_omp   (1:nthread) = 0.0_dp
+    ecmap_omp     (1:nthread) = 0.0_dp
+    elec_omp      (1:nthread) = 0.0_dp
+    evdw_omp      (1:nthread) = 0.0_dp
+    eposi_omp     (1:nthread) = 0.0_dp
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_short_fep(domain, enefunc, pairlist, &
+                              npt, nonb_ene, coord_pbc,  &
+                              force_omp, force_pbc, &
+                              virial_cell, virial_omp, elec_omp, evdw_omp)
+
+      else
+
+        call error_msg( &
+        'Compute_Energy_Charmm_Short>  Multi-step is available only with PME')
+
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Charmm_Short> Unknown boundary condition')
+
+    end select
+ 
+    ! bond energy
+    !
+    call compute_energy_bond_fep(domain, enefunc, coord,  &
+                            force_omp, ebond_omp)
+
+    ! angle energy
+    !
+    call compute_energy_angle_fep(domain, enefunc, coord,  &
+      force_omp, eangle_omp, eurey_omp)
+
+    ! dihedral energy
+    !
+    if (enefunc%local_restraint) then
+      call compute_energy_dihed_localres_fep(domain, enefunc, coord, &
+        force_omp, edihed_omp)
+    else
+      call compute_energy_dihed_fep(domain, enefunc, coord, &
+        force_omp, edihed_omp)
+    end if
+
+    ! improper energy
+    !
+    call compute_energy_improp_fep(domain, enefunc, coord, &
+                            force_omp, eimprop_omp)
+
+    ! cmap energy
+    !
+    call compute_energy_cmap_fep(domain, enefunc, coord, &
+                            force_omp, ecmap_omp)
+
+    ! 1-4 interaction with linear table
+    !
+    call compute_energy_nonbond14_table_linear_fep(domain, enefunc, &
+                          force_omp, elec_omp, evdw_omp)
+
+    call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+
+    ! restraint energy
+    !
+    if (enefunc%restraint) &
+      call compute_energy_restraints_fep(.true., .true., domain, boundary, &
+                              enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,           &
+                              eposi_omp, energy%restraint_rmsd,                &
+                              energy%rmsd, energy%restraint_distance,          &
+                              energy%restraint_emfit, energy%emcorr)
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    return
+
+  end subroutine compute_energy_charmm_short_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_amber_short_fep
+  !> @brief        compute potential energy with AMBER force field for FEP
+  !! @authors      HO
+  !! @param[in]    domain      : domain information
+  !! @param[in]    enefunc     : potential energy functions information
+  !! @param[in]    pairlist    : pair list information
+  !! @param[in]    boundary    : boundary information
+  !! @param[in]    coord       : coordinates of target systems
+  !! @param[in]    npt         : flag for npt
+  !! @param[in]    nonb_ene    : flag for calculate nonbonded energy
+  !! @param[inout] energy      : energy information
+  !! @param[input] coord_pbc   : !TODO
+  !! @param[inout] force       : forces of target systems
+  !! @param[inout] force_omp   : temprary forces of target systems
+  !! @param[inout] force_pbc   : !TODO
+  !! @param[inout] virial_cell : !TODO
+  !! @param[inout] virial      : virial term of target systems
+  !! @param[inout] virial_ext  : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_amber_short_fep(domain, enefunc, pairlist, boundary, &
+                              coord, npt, nonb_ene, energy, coord_pbc, &
+                              force, force_omp, force_pbc, &
+                              virial_cell, virial, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: nonb_ene
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp   (nthread)
+    real(dp)                 :: evdw_omp   (nthread)
+    real(dp)                 :: ebond_omp  (nthread)
+    real(dp)                 :: eangle_omp (nthread)
+    real(dp)                 :: eurey_omp  (nthread)
+    real(dp)                 :: edihed_omp (nthread)
+    real(dp)                 :: eimprop_omp(nthread)
+    real(dp)                 :: ecmap_omp  (nthread)
+    real(dp)                 :: eposi_omp  (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, ix, ic, jc, k
+    integer                  :: omp_get_thread_num
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force     (1:3,1:natom,1:ncell) = 0.0_dp
+    virial    (1:3,1:3)             = 0.0_dp
+    virial_ext(1:3,1:3)             = 0.0_dp
+
+#ifndef USE_GPU
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+#else
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1) = 0.0_wp
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell) = 0.0_dp
+    ebond_omp     (1:nthread) = 0.0_dp
+    eangle_omp    (1:nthread) = 0.0_dp
+    eurey_omp     (1:nthread) = 0.0_dp
+    edihed_omp    (1:nthread) = 0.0_dp
+    eimprop_omp   (1:nthread) = 0.0_dp
+    ecmap_omp     (1:nthread) = 0.0_dp
+    elec_omp      (1:nthread) = 0.0_dp
+    evdw_omp      (1:nthread) = 0.0_dp
+    eposi_omp     (1:nthread) = 0.0_dp
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_short_fep(domain, enefunc, pairlist, &
+                              npt, nonb_ene, coord_pbc,  &
+                              force_omp, force_pbc, &
+                              virial_cell, virial_omp, elec_omp, evdw_omp)
+
+      else
+
+        call error_msg( &
+        'Compute_Energy_Amber_Short>  Multi-step is available only with PME')
+
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Amber_Short> Unknown boundary condition')
+
+    end select
+
+    ! bond energy
+    !
+    call compute_energy_bond_fep(domain, enefunc, coord,  &
+      force_omp, ebond_omp)
+
+    ! angle energy
+    !
+    call compute_energy_angle_fep(domain, enefunc, coord,  &
+      force_omp, eangle_omp, eurey_omp)
+
+    ! dihedral energy
+    !
+    if (enefunc%local_restraint) then
+      call compute_energy_dihed_localres_fep(domain, enefunc, coord, &
+        force_omp, edihed_omp)
+    else
+      call compute_energy_dihed_fep(domain, enefunc, coord, &
+        force_omp, edihed_omp)
+    end if
+
+    ! improper energy
+    !
+    call compute_energy_improp_cos_fep(domain, enefunc, coord, &
+      force_omp, eimprop_omp)
+
+    ! 1-4 interaction with linear table
+    !
+    call compute_energy_nonbond14_table_linear_fep(domain, enefunc, &
+                          force_omp, elec_omp, evdw_omp)
+
+    call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+
+    ! restraint energy
+    !
+    if (enefunc%restraint) &
+      call compute_energy_restraints_fep(.true., .true., domain, boundary, &
+                              enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,           &
+                              eposi_omp, energy%restraint_rmsd,                &
+                              energy%rmsd, energy%restraint_distance,          &
+                              energy%restraint_emfit, energy%emcorr)
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    return
+
+  end subroutine compute_energy_amber_short_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_gro_amber_short_fep
+  !> @brief        compute potential energy with GROMACS-AMBER force field
+  !                for FEP
+  !! @authors      HO
+  !! @param[in]    domain      : domain information
+  !! @param[in]    enefunc     : potential energy functions information
+  !! @param[in]    pairlist    : pair list information
+  !! @param[in]    boundary    : boundary information
+  !! @param[in]    coord       : coordinates of target systems
+  !! @param[in]    nonb_ene    : flag for calculate nonbonded energy
+  !! @param[inout] energy      : energy information
+  !! @param[input] coord_pbc   : !TODO
+  !! @param[inout] force       : forces of target systems
+  !! @param[inout] force_omp   : temprary forces of target systems
+  !! @param[inout] force_pbc   : !TODO
+  !! @param[inout] virial_cell : !TODO
+  !! @param[inout] virial      : virial term of target systems
+  !! @param[inout] virial_ext  : extern virial term of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine compute_energy_gro_amber_short_fep(domain, enefunc, pairlist,         &
+                            boundary, coord, npt, nonb_ene, energy, coord_pbc, &
+                            force, force_omp, force_pbc,                       &
+                            virial_cell, virial, virial_ext)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_pairlist),        intent(in)    :: pairlist
+    type(s_boundary),        intent(in)    :: boundary
+    real(dp),                intent(in)    :: coord(:,:,:)
+    logical,                 intent(in)    :: npt
+    logical,                 intent(in)    :: nonb_ene
+    type(s_energy),          intent(inout) :: energy
+    real(wp),                intent(inout) :: coord_pbc(:,:,:)
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(wp),                intent(inout) :: force_omp(:,:,:,:)
+    real(wp),                intent(inout) :: force_pbc(:,:,:,:)
+    real(dp),                intent(inout) :: virial_cell(:,:)
+    real(dp),                intent(inout) :: virial(3,3)
+    real(dp),                intent(inout) :: virial_ext(3,3)
+
+    ! local variable
+    real(dp)                 :: virial_omp(3,3,nthread)
+    real(dp)                 :: virial_ext_omp(3,3,nthread)
+    real(dp)                 :: elec_omp    (nthread)
+    real(dp)                 :: evdw_omp    (nthread)
+    real(dp)                 :: ebond_omp   (nthread)
+    real(dp)                 :: eangle_omp  (nthread)
+    real(dp)                 :: eurey_omp   (nthread)
+    real(dp)                 :: edihed_omp  (nthread)
+    real(dp)                 :: erbdihed_omp(nthread)
+    real(dp)                 :: eposi_omp   (nthread)
+    real(dp)                 :: trans(1:3)
+    real(dp)                 :: force_tmp(1:3)
+    integer                  :: ncell, natom, id, i, ix, ic, jc, k
+    integer                  :: omp_get_thread_num
+
+    ! number of cells and atoms
+    !
+    ncell = domain%num_cell_local + domain%num_cell_boundary
+    natom = domain%max_num_atom
+
+    ! initialization of energy and forces
+    !
+    call init_energy(energy)
+
+    force     (1:3,1:natom,1:ncell) = 0.0_dp
+    virial    (1:3,1:3)             = 0.0_dp
+    virial_ext(1:3,1:3)             = 0.0_dp
+
+#ifndef USE_GPU
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+#else
+    force_omp     (1:3,1:natom,1:ncell,1:nthread) = 0.0_wp
+    force_pbc     (1:3,1:natom,1:ncell,1) = 0.0_wp
+#endif
+    virial_omp    (1:3,1:3,1:nthread) = 0.0_dp
+    virial_ext_omp(1:3,1:3,1:nthread) = 0.0_dp
+    virial_cell   (1:3,1:maxcell) = 0.0_dp
+    ebond_omp     (1:nthread) = 0.0_dp
+    eangle_omp    (1:nthread) = 0.0_dp
+    eurey_omp     (1:nthread) = 0.0_dp
+    edihed_omp    (1:nthread) = 0.0_dp
+    erbdihed_omp  (1:nthread) = 0.0_dp
+    elec_omp      (1:nthread) = 0.0_dp
+    evdw_omp      (1:nthread) = 0.0_dp
+    eposi_omp     (1:nthread) = 0.0_dp
+
+    ! nonbonded energy
+    !
+    select case (boundary%type)
+
+    case (BoundaryTypePBC)
+
+      if (enefunc%pme_use) then
+
+        call compute_energy_nonbond_pme_short_fep(domain, enefunc, pairlist, &
+                              npt, nonb_ene, coord_pbc,  &
+                              force_omp, force_pbc, &
+                              virial_cell, virial_omp, elec_omp, evdw_omp)
+
+      else
+
+        call error_msg( &
+        'Compute_Energy_Gro_Amber_Short>  Multi-step is available only with PME')
+
+      end if
+
+    case default
+
+      call error_msg('Compute_Energy_Gro_Amber_Short> Unknown boundary condition')
+
+    end select
+
+    ! bond energy
+    !
+    call compute_energy_bond_fep(domain, enefunc, coord, &
+                             force_omp, ebond_omp)
+
+    ! angle energy
+    !
+    call compute_energy_angle_fep(domain, enefunc, coord, &
+                              force_omp, eangle_omp, eurey_omp)
+
+    ! dihedral energy
+    !
+    call compute_energy_dihed_fep(domain, enefunc, coord, &
+                              force_omp, edihed_omp)
+  
+    ! Ryckaert-Bellemans dihedral energy
+    !
+    call compute_energy_rb_dihed_fep(domain, enefunc, coord, &
+                                 force_omp, erbdihed_omp)
+
+    ! 1-4 interaction with linear table
+    !
+    call compute_energy_nonbond14_table_linear_fep(domain, enefunc, force_omp, &
+                                               elec_omp, evdw_omp)
+    call pme_bond_corr_linear_fep(domain, enefunc, force_omp, elec_omp)
+
+    ! restraint energy
+    !
+    if (enefunc%restraint) &
+      call compute_energy_restraints_fep(.true., .true., domain, boundary, enefunc, coord, &
+                              force_omp, virial_omp, virial_ext_omp,         &
+                              eposi_omp, energy%restraint_rmsd,              &
+                              energy%rmsd, energy%restraint_distance,        &
+                              energy%restraint_emfit, energy%emcorr)
+
+    ! finish GPU
+    !
+#ifdef USE_GPU
+    if (enefunc%pme_use) then
+      call compute_energy_nonbond_pme_wait( &
+           domain, enefunc, pairlist, boundary, &
+           npt, nonb_ene, coord_pbc, force_omp, &
+           force_pbc, virial_cell, virial_omp,  &
+           elec_omp, evdw_omp)
+    end if
+#endif
+
+    ! gather values
+    !
+    !$omp parallel do default(shared) private(id, i, ix, force_tmp) &
+    !$omp schedule(dynamic,1)
+    do i = 1, ncell
+      do ix = 1, domain%num_atom(i)
+        force_tmp(1:3) = force_omp(1:3,ix,i,1)
+        force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,1)
+#ifndef USE_GPU
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+          force_tmp(1:3) = force_tmp(1:3) + force_pbc(1:3,ix,i,id)
+        end do
+#else
+        do id = 2, nthread
+          force_tmp(1:3) = force_tmp(1:3) + force_omp(1:3,ix,i,id)
+        end do
+#endif
+        force(1:3,ix,i) = force_tmp(1:3)
+      end do
+    end do
+    !$omp end parallel do
+
+    return
+
+  end subroutine compute_energy_gro_amber_short_fep
 
 end module sp_energy_mod

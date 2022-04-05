@@ -70,18 +70,53 @@ module at_boundary_str_mod
     integer, allocatable          :: nospotlist(:)
     integer, allocatable          :: atomlist(:)
 
+    ! CG: neighbor cell lists
+    integer                       :: num_neighbor_cells_CG_ele
+    integer                       :: num_neighbor_cells_CG_126
+    integer                       :: num_neighbor_cells_CG_PWMcos
+    integer                       :: num_neighbor_cells_CG_DNAbp
+    integer                       :: num_neighbor_cells_CG_exv
+    integer, allocatable          :: neighbor_cells_CG_ele(:,:)
+    integer, allocatable          :: neighbor_cells_CG_126(:,:)
+    integer, allocatable          :: neighbor_cells_CG_PWMcos(:,:)
+    integer, allocatable          :: neighbor_cells_CG_DNAbp(:,:)
+    integer, allocatable          :: neighbor_cells_CG_exv(:,:)
+    integer, allocatable          :: neighbor_cell_common_x_ele(:)
+    integer, allocatable          :: neighbor_cell_common_y_ele(:)
+    integer, allocatable          :: neighbor_cell_common_z_ele(:)
+    integer, allocatable          :: neighbor_cell_common_x_126(:)
+    integer, allocatable          :: neighbor_cell_common_y_126(:)
+    integer, allocatable          :: neighbor_cell_common_z_126(:)
+    integer, allocatable          :: neighbor_cell_common_x_PWMcos(:)
+    integer, allocatable          :: neighbor_cell_common_y_PWMcos(:)
+    integer, allocatable          :: neighbor_cell_common_z_PWMcos(:)
+    integer, allocatable          :: neighbor_cell_common_x_DNAbp(:)
+    integer, allocatable          :: neighbor_cell_common_y_DNAbp(:)
+    integer, allocatable          :: neighbor_cell_common_z_DNAbp(:)
+    integer, allocatable          :: neighbor_cell_common_x_exv(:)
+    integer, allocatable          :: neighbor_cell_common_y_exv(:)
+    integer, allocatable          :: neighbor_cell_common_z_exv(:)
+    logical                       :: calc_local_pbc
+
   end type s_boundary
 
   ! parameters for allocatable variables
-  integer,      public, parameter :: BoundaryCells        = 1
-  integer,      public, parameter :: BoundarySphericalPot = 2
+  integer,      public, parameter :: BoundaryCells         = 1
+  integer,      public, parameter :: BoundarySphericalPot  = 2
+  integer,      public, parameter :: BoundaryCellsCGele    = 3
+  integer,      public, parameter :: BoundaryCellsCG126    = 4
+  integer,      public, parameter :: BoundaryCellsCGPWMcos = 5
+  integer,      public, parameter :: BoundaryCellsCGDNAbp  = 6
+  integer,      public, parameter :: BoundaryCellsCGexv    = 7
 
   ! parameters
   integer,      public, parameter :: BoundaryTypeNOBC     = 1
-  integer,      public, parameter :: BoundaryTypePBC      = 2
+  integer,      public, parameter :: BoundaryTypeNOBC1    = 2
+  integer,      public, parameter :: BoundaryTypePBC      = 3
 
-  character(*), public, parameter :: BoundaryTypeTypes(2) = (/'NOBC', &
-                                                              'PBC '/)
+  character(*), public, parameter :: BoundaryTypeTypes(3) = (/'NOBC  ', &
+                                                              'NOBC1 ', &
+                                                              'PBC   '/)
 
   ! subroutines
   public :: init_boundary
@@ -130,6 +165,7 @@ contains
     boundary%nfunctions           = 0
     boundary%num_nospot           = 0
     boundary%fix_layer            = 0.0_wp
+    boundary%calc_local_pbc       = .false.
 
     return
 
@@ -215,6 +251,241 @@ contains
       boundary%neighbor_cell_common_z(1:boundary%num_neighbor_cells)    = 0
       boundary%cell_head_atom (1:var_size) = 0
       boundary%cell_head_atomw(1:var_size) = 0
+
+    case(BoundaryCellsCGele)
+
+      ! ======
+      ! CG ELE
+      ! ======
+      ! 
+      if (allocated(boundary%neighbor_cell_common_x_ele)) then
+
+        if (size(boundary%neighbor_cell_common_x_ele) <   &
+            boundary%num_neighbor_cells_CG_ele ) then
+          deallocate(boundary%neighbor_cells_CG_ele,  &
+                     boundary%neighbor_cell_common_x_ele, &
+                     boundary%neighbor_cell_common_y_ele, &
+                     boundary%neighbor_cell_common_z_ele, &
+                     stat = dealloc_stat)
+        endif
+      endif
+
+      if (allocated(boundary%neighbor_cells_CG_ele)) then
+
+        if (size(boundary%neighbor_cells_CG_ele(1,:)) < var_size) then
+          deallocate(boundary%neighbor_cells_CG_ele,  &
+                     stat = dealloc_stat)
+          if (dealloc_stat /= 0) call error_msg_dealloc
+        endif
+      end if
+
+      if (.not. allocated(boundary%neighbor_cells_CG_ele)) then
+
+        allocate(boundary%neighbor_cells_CG_ele(boundary%num_neighbor_cells_CG_ele,var_size),&
+                 stat = alloc_stat)
+        if (alloc_stat /= 0)   call error_msg_alloc
+      endif
+
+      if (.not. allocated(boundary%neighbor_cell_common_x_ele)) then
+
+        allocate(boundary%neighbor_cell_common_x_ele(boundary%num_neighbor_cells_CG_ele), &
+                 boundary%neighbor_cell_common_y_ele(boundary%num_neighbor_cells_CG_ele), &
+                 boundary%neighbor_cell_common_z_ele(boundary%num_neighbor_cells_CG_ele), &
+                 stat = alloc_stat)
+      endif
+
+      boundary%neighbor_cells_CG_ele(1: boundary%num_neighbor_cells_CG_ele,1:var_size) = 0
+      boundary%neighbor_cell_common_x_ele(1:boundary%num_neighbor_cells_CG_ele)        = 0
+      boundary%neighbor_cell_common_y_ele(1:boundary%num_neighbor_cells_CG_ele)        = 0
+      boundary%neighbor_cell_common_z_ele(1:boundary%num_neighbor_cells_CG_ele)        = 0
+
+    case(BoundaryCellsCG126)
+
+      ! ======
+      ! CG 126
+      ! ======
+      ! 
+      if (allocated(boundary%neighbor_cell_common_x_126)) then
+
+        if (size(boundary%neighbor_cell_common_x_126) <   &
+            boundary%num_neighbor_cells_CG_126 ) then
+          deallocate(boundary%neighbor_cells_CG_126,  &
+                     boundary%neighbor_cell_common_x_126, &
+                     boundary%neighbor_cell_common_y_126, &
+                     boundary%neighbor_cell_common_z_126, &
+                     stat = dealloc_stat)
+        endif
+      endif
+
+      if (allocated(boundary%neighbor_cells_CG_126)) then
+
+        if (size(boundary%neighbor_cells_CG_126(1,:)) < var_size) then
+          deallocate(boundary%neighbor_cells_CG_126,  &
+                     stat = dealloc_stat)
+          if (dealloc_stat /= 0) call error_msg_dealloc
+        endif
+      end if
+
+      if (.not. allocated(boundary%neighbor_cells_CG_126)) then
+
+        allocate(boundary%neighbor_cells_CG_126(boundary%num_neighbor_cells_CG_126,var_size),&
+                 stat = alloc_stat)
+        if (alloc_stat /= 0)   call error_msg_alloc
+      endif
+
+      if (.not. allocated(boundary%neighbor_cell_common_x_126)) then
+
+        allocate(boundary%neighbor_cell_common_x_126(boundary%num_neighbor_cells_CG_126), &
+                 boundary%neighbor_cell_common_y_126(boundary%num_neighbor_cells_CG_126), &
+                 boundary%neighbor_cell_common_z_126(boundary%num_neighbor_cells_CG_126), &
+                 stat = alloc_stat)
+      endif
+
+      boundary%neighbor_cells_CG_126(1: boundary%num_neighbor_cells_CG_126,1:var_size) = 0
+      boundary%neighbor_cell_common_x_126(1:boundary%num_neighbor_cells_CG_126)        = 0
+      boundary%neighbor_cell_common_y_126(1:boundary%num_neighbor_cells_CG_126)        = 0
+      boundary%neighbor_cell_common_z_126(1:boundary%num_neighbor_cells_CG_126)        = 0
+
+    case(BoundaryCellsCGPWMcos)
+
+      ! =========
+      ! CG PWMCOS
+      ! =========
+      ! 
+      if (allocated(boundary%neighbor_cell_common_x_PWMcos)) then
+
+        if (size(boundary%neighbor_cell_common_x_PWMcos) <   &
+            boundary%num_neighbor_cells_CG_PWMcos ) then
+          deallocate(boundary%neighbor_cells_CG_PWMcos,  &
+                     boundary%neighbor_cell_common_x_PWMcos, &
+                     boundary%neighbor_cell_common_y_PWMcos, &
+                     boundary%neighbor_cell_common_z_PWMcos, &
+                     stat = dealloc_stat)
+        endif
+      endif
+
+      if (allocated(boundary%neighbor_cells_CG_PWMcos)) then
+
+        if (size(boundary%neighbor_cells_CG_PWMcos(1,:)) < var_size) then
+          deallocate(boundary%neighbor_cells_CG_PWMcos,  &
+                     stat = dealloc_stat)
+          if (dealloc_stat /= 0) call error_msg_dealloc
+        endif
+      end if
+
+      if (.not. allocated(boundary%neighbor_cells_CG_PWMcos)) then
+
+        allocate(boundary%neighbor_cells_CG_PWMcos(boundary%num_neighbor_cells_CG_PWMcos,var_size),&
+                 stat = alloc_stat)
+        if (alloc_stat /= 0)   call error_msg_alloc
+      endif
+
+      if (.not. allocated(boundary%neighbor_cell_common_x_PWMcos)) then
+
+        allocate(boundary%neighbor_cell_common_x_PWMcos(boundary%num_neighbor_cells_CG_PWMcos), &
+                 boundary%neighbor_cell_common_y_PWMcos(boundary%num_neighbor_cells_CG_PWMcos), &
+                 boundary%neighbor_cell_common_z_PWMcos(boundary%num_neighbor_cells_CG_PWMcos), &
+                 stat = alloc_stat)
+      endif
+
+      boundary%neighbor_cells_CG_PWMcos(1: boundary%num_neighbor_cells_CG_PWMcos,1:var_size) = 0
+      boundary%neighbor_cell_common_x_PWMcos(1:boundary%num_neighbor_cells_CG_PWMcos)        = 0
+      boundary%neighbor_cell_common_y_PWMcos(1:boundary%num_neighbor_cells_CG_PWMcos)        = 0
+      boundary%neighbor_cell_common_z_PWMcos(1:boundary%num_neighbor_cells_CG_PWMcos)        = 0
+
+    case(BoundaryCellsCGDNAbp)
+
+      ! ======
+      ! CG DNABP
+      ! ======
+      ! 
+      if (allocated(boundary%neighbor_cell_common_x_DNAbp)) then
+
+        if (size(boundary%neighbor_cell_common_x_DNAbp) <   &
+            boundary%num_neighbor_cells_CG_DNAbp ) then
+          deallocate(boundary%neighbor_cells_CG_DNAbp,  &
+                     boundary%neighbor_cell_common_x_DNAbp, &
+                     boundary%neighbor_cell_common_y_DNAbp, &
+                     boundary%neighbor_cell_common_z_DNAbp, &
+                     stat = dealloc_stat)
+        endif
+      endif
+
+      if (allocated(boundary%neighbor_cells_CG_DNAbp)) then
+
+        if (size(boundary%neighbor_cells_CG_DNAbp(1,:)) < var_size) then
+          deallocate(boundary%neighbor_cells_CG_DNAbp,  &
+                     stat = dealloc_stat)
+          if (dealloc_stat /= 0) call error_msg_dealloc
+        endif
+      end if
+
+      if (.not. allocated(boundary%neighbor_cells_CG_DNAbp)) then
+
+        allocate(boundary%neighbor_cells_CG_DNAbp(boundary%num_neighbor_cells_CG_DNAbp,var_size),&
+                 stat = alloc_stat)
+        if (alloc_stat /= 0)   call error_msg_alloc
+      endif
+
+      if (.not. allocated(boundary%neighbor_cell_common_x_DNAbp)) then
+
+        allocate(boundary%neighbor_cell_common_x_DNAbp(boundary%num_neighbor_cells_CG_DNAbp), &
+                 boundary%neighbor_cell_common_y_DNAbp(boundary%num_neighbor_cells_CG_DNAbp), &
+                 boundary%neighbor_cell_common_z_DNAbp(boundary%num_neighbor_cells_CG_DNAbp), &
+                 stat = alloc_stat)
+      endif
+
+      boundary%neighbor_cells_CG_DNAbp(1: boundary%num_neighbor_cells_CG_DNAbp,1:var_size) = 0
+      boundary%neighbor_cell_common_x_DNAbp(1:boundary%num_neighbor_cells_CG_DNAbp)        = 0
+      boundary%neighbor_cell_common_y_DNAbp(1:boundary%num_neighbor_cells_CG_DNAbp)        = 0
+      boundary%neighbor_cell_common_z_DNAbp(1:boundary%num_neighbor_cells_CG_DNAbp)        = 0
+
+    case(BoundaryCellsCGexv)
+
+      ! ======
+      ! CG EXV
+      ! ======
+      ! 
+      if (allocated(boundary%neighbor_cell_common_x_exv)) then
+
+        if (size(boundary%neighbor_cell_common_x_exv) <   &
+            boundary%num_neighbor_cells_CG_exv ) then
+          deallocate(boundary%neighbor_cells_CG_exv,  &
+                     boundary%neighbor_cell_common_x_exv, &
+                     boundary%neighbor_cell_common_y_exv, &
+                     boundary%neighbor_cell_common_z_exv, &
+                     stat = dealloc_stat)
+        endif
+      endif
+
+      if (allocated(boundary%neighbor_cells_CG_exv)) then
+
+        if (size(boundary%neighbor_cells_CG_exv(1,:)) < var_size) then
+          deallocate(boundary%neighbor_cells_CG_exv,  &
+                     stat = dealloc_stat)
+          if (dealloc_stat /= 0) call error_msg_dealloc
+        endif
+      end if
+
+      if (.not. allocated(boundary%neighbor_cells_CG_exv)) then
+
+        allocate(boundary%neighbor_cells_CG_exv(boundary%num_neighbor_cells_CG_exv,var_size),&
+                 stat = alloc_stat)
+        if (alloc_stat /= 0)   call error_msg_alloc
+      endif
+
+      if (.not. allocated(boundary%neighbor_cell_common_x_exv)) then
+
+        allocate(boundary%neighbor_cell_common_x_exv(boundary%num_neighbor_cells_CG_exv), &
+                 boundary%neighbor_cell_common_y_exv(boundary%num_neighbor_cells_CG_exv), &
+                 boundary%neighbor_cell_common_z_exv(boundary%num_neighbor_cells_CG_exv), &
+                 stat = alloc_stat)
+      endif
+
+      boundary%neighbor_cells_CG_exv(1: boundary%num_neighbor_cells_CG_exv,1:var_size) = 0
+      boundary%neighbor_cell_common_x_exv(1:boundary%num_neighbor_cells_CG_exv)        = 0
+      boundary%neighbor_cell_common_y_exv(1:boundary%num_neighbor_cells_CG_exv)        = 0
+      boundary%neighbor_cell_common_z_exv(1:boundary%num_neighbor_cells_CG_exv)        = 0
 
     case (BoundarySphericalPot)
 

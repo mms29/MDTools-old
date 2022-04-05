@@ -6,6 +6,11 @@
 #  (c) Copyright 2014 RIKEN. All rights reserved.
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
+if INTERNAL_LAPACK
+  INT_LAPACK_LIB=$(LAPACK_LIB3)
+else
+  INT_LAPACK_LIB=
+endif
 
 SUBDIRS := ../../libana .
 
@@ -22,7 +27,7 @@ dssp_interface_SOURCES = \
 EXTRA_DIST = \
 	Makefile.depends 
 
-dssp_interface_ADDLIB = ../../../lib/lib.a
+dssp_interface_ADDLIB = ../../../lib/lib.a $(INT_LAPACK_LIB)
 dssp_interface_ADDLIBANA = ../../libana/libana.a
 
 SUFFIXES = .fpp

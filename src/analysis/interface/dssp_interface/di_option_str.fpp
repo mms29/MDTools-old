@@ -24,11 +24,11 @@ module di_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical             :: check_only
-    character(MaxLine)  :: analysis_atom_exp
-    type(s_selatoms)    :: analysis_atom
-    character(MaxLine)  :: dssp_exec
-    character(MaxLine)  :: temporary_pdb
+    logical                :: check_only
+    character(MaxLineLong) :: analysis_atom_exp
+    type(s_selatoms)       :: analysis_atom
+    character(MaxLine)     :: dssp_exec
+    character(MaxLine)     :: temporary_pdb
 
   end type s_option
 

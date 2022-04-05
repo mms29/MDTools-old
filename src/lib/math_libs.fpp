@@ -33,6 +33,7 @@ module math_libs_mod
   public  :: get_ewald_alpha
   public  :: factorization_235
   public  :: powersinh
+  public  :: powersinh_double
   public  :: sum_gauss
   private :: factorization_prime
   public   :: cubic_spline
@@ -704,15 +705,55 @@ contains
   function powersinh(x) result(y)
 
     ! return values
-    real(dp)               :: y(3)
+    real(wip)               :: y(3)
 
     ! formal arguments
-    real(dp),   intent(in) :: x(3)
+    real(wip),   intent(in) :: x(3)
 
 
     ! local variables
-    integer                :: j, k
-    real(dp)               :: a(0:5)
+    integer                 :: j, k
+    real(wip)               :: a(0:5)
+
+    a(0)  = 1.0_wip
+    a(1)  = a(0) / (2.0_wip*3.0_wip)
+    a(2)  = a(1) / (4.0_wip*5.0_wip)
+    a(3)  = a(2) / (6.0_wip*7.0_wip)
+    a(4)  = a(3) / (8.0_wip*9.0_wip)
+    a(5)  = a(4) / (10.0_wip*11.0_wip)
+
+    y(1:3) = 0.0_wip
+    do j = 0, 5
+      do k = 1, 3
+        y(k) = a(j)*x(k)**(2*j) + y(k)
+      end do
+    end do
+
+  end function powersinh
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Function      powersinh_double
+  !> @brief        Power seriesa expansion of sinh(x)/x up to tenth order 
+  !! @authors      TA, JJ
+  !! @param[in]    x : value x, which is vector
+  !! @param[in]    n : size of x
+  !! @return       y : approx. value of sinh(x)/x
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  function powersinh_double(x) result(y)
+
+    ! return values
+    real(dp)                :: y(3)
+
+    ! formal arguments
+    real(dp),    intent(in) :: x(3)
+
+
+    ! local variables
+    integer                 :: j, k
+    real(dp)                :: a(0:5)
 
     a(0)  = 1.0_dp
     a(1)  = a(0) / (2.0_dp*3.0_dp)
@@ -728,7 +769,7 @@ contains
       end do
     end do
 
-  end function powersinh
+  end function powersinh_double
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !

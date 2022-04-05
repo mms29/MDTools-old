@@ -35,9 +35,14 @@ module at_enefunc_restraints_mod
   public   :: setup_restraint_reference      ! this is also called from remd
   private  :: setup_restraint_exponent_dist
   private  :: setup_restraint_weight_dist
+  private  :: setup_restraint_rgxy
+  private  :: setup_restraint_wall_z
   private  :: setup_restraint_mode
   private  :: setup_enefunc_rest_refcoord
   private  :: setup_enefunc_rest_mode
+  private  :: setup_restraint_caging
+  private  :: setup_restraint_flat_radius
+  private  :: setup_enefunc_rest_rg
 
 contains
 
@@ -157,6 +162,9 @@ contains
             enefunc%restraint_kind(i) == RestraintsFuncEM) then
           write(MsgOut,'(A,4F8.3)') &
             ' const(total, x, y, z) = ', enefunc%restraint_const(1:4,i) 
+        else if (enefunc%restraint_kind(i) == RestraintsFuncWALL_Z) then
+          write(MsgOut,'(A,2F8.3)') &
+            ' const(Const, Exp) = ',   enefunc%restraint_const(1:2,i)
         else
           write(MsgOut,'(A,F8.3)') &
             ' const             = ',   enefunc%restraint_const(1,i)
@@ -397,7 +405,7 @@ contains
       case default
         if (ndata /= 1) & 
           call error_msg('Setup_Enefunc_Rest_Func> Error in index for '//  &
-                         'POSI or RMSD')
+                         'POSI or RMSD or RG')
       end select
 
       num_indexes(i) = ndata
@@ -455,6 +463,14 @@ contains
       !
       call setup_restraint_mode(i, restraints, enefunc)
 
+      ! caging   (for RG only)
+      !
+      call setup_restraint_caging(i, restraints, enefunc)
+
+      ! flat_radius   (for RG only)
+      !
+      call setup_restraint_flat_radius(i, restraints, enefunc)
+
     end do
 
     ! setup reference coordinates (for POSI, RMSD, and PC)
@@ -464,10 +480,30 @@ contains
           enefunc%restraint_kind(i) == RestraintsFuncRMSD    .or. &
           enefunc%restraint_kind(i) == RestraintsFuncRMSDCOM .or. &
           enefunc%restraint_kind(i) == RestraintsFuncPC      .or. &
-          enefunc%restraint_kind(i) == RestraintsFuncPCCOM) then
+          enefunc%restraint_kind(i) == RestraintsFuncPCCOM   .or. &
+          enefunc%restraint_kind(i) == RestraintsFuncRGXY) then
         call setup_enefunc_rest_refcoord(molecule, enefunc)
         exit
       end if
+    end do
+
+    do i = 1, num_funcs
+      ! setup RGXY   (for RGXY only)
+      !
+      if (enefunc%restraint_kind(i) == RestraintsFuncRGXY) then
+        call setup_restraint_rgxy(i, restraints, enefunc)
+      
+      else if (enefunc%restraint_kind(i) == RestraintsFuncWALL_Z) then
+
+      ! setup wall_z   (for WALL_Z only)
+      !
+         call setup_restraint_wall_z(i, restraints, enefunc)
+
+      else if (enefunc%restraint_kind(i) == RestraintsFuncCLIMBER) then
+
+         enefunc%morph_restraint_flag = .true.
+
+      endif
     end do
 
     ! setup principal component mode (for PC)
@@ -476,6 +512,17 @@ contains
       if (enefunc%restraint_kind(i) == RestraintsFuncPC     .or. &
           enefunc%restraint_kind(i) == RestraintsFuncPCCOM) then
         call setup_enefunc_rest_mode(molecule, enefunc)
+        exit
+      end if
+    end do
+
+    ! setup work arrays (for RG)
+    do i = 1, num_funcs
+      if (enefunc%restraint_kind(i) == RestraintsFuncRG       .or. &
+          enefunc%restraint_kind(i) == RestraintsFuncRGWOMASS) then
+        if (.not. allocated(enefunc%restraint_masstmp)) then
+          call setup_enefunc_rest_rg(molecule, enefunc)
+        end if
         exit
       end if
     end do
@@ -588,6 +635,46 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_restraint_wall_z
+  !> @brief        setup restraint wall_z func
+  !! @authors      CK
+  !! @param[in]    ifunc      : number for function
+  !! @param[in]    restraints : restraints information
+  !! @param[inout] enefunc    : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_restraint_wall_z(ifunc, restraints, enefunc)
+
+    ! formal arguments
+    integer,                 intent(in)    :: ifunc
+    type(s_restraints),      intent(in)    :: restraints
+    type(s_enefunc),         intent(inout) :: enefunc
+
+    integer                                :: ndata
+    real(wp)                               :: ddata(2)
+    real(wp)                               :: zmax, zmin
+    character(MaxLine)                     :: string
+
+    string = restraints%wall_z(ifunc)
+    ndata = split_num(string)
+    if (ndata == 2) then
+      call split(ndata, 2, string, ddata)
+    else
+      call error_msg('Setup_Restraint_Wall_Z> Error in wall_z')
+    endif
+
+    zmax = max(ddata(1),ddata(2))
+    zmin = min(ddata(1),ddata(2))
+    enefunc%restraint_wall_z(1,ifunc) = zmin
+    enefunc%restraint_wall_z(2,ifunc) = zmax
+
+    return
+
+  end subroutine setup_restraint_wall_z
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    setup_restraint_constants
   !> @brief        setup restraint constants
   !! @authors      CK, TM
@@ -694,11 +781,17 @@ contains
       end if
     end if
 
-    if (ndata == 0) then
-      if (enefunc%restraint_kind(ifunc) /=  RestraintsFuncPOSI .and. &
-         (enefunc%restraint_kind(ifunc) /=  RestraintsFuncEM  )) then
-        call error_msg('Setup_Restraint_Reference> reference is not given')
-      end if
+    if ((ndata > 0) .and. (enefunc%restraint_kind(ifunc) ==  RestraintsFuncPOSI   .or. &
+                           enefunc%restraint_kind(ifunc) ==  RestraintsFuncRGXY   .or. &
+                           enefunc%restraint_kind(ifunc) ==  RestraintsFuncWALL_Z)) then
+      call error_msg('Setup_Restraint_Reference> reference of POSI/RGXY/WALL_Z is not needed')
+    end if
+
+    if ((ndata == 0) .and. (enefunc%restraint_kind(ifunc) /=  RestraintsFuncPOSI) .and. &
+                           (enefunc%restraint_kind(ifunc) /=  RestraintsFuncEM  ) .and. &
+                           (enefunc%restraint_kind(ifunc) /=  RestraintsFuncRGXY) .and. &
+                           (enefunc%restraint_kind(ifunc) /=  RestraintsFuncWALL_Z)) then
+      call error_msg('Setup_Restraint_Reference> reference is not given')
     end if
 
     ndata_max = size(enefunc%restraint_const_replica(:,1))
@@ -838,6 +931,30 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_restraint_rgxy
+  !> @brief        setup restraint rgxy
+  !! @authors      CK
+  !! @param[in]    ifunc      : number for function
+  !! @param[in]    restraints : restraints information
+  !! @param[inout] enefunc    : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_restraint_rgxy(ifunc, restraints, enefunc)
+
+    ! formal arguments
+    integer,                 intent(in)    :: ifunc
+    type(s_restraints),      intent(in)    :: restraints
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+    enefunc%restraint_rgbuffer(ifunc) = restraints%rgbuffer(ifunc)
+
+    return
+
+  end subroutine setup_restraint_rgxy
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    setup_restraint_mode
   !> @brief        setup restraint mode (for PC)
   !! @authors      YK
@@ -864,6 +981,81 @@ contains
     return
 
   end subroutine setup_restraint_mode
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_restraint_caging
+  !> @brief        setup restraint caging (for RG)
+  !! @authors      MK
+  !! @param[in]    ifunc      : number for function
+  !! @param[in]    restraints : restraints information
+  !! @param[inout] enefunc    : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_restraint_caging(ifunc, restraints, enefunc)
+
+    ! formal arguments
+    integer,                 intent(in)    :: ifunc
+    type(s_restraints),      intent(in)    :: restraints
+    type(s_enefunc),         intent(inout) :: enefunc
+
+    integer      :: ndata
+    character(6) :: cdata(1)
+
+
+    cdata(1) = ''
+    if ( enefunc%restraint_kind(ifunc) /= RestraintsFuncRG .and. &
+         enefunc%restraint_kind(ifunc) /= RestraintsFuncRGWOMASS ) then
+      return
+    end if
+
+    ndata = split_num(restraints%caging(ifunc))
+    if (ndata > 0) then
+      call split(1, 1, restraints%caging(ifunc), cdata )
+    end if
+
+    call tolower(cdata(1))
+    enefunc%restraint_caging(ifunc) = ( cdata(1) == 'yes' .or. cdata(1) == 'true' )
+
+    return
+
+  end subroutine setup_restraint_caging
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_restraint_flat_radius
+  !> @brief        setup restraint flat radius (for RG)
+  !! @authors      MK
+  !! @param[in]    ifunc      : number for function
+  !! @param[in]    restraints : restraints information
+  !! @param[inout] enefunc    : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_restraint_flat_radius(ifunc, restraints, enefunc)
+
+    ! formal arguments
+    integer,                 intent(in)    :: ifunc
+    type(s_restraints),      intent(in)    :: restraints
+    type(s_enefunc),         intent(inout) :: enefunc
+
+    integer :: ndata
+
+
+    if ( enefunc%restraint_kind(ifunc) /= RestraintsFuncRG .and. &
+         enefunc%restraint_kind(ifunc) /= RestraintsFuncRGWOMASS ) then
+      return
+    end if
+    if ( len_trim(restraints%flat_radius(ifunc)) == 0 ) then
+      enefunc%restraint_flat_radius(ifunc) = 0.0_wp
+      return
+    end if
+    read(restraints%flat_radius(ifunc),*) enefunc%restraint_flat_radius(ifunc)
+
+    return
+
+  end subroutine setup_restraint_flat_radius
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -932,5 +1124,31 @@ contains
 
   end subroutine setup_enefunc_rest_mode
 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_enefunc_rest_rg
+  !> @brief        setup enefunc for Rg calculation
+  !! @authors      MK
+  !! @param[in]    molecule : molecule information
+  !! @param[inout] enefunc  : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_enefunc_rest_rg(molecule, enefunc)
+
+    ! formal arguments
+    type(s_molecule),        intent(in)    :: molecule
+    type(s_enefunc),         intent(inout) :: enefunc
+
+    ! local variables
+    integer                  :: j
+
+
+    enefunc%num_atoms_ref = molecule%num_atoms
+    call alloc_enefunc(enefunc, EneFuncRefc, molecule%num_atoms)
+
+    return
+
+  end subroutine setup_enefunc_rest_rg
 
 end module at_enefunc_restraints_mod

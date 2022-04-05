@@ -38,16 +38,19 @@ module output_str_mod
     character(MaxFilename) :: gprfile
     character(MaxFilename) :: grotopfile
     character(MaxFilename) :: grocrdfile
+    character(MaxFilename) :: grocrd_tgtfile
     character(MaxFilename) :: hb_listfile
     character(MaxFilename) :: indexfile
     character(MaxFilename) :: logfile
     character(MaxFilename) :: mapfile
+    character(MaxFilename) :: morphfile
     character(MaxFilename) :: msdfile
     character(MaxFilename) :: outfile
     character(MaxFilename) :: parfile
     character(MaxFilename) :: pathcvfile
     character(MaxFilename) :: pcafile
     character(MaxFilename) :: pdbfile
+    character(MaxFilename) :: pdb_tgtfile
     character(MaxFilename) :: pdb_avefile
     character(MaxFilename) :: pdb_aftfile
     character(MaxFilename) :: pmffile
@@ -63,6 +66,7 @@ module output_str_mod
     character(MaxFilename) :: rgfile
     character(MaxFilename) :: rstfile
     character(MaxFilename) :: txtfile
+    character(MaxFilename) :: tblfile
     character(MaxFilename) :: topfile
     character(MaxFilename) :: torfile
     character(MaxFilename) :: trjfile
@@ -71,9 +75,10 @@ module output_str_mod
     character(MaxFilename) :: vcvfile
     character(MaxFilename) :: vecfile
     character(MaxFilename) :: velfile
-    character(MaxFilename) :: vmdfile
+    character(MaxFilename) :: voronoifile
     character(MaxFilename) :: weightfile
     character(MaxFilename) :: xscfile
+    character(MaxFilename) :: vmdfile
   end type s_output
 
 end module output_str_mod

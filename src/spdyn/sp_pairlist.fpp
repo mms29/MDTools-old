@@ -23,7 +23,7 @@ module sp_pairlist_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -33,11 +33,16 @@ module sp_pairlist_mod
   ! subroutines
   public  :: setup_pairlist
   public  :: update_pairlist_pbc
+  public  :: update_pairlist_cgpbc
   public  :: update_pairlist_nobc
   public  :: update_pairlist_pbc_check
 #ifdef USE_GPU
   public  :: update_pairlist_pbc_univ
 #endif
+  !FEP
+  public  :: setup_pairlist_fep
+  public  :: update_pairlist_pbc_fep
+  public  :: update_pairlist_pbc_check_fep
 
 contains
 
@@ -52,26 +57,42 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_pairlist(enefunc, domain, pairlist)
+  subroutine setup_pairlist(boundary, enefunc, domain, pairlist)
 
     ! formal arguments
+    type(s_boundary),        intent(in)    :: boundary
     type(s_enefunc),         intent(in)    :: enefunc 
     type(s_domain),          intent(inout) :: domain 
     type(s_pairlist),        intent(inout) :: pairlist
     
+    ! local
+    integer                                :: ncell
+
+    ncell = domain%num_cell_local + domain%num_cell_boundary
 
     call init_pairlist(pairlist)
 
     pairlist%pairlistdist = enefunc%pairlistdist
 
-    if (enefunc%forcefield == ForcefieldAAGO) then
+    if (enefunc%forcefield == ForcefieldAAGO .or. &
+        enefunc%forcefield == ForcefieldCAGO) then
 
-      call alloc_pairlist(pairlist, PairListNOBC, &
-        domain%num_cell_local+domain%num_cell_boundary)
+      if (boundary%type == BoundaryTypePBC .and.  &
+          enefunc%forcefield == ForcefieldCAGO) then
 
-      call timer(TimerPairList, TimerOn)
-      call update_pairlist_nobc(enefunc, domain, pairlist)
-      call timer(TimerPairList, TimerOff)
+        call alloc_pairlist(pairlist, PairListCGPBC, ncell)
+        call timer(TimerPairList, TimerOn)
+        call update_pairlist_cgpbc(enefunc, domain, pairlist)
+        call timer(TimerPairList, TimerOff)
+
+      else
+
+        call alloc_pairlist(pairlist, PairListNOBC, ncell)
+        call timer(TimerPairList, TimerOn)
+        call update_pairlist_nobc(enefunc, domain, pairlist)
+        call timer(TimerPairList, TimerOff)
+
+      end if
 
     else
 
@@ -414,7 +435,7 @@ contains
 
     !$omp end parallel
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_reduce(num_nb15_total, num_nb15_total1, 1, mpi_integer, mpi_sum, &
          0, mpi_comm_country, ierror)
 #endif
@@ -756,7 +777,7 @@ contains
       write(MsgOut, *) "Warning: small contacts exist in inner loop"
     endif
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_reduce(num_nb15_total, num_nb15_total1, 1, mpi_integer, mpi_sum, &
          0, mpi_comm_country, ierror)
 #endif
@@ -1371,5 +1392,1120 @@ contains
     return
 
   end subroutine update_pairlist_nobc
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_pairlist_cgpbc
+  !> @brief        update pairlist in each domain 
+  !!               condition
+  !! @authors      JJ
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] pairlist : pair-list information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_pairlist_cgpbc(enefunc, domain, pairlist)
+
+    ! formal arguments
+    type(s_enefunc),  target, intent(in)    :: enefunc
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_pairlist), target, intent(inout) :: pairlist
+
+    ! local variables
+    real(wp)                  :: pairdist2
+    real(wp)                  :: dij(1:3), rij2
+    real(wp)                  :: rtmp(1:3)
+
+    integer                   :: i, j, ij, k, ix, iy
+    integer                   :: num_nb15
+    integer                   :: num_excl, ini_excl, fin_excl
+    integer                   :: num_nb14, ini_nb14, fin_nb14
+    logical                   :: nb15_calc
+    integer                   :: id, omp_get_thread_num
+    integer                   :: ncell, nboundary
+
+    real(dp),         pointer :: coord(:,:,:)
+    real(wp),         pointer :: coord_pbc(:,:,:), trans(:,:,:)
+    real(wp),         pointer :: cell_move(:,:,:), system_size(:)
+    integer,          pointer :: natom(:), cell_pairlist1(:,:)
+    integer,          pointer :: nb15_calc_list_cgpbc(:,:,:,:)
+    integer,          pointer :: num_nb15_cgpbc(:,:)
+    integer(1),       pointer :: exclusion_mask(:,:,:), exclusion_mask1(:,:,:)
+
+    ncell           =  domain%num_cell_local
+    nboundary       =  domain%num_cell_boundary
+    natom           => domain%num_atom
+    coord           => domain%coord
+    trans           => domain%trans_vec
+    coord_pbc       => domain%translated
+    cell_pairlist1  => domain%cell_pairlist1
+    cell_move       => domain%cell_move
+    system_size     => domain%system_size
+    exclusion_mask  => enefunc%exclusion_mask
+    exclusion_mask1 => enefunc%exclusion_mask1
+
+    num_nb15_cgpbc   => pairlist%num_nb15_cgpbc
+    nb15_calc_list_cgpbc => pairlist%nb15_calc_list_cgpbc
+
+    pairdist2       =  pairlist%pairlistdist * pairlist%pairlistdist
+
+    num_nb15_cgpbc(1:Maxatom,1:(ncell+nboundary)) = 0
+
+    !$omp parallel                                                       &
+    !$omp private(id, i, ix, iy, k, ij, j, num_excl, num_nb14, num_nb15, &
+    !$omp         nb15_calc, rtmp, dij, rij2)
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+
+    ! pbc coordinate
+    !
+    do i = id+1, ncell+nboundary, nthread
+      do ix = 1, natom(i)
+        coord_pbc(1:3,ix,i) = coord(1:3,ix,i) + trans(1:3,ix,i)
+      end do
+    end do
+
+    ! make a pairlist in the same cell
+    !
+    do i = id+1, ncell, nthread
+
+      do ix = 1, natom(i) - 1
+
+        num_nb15 = 0
+        rtmp(1:3) = coord_pbc(1:3,ix,i)
+
+        do iy = ix + 1, natom(i)
+
+          nb15_calc = .true.
+
+          if (exclusion_mask1(iy,ix,i) /= 1) then
+
+            ! store interaction table
+            !
+            dij(1:3) = rtmp(1:3) - coord_pbc(1:3,iy,i)
+            rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+            if (rij2 < pairdist2) then
+              num_nb15 = num_nb15 + 1
+              nb15_calc_list_cgpbc(1,num_nb15,ix,i) = i
+              nb15_calc_list_cgpbc(2,num_nb15,ix,i) = iy
+            end if
+          end if
+        end do
+        num_nb15_cgpbc(ix,i) = num_nb15
+
+      end do
+    end do
+
+    ! Make a pairlist between different cells
+    !
+    do ij = 1, maxcell_near
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+      if (mod(i-1,nthread) == id) then
+
+        do ix = 1, natom(i)
+
+          rtmp(1:3) = coord_pbc(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+
+          num_nb15 = num_nb15_cgpbc(ix,i)
+
+          do iy = 1, natom(j)
+
+            if (exclusion_mask(iy,ix,ij) /= 1) then
+
+              dij(1:3) = rtmp(1:3) - coord_pbc(1:3,iy,j)
+              rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+              ! store interaction table
+              !
+              if (rij2 < pairdist2) then
+
+                num_nb15 = num_nb15 + 1
+                nb15_calc_list_cgpbc(1,num_nb15,ix,i) = j
+                nb15_calc_list_cgpbc(2,num_nb15,ix,i) = iy
+              end if
+            end if
+          end do
+
+          num_nb15_cgpbc(ix,i) = num_nb15
+
+        end do
+
+      end if
+
+    end do
+
+    do ij = maxcell_near+1, maxcell
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+      if (mod(i-1,nthread) == id) then
+
+        do ix = 1, natom(i)
+
+          rtmp(1:3) = coord_pbc(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+
+          num_nb15  = num_nb15_cgpbc(ix,i)
+
+          do iy = 1, natom(j)
+
+            dij(1:3) = rtmp(1:3) - coord_pbc(1:3,iy,j)
+            rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+            ! store interaction table
+            !
+            if (rij2 < pairdist2) then
+
+              num_nb15 = num_nb15 + 1
+              nb15_calc_list_cgpbc(1,num_nb15,ix,i) = j
+              nb15_calc_list_cgpbc(2,num_nb15,ix,i) = iy
+            end if
+          end do
+
+          num_nb15_cgpbc(ix,i) = num_nb15
+
+        end do
+
+      end if
+
+    end do
+
+    !$omp end parallel
+
+    return
+
+  end subroutine update_pairlist_cgpbc
+
+ !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_pairlist_fep
+  !> @brief        initialize/allocate/setup pairlist for nonbonded interactions
+  !>                for FEP calculations
+  !! @authors      NK, HO
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] pairlist : pair-list information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_pairlist_fep(enefunc, domain, pairlist)
+
+    ! formal arguments
+    type(s_enefunc),         intent(in)    :: enefunc
+    type(s_domain),          intent(inout) :: domain
+    type(s_pairlist),        intent(inout) :: pairlist
+
+
+    call init_pairlist(pairlist)
+
+    pairlist%pairlistdist = enefunc%pairlistdist
+
+    if (enefunc%forcefield == ForcefieldAAGO) then
+
+      call alloc_pairlist(pairlist, PairListNOBC, &
+        domain%num_cell_local+domain%num_cell_boundary)
+
+      call timer(TimerPairList, TimerOn)
+      call update_pairlist_nobc(enefunc, domain, pairlist)
+      call timer(TimerPairList, TimerOff)
+
+    else
+
+#ifdef KCOMP
+      if (enefunc%forcefield /= ForcefieldGROMARTINI) then
+        call alloc_pairlist(pairlist, PairListNoTable_FEP, domain%num_cell_local)
+      else
+        call alloc_pairlist(pairlist, PairListNoTable_CG, domain%num_cell_local)
+      endif
+#else
+      call alloc_pairlist(pairlist, PairListNoTable_FEP, domain%num_cell_local)
+#endif
+
+      call timer(TimerPairList, TimerOn)
+#ifndef USE_GPU
+      if (enefunc%pairlist_check) then
+        call update_pairlist_pbc_check_fep(enefunc, domain, pairlist)
+      else
+        call update_pairlist_pbc_fep(enefunc, domain, pairlist)
+      endif
+#else
+      call update_pairlist_pbc_univ(enefunc, domain, pairlist)
+#endif
+      call timer(TimerPairList, TimerOff)
+
+    end if
+
+    return
+
+  end subroutine setup_pairlist_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_pairlist_pbc_fep
+  !> @brief        update pairlist in each domain for FEP calculations
+  !!               with periodic boundary condition
+  !! @authors      NK, HO
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] pairlist : pair-list information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_pairlist_pbc_fep(enefunc, domain, pairlist)
+
+    ! formal arguments
+    type(s_enefunc),  target, intent(in)    :: enefunc
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_pairlist), target, intent(inout) :: pairlist
+
+    ! local variables
+    real(wp)                  :: pairdist2
+    real(wp)                  :: dij(1:3), rij2
+    real(wp)                  :: rtmp(1:3)
+
+    integer                   :: i, j, ij, k, ix, iy
+    integer                   :: num_nb15_pre, num_nb15
+    integer                   :: num_nb15_total, num_nb15_total1
+    integer                   :: num_excl, ini_excl, fin_excl
+    integer                   :: num_nb14, ini_nb14, fin_nb14
+    logical                   :: nb15_calc
+    integer                   :: id, omp_get_thread_num, num_nb15_cell
+
+    real(dp),         pointer :: coord(:,:,:)
+    real(wp),         pointer :: cell_move(:,:,:), system_size(:)
+    real(wp),         pointer :: trans1(:,:,:), trans2(:,:,:)
+    integer,          pointer :: num_nonb_excl1(:,:), num_nb14_calc1(:,:)
+    integer,          pointer :: num_nonb_excl(:,:), num_nb14_calc(:,:)
+    integer,          pointer :: nonb_excl_list1(:,:), nb14_calc_list1(:,:)
+    integer,          pointer :: nonb_excl_list(:,:), nb14_calc_list(:,:)
+    integer,          pointer :: natom(:), cell_pairlist1(:,:)
+    integer,          pointer :: ncell, nboundary
+    integer,          pointer :: nb15_cell(:), nb15_list(:,:)
+    integer,          pointer :: nb15_calc_list1(:,:), nb15_calc_list(:,:)
+    integer,          pointer :: num_nb15_calc1(:,:), num_nb15_calc(:,:)
+
+    ! FEP
+    integer                   :: num_nb15_pre_fep, num_nb15_fep
+    integer                   :: num_nb15_cell_fep
+    integer                   :: num_nb15_total_fep
+    integer                   :: fg1, fg2
+    integer,          pointer :: fepgrp(:,:)
+    integer,          pointer :: nb15_cell_fep(:), nb15_list_fep(:,:)
+    integer,          pointer :: nb15_calc_list1_fep(:,:), nb15_calc_list_fep(:,:)
+    integer,          pointer :: num_nb15_calc1_fep(:,:), num_nb15_calc_fep(:,:)
+
+    num_nonb_excl1  => enefunc%num_nonb_excl1
+    num_nb14_calc1  => enefunc%num_nb14_calc1
+    nonb_excl_list1 => enefunc%nonb_excl_list1
+    nb14_calc_list1 => enefunc%nb14_calc_list1
+    num_nonb_excl   => enefunc%num_nonb_excl
+    num_nb14_calc   => enefunc%num_nb14_calc
+    nonb_excl_list  => enefunc%nonb_excl_list
+    nb14_calc_list  => enefunc%nb14_calc_list
+
+    ncell           => domain%num_cell_local
+    nboundary       => domain%num_cell_boundary
+    natom           => domain%num_atom
+    coord           => domain%coord
+    trans1          => domain%trans_vec
+    trans2          => domain%translated
+    cell_pairlist1  => domain%cell_pairlist1
+    cell_move       => domain%cell_move
+    system_size     => domain%system_size
+
+    num_nb15_calc1  => pairlist%num_nb15_calc1
+    num_nb15_calc   => pairlist%num_nb15_calc
+    nb15_list       => pairlist%nb15_list
+    nb15_cell       => pairlist%nb15_cell
+    nb15_calc_list1 => pairlist%nb15_calc_list1
+    nb15_calc_list  => pairlist%nb15_calc_list
+
+    pairdist2       =  pairlist%pairlistdist * pairlist%pairlistdist
+    num_nb15_total  =  0
+
+    ! FEP
+    num_nb15_calc1_fep  => pairlist%num_nb15_calc1_fep
+    num_nb15_calc_fep   => pairlist%num_nb15_calc_fep
+    nb15_list_fep       => pairlist%nb15_list_fep
+    nb15_cell_fep       => pairlist%nb15_cell_fep
+    nb15_calc_list1_fep => pairlist%nb15_calc_list1_fep
+    nb15_calc_list_fep  => pairlist%nb15_calc_list_fep
+    fepgrp              => domain%fepgrp
+    num_nb15_total_fep  =  0
+
+    !$omp parallel                                                             &
+    !$omp private(id, i, ix, ini_excl, num_excl, ini_nb14, num_nb14, num_nb15, &
+    !$omp         num_nb15_pre, fin_excl, fin_nb14, iy, k, nb15_calc, ij, j,   &
+    !$omp         rtmp, dij, rij2, num_nb15_cell,                              &
+    !$omp         num_nb15_fep, num_nb15_pre_fep,                              &
+    !$omp         num_nb15_cell_fep, fg1, fg2)                                 &
+    !$omp reduction(+:num_nb15_total) reduction(+:num_nb15_total_fep)
+
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    do i = id+1, ncell+nboundary, nthread
+      do ix = 1, natom(i)
+        trans2(1:3,ix,i) = coord(1:3,ix,i) + trans1(1:3,ix,i)
+      end do
+    end do
+
+    !$omp barrier
+
+    ! make a pairlist in the same cell
+    !
+    do i = id+1, ncell, nthread
+
+      ini_excl = 0
+      num_excl = 0
+      ini_nb14 = 0
+      num_nb14 = 0
+      num_nb15 = 0
+      num_nb15_pre = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+#ifdef DEBUG
+      if (natom(i) > MaxAtom) &
+        call error_msg( &
+             'Debug: Update_Pairlist_Pbc> natom(cell) is exceed MaxAtom')
+#endif
+
+      do ix = 1, natom(i) - 1
+
+        ini_excl = num_excl + 1
+        fin_excl = num_excl + num_nonb_excl1(ix,i)
+        num_excl = fin_excl
+
+        ini_nb14 = num_nb14 + 1
+        fin_nb14 = num_nb14 + num_nb14_calc1(ix,i)
+        num_nb14 = fin_nb14
+        do iy = ix + 1, natom(i)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,i)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          nb15_calc = .true.
+          do k = ini_excl, fin_excl
+            if (iy == nonb_excl_list1(k,i)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          do k = ini_nb14, fin_nb14
+            if (iy == nb14_calc_list1(k,i)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          if (nb15_calc) then
+
+            ! store interaction table
+            !
+            if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+              num_nb15 = num_nb15 + 1
+#ifdef DEBUG
+              if (num_nb15 > MaxNb15) &
+                call error_msg('Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+              nb15_calc_list1(num_nb15,i) = iy
+            else
+              ! FEP: for perturbed interactions
+              num_nb15_fep = num_nb15_fep + 1
+#ifdef DEBUG
+              if (num_nb15 > MaxNb15) &
+                call error_msg('Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+              nb15_calc_list1_fep(num_nb15_fep,i) = iy
+            end if
+          end if
+        end do
+
+        num_nb15_calc1(ix,i) = num_nb15 - num_nb15_pre
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+        ! FEP: for perturbed interactions
+        num_nb15_calc1_fep(ix,i) = num_nb15_fep - num_nb15_pre_fep
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+      end do
+    end do
+
+    ! Make a pairlist between different cells
+    !
+    do ij = id+1, maxcell_near, nthread
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+#ifdef DEBUG
+      if (natom(i) > MaxAtom .or. natom(j) > MaxAtom) &
+        call error_msg( &
+             'Debug: Update_Pairlist_Pbc> natom(cell) is exceed MaxAtom')
+#endif
+
+      ini_excl = 0
+      num_excl = 0
+      ini_nb14 = 0
+      num_nb14 = 0
+      num_nb15 = 0
+      num_nb15_pre = 0
+      num_nb15_cell = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+      num_nb15_cell_fep = 0
+      do ix = 1, natom(i)
+
+        ini_excl = num_excl + 1
+        fin_excl = num_excl + num_nonb_excl(ix,ij)
+        num_excl = fin_excl
+
+        ini_nb14 = num_nb14 + 1
+        fin_nb14 = num_nb14 + num_nb14_calc(ix,ij)
+        num_nb14 = fin_nb14
+
+        rtmp(1:3) = trans2(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+        do iy = 1, natom(j)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,j)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          nb15_calc = .true.
+
+          do k = ini_excl, fin_excl
+            if (iy == nonb_excl_list(k,ij)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          do k = ini_nb14, fin_nb14
+            if (iy == nb14_calc_list(k,ij)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          if (nb15_calc) then
+
+            dij(1:3) = rtmp(1:3) - trans2(1:3,iy,j)
+
+            rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+            ! store interaction table
+            !
+            if (rij2 < pairdist2) then
+              if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+                num_nb15 = num_nb15 + 1
+#ifdef DEBUG
+                if (num_nb15 > MaxNb15) &
+                  call error_msg( &
+                       'Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+                nb15_calc_list(num_nb15,ij) = iy
+              else
+                ! FEP: for perturbed interactions
+                num_nb15_fep = num_nb15_fep + 1
+#ifdef DEBUG
+                if (num_nb15 > MaxNb15) &
+                  call error_msg( &
+                       'Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+                nb15_calc_list_fep(num_nb15_fep,ij) = iy
+              end if
+            end if
+          end if
+        end do
+
+        num_nb15_calc(ix,ij) = num_nb15 - num_nb15_pre
+        if (num_nb15 /= num_nb15_pre) then
+          num_nb15_cell = num_nb15_cell + 1
+          nb15_list(num_nb15_cell,ij) = ix
+        end if
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+
+        ! FEP: for perturbed interactions
+        num_nb15_calc_fep(ix,ij) = num_nb15_fep - num_nb15_pre_fep
+        if (num_nb15_fep /= num_nb15_pre_fep) then
+          num_nb15_cell_fep = num_nb15_cell_fep + 1
+          nb15_list_fep(num_nb15_cell_fep,ij) = ix
+        end if
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+      end do
+
+      nb15_cell(ij) = num_nb15_cell
+      ! FEP: for perturbed interactions
+      nb15_cell_fep(ij) = num_nb15_cell_fep
+    end do
+
+    do ij = id+maxcell_near+1, maxcell, nthread
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+#ifdef DEBUG
+      if (natom(i) > MaxAtom .or. natom(j) > MaxAtom) &
+        call error_msg( &
+             'Debug: Update_Pairlist_Pbc> natom(cell) is exceed MaxAtom')
+#endif
+
+      num_nb15 = 0
+      num_nb15_pre = 0
+      num_nb15_cell = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+      num_nb15_cell_fep = 0
+      do ix = 1, natom(i)
+
+        rtmp(1:3) = trans2(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+        do iy = 1, natom(j)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,j)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          dij(1:3) = rtmp(1:3) - trans2(1:3,iy,j)
+          rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+          ! store interaction table
+          !
+          if (rij2 < pairdist2) then
+            if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+              num_nb15 = num_nb15 + 1
+#ifdef DEBUG
+              if (num_nb15 > MaxNb15) &
+                call error_msg( &
+                     'Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+              nb15_calc_list(num_nb15,ij) = iy
+            else
+              ! FEP: for perturbed interactions
+              num_nb15_fep = num_nb15_fep + 1
+#ifdef DEBUG
+              if (num_nb15 > MaxNb15) &
+                call error_msg( &
+                     'Debug: Update_Pairlist_Pbc> num_nb15 is exceed MaxNb15')
+#endif
+              nb15_calc_list_fep(num_nb15_fep,ij) = iy
+            end if
+          end if
+        end do
+
+        num_nb15_calc(ix,ij) = num_nb15 - num_nb15_pre
+        if (num_nb15 /= num_nb15_pre) then
+          num_nb15_cell = num_nb15_cell + 1
+          nb15_list(num_nb15_cell,ij) = ix
+        end if
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+
+        ! FEP: for perturbed interactions
+        num_nb15_calc_fep(ix,ij) = num_nb15_fep - num_nb15_pre_fep
+        if (num_nb15_fep /= num_nb15_pre_fep) then
+          num_nb15_cell_fep = num_nb15_cell_fep + 1
+          nb15_list_fep(num_nb15_cell_fep,ij) = ix
+        end if
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+      end do
+
+      nb15_cell(ij) = num_nb15_cell
+      ! FEP: for perturbed interactions
+      nb15_cell_fep(ij) = num_nb15_cell_fep
+    end do
+
+    !$omp end parallel
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_reduce(num_nb15_total, num_nb15_total1, 1, mpi_integer, mpi_sum, &
+         0, mpi_comm_country, ierror)
+#endif
+
+    return
+
+  end subroutine update_pairlist_pbc_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    update_pairlist_pbc_check_fep
+  !> @brief        update pairlist in each domain for FEP calculations
+  !!               with periodic boundary condition
+  !! @authors      NK, HO
+  !! @param[in]    enefunc  : potential energy functions information
+  !! @param[in]    domain   : domain information
+  !! @param[inout] pairlist : pair-list information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine update_pairlist_pbc_check_fep(enefunc, domain, pairlist)
+
+    ! formal arguments
+    type(s_enefunc),  target, intent(in)    :: enefunc
+    type(s_domain),   target, intent(in)    :: domain
+    type(s_pairlist), target, intent(inout) :: pairlist
+
+    ! local variables
+    real(wp)                  :: pairdist2
+    real(wp)                  :: dij(1:3), rij2
+    real(wp)                  :: rtmp(1:3)
+
+    integer                   :: i, j, ij, k, ix, iy
+    integer                   :: num_nb15_pre, num_nb15
+    integer                   :: num_nb15_total, num_nb15_total1
+    integer                   :: num_excl, ini_excl, fin_excl
+    integer                   :: num_nb14, ini_nb14, fin_nb14
+    integer                   :: small_contact
+    logical                   :: nb15_calc
+    integer                   :: id, omp_get_thread_num, num_nb15_cell
+
+    real(dp),         pointer :: coord(:,:,:)
+    real(wp),         pointer :: cell_move(:,:,:), system_size(:)
+    real(wp),         pointer :: trans1(:,:,:), trans2(:,:,:)
+    real(wp),         pointer :: err_minimum_contact
+    integer,          pointer :: num_nonb_excl1(:,:), num_nb14_calc1(:,:)
+    integer,          pointer :: num_nonb_excl(:,:), num_nb14_calc(:,:)
+    integer,          pointer :: nonb_excl_list1(:,:), nb14_calc_list1(:,:)
+    integer,          pointer :: nonb_excl_list(:,:), nb14_calc_list(:,:)
+    integer,          pointer :: natom(:), cell_pairlist1(:,:)
+    integer,          pointer :: ncell, nboundary
+    integer,          pointer :: nb15_cell(:), nb15_list(:,:)
+    integer,          pointer :: nb15_calc_list1(:,:), nb15_calc_list(:,:)
+    integer,          pointer :: num_nb15_calc1(:,:), num_nb15_calc(:,:)
+    integer,          pointer :: table_order
+    logical,          pointer :: nonb_limiter, table
+
+    ! FEP
+    integer                   :: num_nb15_pre_fep, num_nb15_fep
+    integer                   :: num_nb15_cell_fep
+    integer                   :: num_nb15_total_fep
+    integer                   :: fg1, fg2
+    integer,          pointer :: fepgrp(:,:)
+    integer,          pointer :: nb15_cell_fep(:), nb15_list_fep(:,:)
+    integer,          pointer :: nb15_calc_list1_fep(:,:), nb15_calc_list_fep(:,:)
+    integer,          pointer :: num_nb15_calc1_fep(:,:), num_nb15_calc_fep(:,:)
+
+    num_nonb_excl1  => enefunc%num_nonb_excl1
+    num_nb14_calc1  => enefunc%num_nb14_calc1
+    nonb_excl_list1 => enefunc%nonb_excl_list1
+    nb14_calc_list1 => enefunc%nb14_calc_list1
+    num_nonb_excl   => enefunc%num_nonb_excl
+    num_nb14_calc   => enefunc%num_nb14_calc
+    nonb_excl_list  => enefunc%nonb_excl_list
+    nb14_calc_list  => enefunc%nb14_calc_list
+
+    table               => enefunc%table%table
+    table_order         => enefunc%table%table_order
+    nonb_limiter        => enefunc%nonb_limiter
+    err_minimum_contact => enefunc%err_minimum_contact
+
+    ncell           => domain%num_cell_local
+    nboundary       => domain%num_cell_boundary
+    natom           => domain%num_atom
+    coord           => domain%coord
+    trans1          => domain%trans_vec
+    trans2          => domain%translated
+    cell_pairlist1  => domain%cell_pairlist1
+    cell_move       => domain%cell_move
+    system_size     => domain%system_size
+
+    num_nb15_calc1  => pairlist%num_nb15_calc1
+    num_nb15_calc   => pairlist%num_nb15_calc
+    nb15_list       => pairlist%nb15_list
+    nb15_cell       => pairlist%nb15_cell
+    nb15_calc_list1 => pairlist%nb15_calc_list1
+    nb15_calc_list  => pairlist%nb15_calc_list
+
+    pairdist2       =  pairlist%pairlistdist * pairlist%pairlistdist
+    num_nb15_total  =  0
+    small_contact   =  0
+
+    ! FEP
+    num_nb15_calc1_fep  => pairlist%num_nb15_calc1_fep
+    num_nb15_calc_fep   => pairlist%num_nb15_calc_fep
+    nb15_list_fep       => pairlist%nb15_list_fep
+    nb15_cell_fep       => pairlist%nb15_cell_fep
+    nb15_calc_list1_fep => pairlist%nb15_calc_list1_fep
+    nb15_calc_list_fep  => pairlist%nb15_calc_list_fep
+    fepgrp              => domain%fepgrp
+    num_nb15_total_fep  =  0
+
+    !$omp parallel                                                             &
+    !$omp private(id, i, ix, ini_excl, num_excl, ini_nb14, num_nb14, num_nb15, &
+    !$omp         num_nb15_pre, fin_excl, fin_nb14, iy, k, nb15_calc, ij, j,   &
+    !$omp         rtmp, dij, rij2, num_nb15_cell,                              &
+    !$omp         num_nb15_fep, num_nb15_pre_fep,                              &
+    !$omp         num_nb15_cell_fep, fg1, fg2)                                 &
+    !$omp reduction(+:num_nb15_total) reduction(+:small_contact)               &
+    !$omp reduction(+:num_nb15_total_fep)
+
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+    do i = id+1, ncell+nboundary, nthread
+      do ix = 1, natom(i)
+        trans2(1:3,ix,i) = coord(1:3,ix,i) + trans1(1:3,ix,i)
+      end do
+    end do
+
+    !$omp barrier
+
+    ! make a pairlist in the same cell
+    !
+    do i = id+1, ncell, nthread
+
+      ini_excl = 0
+      num_excl = 0
+      ini_nb14 = 0
+      num_nb14 = 0
+      num_nb15 = 0
+      num_nb15_pre = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+
+      if (natom(i) > MaxAtom) &
+        call error_msg( &
+          'Debug: Update_Pairlist_Pbc_Check_Fep> natom(cell) is exceed MaxAtom')
+
+      do ix = 1, natom(i) - 1
+
+        ini_excl = num_excl + 1
+        fin_excl = num_excl + num_nonb_excl1(ix,i)
+        num_excl = fin_excl
+
+        ini_nb14 = num_nb14 + 1
+        fin_nb14 = num_nb14 + num_nb14_calc1(ix,i)
+        num_nb14 = fin_nb14
+
+        do iy = ix + 1, natom(i)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,i)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          nb15_calc = .true.
+          do k = ini_excl, fin_excl
+            if (iy == nonb_excl_list1(k,i)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          do k = ini_nb14, fin_nb14
+            if (iy == nb14_calc_list1(k,i)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          if (nb15_calc) then
+
+            ! store interaction table
+            !
+            if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+              num_nb15 = num_nb15 + 1
+              if (table .and. table_order == 1 )then
+                dij(1:3) = trans2(1:3,ix,i) - trans2(1:3,iy,i)
+                rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+                if (rij2 < err_minimum_contact) then
+                  if (.not. nonb_limiter) &
+                    call error_msg( &
+                    'Debug: Update_Pairlist_Pbc_Check_Fep> too small contact')
+                  small_contact = small_contact + 1
+                endif
+              endif
+              if (num_nb15 > MaxNb15_chk) &
+                call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+              nb15_calc_list1(num_nb15,i) = iy
+            else
+              ! FEP: for perturbed interactions
+              num_nb15_fep = num_nb15_fep + 1
+              if (table .and. table_order == 1 )then
+                dij(1:3) = trans2(1:3,ix,i) - trans2(1:3,iy,i)
+                rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+                if (rij2 < err_minimum_contact) then
+                  if (.not. nonb_limiter) &
+                    call error_msg( &
+                    'Debug: Update_Pairlist_Pbc_Check_Fep> too small contact')
+                  small_contact = small_contact + 1
+                endif
+              endif
+              if (num_nb15_fep > MaxNb15_chk) &
+                call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+              nb15_calc_list1_fep(num_nb15_fep,i) = iy
+            end if
+
+          end if
+        end do
+
+        num_nb15_calc1(ix,i) = num_nb15 - num_nb15_pre
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+
+        ! FEP: for perturbed interactions
+        num_nb15_calc1_fep(ix,i) = num_nb15_fep - num_nb15_pre_fep
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+
+      end do
+    end do
+
+    ! Make a pairlist between different cells
+    !
+    do ij = id+1, maxcell_near, nthread
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+      if (natom(i) > MaxAtom .or. natom(j) > MaxAtom) &
+        call error_msg( &
+             'Debug: Update_Pairlist_Pbc_Check_Fep> natom(cell) is exceed MaxAtom')
+
+      ini_excl = 0
+      num_excl = 0
+      ini_nb14 = 0
+      num_nb14 = 0
+      num_nb15 = 0
+      num_nb15_pre = 0
+      num_nb15_cell = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+      num_nb15_cell_fep = 0
+
+      do ix = 1, natom(i)
+
+        ini_excl = num_excl + 1
+        fin_excl = num_excl + num_nonb_excl(ix,ij)
+        num_excl = fin_excl
+
+        ini_nb14 = num_nb14 + 1
+        fin_nb14 = num_nb14 + num_nb14_calc(ix,ij)
+        num_nb14 = fin_nb14
+
+        rtmp(1:3) = trans2(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+
+        do iy = 1, natom(j)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,j)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          nb15_calc = .true.
+
+          do k = ini_excl, fin_excl
+            if (iy == nonb_excl_list(k,ij)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          do k = ini_nb14, fin_nb14
+            if (iy == nb14_calc_list(k,ij)) then
+              nb15_calc = .false.
+              exit
+            end if
+          end do
+
+          if (nb15_calc) then
+
+            dij(1:3) = rtmp(1:3) - trans2(1:3,iy,j)
+
+            rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+            ! store interaction table
+            !
+            if (rij2 < pairdist2) then
+
+              if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+                num_nb15 = num_nb15 + 1
+                if (table .and. table_order == 1 )then
+                  if (rij2 < err_minimum_contact) then
+                    if (.not. nonb_limiter) &
+                      call error_msg( &
+                      'Debug: Update_Pairlist_Pbc_Check_Fep> too small contact')
+                    small_contact = small_contact + 1
+                  endif
+                endif
+                if (num_nb15 > MaxNb15_chk) &
+                  call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+                nb15_calc_list(num_nb15,ij) = iy
+              else
+                ! FEP: for perturbed interactions
+                num_nb15_fep = num_nb15_fep + 1
+                if (table .and. table_order == 1 )then
+                  if (rij2 < err_minimum_contact) then
+                    if (.not. nonb_limiter) &
+                      call error_msg( &
+                      'Debug: Update_Pairlist_Pbc_Check_Fep> too small contact')
+                    small_contact = small_contact + 1
+                  endif
+                endif
+                if (num_nb15_fep > MaxNb15_chk) &
+                  call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+                nb15_calc_list_fep(num_nb15_fep,ij) = iy
+              end if
+            end if
+          end if
+        end do
+
+        num_nb15_calc(ix,ij) = num_nb15 - num_nb15_pre
+        if (num_nb15 /= num_nb15_pre) then
+          num_nb15_cell = num_nb15_cell + 1
+          nb15_list(num_nb15_cell,ij) = ix
+        end if
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+
+        ! FEP: for perturbed interactions
+        num_nb15_calc_fep(ix,ij) = num_nb15_fep - num_nb15_pre_fep
+        if (num_nb15_fep /= num_nb15_pre_fep) then
+          num_nb15_cell_fep = num_nb15_cell_fep + 1
+          nb15_list_fep(num_nb15_cell_fep,ij) = ix
+        end if
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+      end do
+
+      nb15_cell(ij) = num_nb15_cell
+
+      ! FEP: for perturbed interactions
+      nb15_cell_fep(ij) = num_nb15_cell_fep
+
+    end do
+
+    do ij = id+maxcell_near+1, maxcell, nthread
+
+      i = cell_pairlist1(1,ij)
+      j = cell_pairlist1(2,ij)
+
+      if (natom(i) > MaxAtom .or. natom(j) > MaxAtom) &
+        call error_msg( &
+           'Debug: Update_Pairlist_Pbc_Check_Fep> natom(cell) is exceed MaxAtom')
+
+      num_nb15 = 0
+      num_nb15_pre = 0
+      num_nb15_cell = 0
+      ! FEP: for perturbed interactions
+      num_nb15_fep = 0
+      num_nb15_pre_fep = 0
+      num_nb15_cell_fep = 0
+
+      do ix = 1, natom(i)
+
+        rtmp(1:3) = trans2(1:3,ix,i) + cell_move(1:3,j,i)*system_size(1:3)
+
+        do iy = 1, natom(j)
+
+          ! FEP: skip partA-partB interactions in FEP
+          fg1 = fepgrp(ix,i)
+          fg2 = fepgrp(iy,j)
+          if (enefunc%fepgrp_nonb(fg1,fg2) == 0) cycle
+
+          nb15_calc = .true.
+
+          if (nb15_calc) then
+
+            dij(1:3) = rtmp(1:3) - trans2(1:3,iy,j)
+
+            rij2 = dij(1)*dij(1) + dij(2)*dij(2) + dij(3)*dij(3)
+
+            ! store interaction table
+            !
+            if (rij2 < pairdist2) then
+
+              if (enefunc%fepgrp_nonb(fg1,fg2) == 5) then
+                num_nb15 = num_nb15 + 1
+
+                if (num_nb15 > MaxNb15_chk) &
+                  call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+                nb15_calc_list(num_nb15,ij) = iy
+              else
+                ! FEP: for perturbed interactions
+                num_nb15_fep = num_nb15_fep + 1
+
+                if (num_nb15_fep > MaxNb15_chk) &
+                  call error_msg( &
+                   'Debug: Update_Pairlist_Pbc_Check_Fep> num_nb15 is exceed MaxNb15')
+
+                nb15_calc_list_fep(num_nb15_fep,ij) = iy
+              end if
+            end if
+          end if
+        end do
+
+        num_nb15_calc(ix,ij) = num_nb15 - num_nb15_pre
+        if (num_nb15 /= num_nb15_pre) then
+          num_nb15_cell = num_nb15_cell + 1
+          nb15_list(num_nb15_cell,ij) = ix
+        end if
+        num_nb15_total = num_nb15_total + num_nb15 - num_nb15_pre
+        num_nb15_pre = num_nb15
+
+        ! FEP: for perturbed interactions
+        num_nb15_calc_fep(ix,ij) = num_nb15_fep - num_nb15_pre_fep
+        if (num_nb15_fep /= num_nb15_pre_fep) then
+          num_nb15_cell_fep = num_nb15_cell_fep + 1
+          nb15_list_fep(num_nb15_cell_fep,ij) = ix
+        end if
+        num_nb15_total_fep = num_nb15_total_fep + num_nb15_fep - num_nb15_pre_fep
+        num_nb15_pre_fep = num_nb15_fep
+
+      end do
+
+      nb15_cell(ij) = num_nb15_cell
+      ! FEP: for perturbed interactions
+      nb15_cell_fep(ij) = num_nb15_cell_fep
+
+    end do
+
+    !$omp end parallel
+
+    if (small_contact > 0) then
+      write(MsgOut, *) "Warning: small contacts exist in inner loop"
+    endif
+
+#ifdef HAVE_MPI_GENESIS
+    call mpi_reduce(num_nb15_total, num_nb15_total1, 1, mpi_integer, mpi_sum, &
+         0, mpi_comm_country, ierror)
+#endif
+
+    return
+
+  end subroutine update_pairlist_pbc_check_fep
 
 end module sp_pairlist_mod

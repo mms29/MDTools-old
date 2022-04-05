@@ -684,7 +684,6 @@ contains
     integer                  :: ncell_x, ncell_y, ncell_z
     logical                  :: extend, extend1
 
-
     extend  = .false.
     if ( table  .and. &
         (water_model(1:4) == 'TIP3' .or. &

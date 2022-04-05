@@ -24,6 +24,10 @@ module at_constraints_mod
   use molecules_str_mod
   use fileio_control_mod
   use timers_mod
+  use string_mod
+  use select_mod
+  use select_atoms_mod
+  use select_atoms_str_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
@@ -45,12 +49,15 @@ module at_constraints_mod
     real(wp)                 :: hydrogen_mass_upper_bound = 2.1_wp
     real(wp)                 :: water_rHH =  0.0_wp
     real(wp)                 :: water_rOH =  0.0_wp
+    character(MaxLine)       :: noshake_index  = ''
+    character(MaxLine)       :: fixatm_select_index = ''
   end type s_cons_info
 
   ! parameters
   integer, public, parameter :: ConstraintModeLEAP  = 1
   integer, public, parameter :: ConstraintModeVVER1 = 2
   integer, public, parameter :: ConstraintModeVVER2 = 3
+  integer, public, parameter :: ConstraintModeBD    = 4
 
 
   ! subroutines
@@ -62,11 +69,22 @@ module at_constraints_mod
   private :: setup_shake_qmmm
   private :: setup_lincs
   private :: setup_settle
+  private :: setup_fixatm
+  private :: remove_fixatm
+  private :: remove_fixatm_bond
+  private :: remove_fixatm_angl
+  private :: remove_fixatm_urey
+  private :: remove_fixatm_dihe
+  private :: remove_fixatm_rb_dihe
+  private :: remove_fixatm_impr
+  private :: remove_fixatm_cmap
+  private :: exclude_light_atom
   private :: compute_shake
   private :: compute_settle
   private :: compute_lincs
   private :: compute_rattle
   private :: compute_settle_vv2
+  public  :: clear_fixatm_component
 
 contains
 
@@ -91,7 +109,7 @@ contains
 
       select case (run_mode)
 
-      case ('md', 'remd', 'rpath')
+      case ('md', 'remd', 'rpath', 'bd')
 
         write(MsgOut,'(A)') '[CONSTRAINTS]'
         write(MsgOut,'(A)') 'rigid_bond    = NO        # constraints all bonds involving hydrogen'
@@ -100,6 +118,8 @@ contains
         write(MsgOut,'(A)') '# shake_tolerance = 1.0e-10 # SHAKE/RATTLE tolerance (Ang)'
         write(MsgOut,'(A)') '# water_model     = TIP3    # water model'
         write(MsgOut,'(A)') '# hydrogen_mass_upper_bound    = 2.1    # water model'
+        write(MsgOut,'(A)') '# noshake_index = 1         # Hydrogen atoms without SHAKE'
+        write(MsgOut,'(A)') '# fixatm_select_index = 1 2 # fixed atoms'
         write(MsgOut,'(A)') ' '
 
 
@@ -109,7 +129,7 @@ contains
 
       select case (run_mode)
 
-      case ('md', 'remd', 'rpath')
+      case ('md', 'remd', 'rpath', 'bd')
 
         write(MsgOut,'(A)') '[CONSTRAINTS]'
         write(MsgOut,'(A)') 'rigid_bond    = NO        # constraints all bonds involving hydrogen'
@@ -173,6 +193,10 @@ contains
                                cons_info%water_rHH)
     call read_ctrlfile_real   (handle, Section, 'water_rOH', &
                                cons_info%water_rOH)
+    call read_ctrlfile_string (handle, Section, 'noshake_index', &
+                               cons_info%noshake_index)
+    call read_ctrlfile_string (handle, Section, 'fixatm_select_index',      &
+                               cons_info%fixatm_select_index)
 
     call end_ctrlfile_section(handle)
 
@@ -224,8 +248,24 @@ contains
                 '  hydrogen_type   =  name|mass'
         end if
 
+        if (.not. trim(cons_info%noshake_index) .eq. '') then
+          write(MsgOut,'(a,a)') &
+                '  noshake_index   = ', trim(cons_info%noshake_index)
+        else
+          write(MsgOut,'(a)') &
+                '  noshake_index   =       none'
+        end if
+
       else
         write(MsgOut,'(A30)') '  rigid_bond      =         no'
+      end if
+
+      if(len(trim(cons_info%fixatm_select_index)) /= 0) then
+        write(MsgOut,'(A,A)')             &
+            '  fixatm_select_index        = ', trim(cons_info%fixatm_select_index)
+      else
+        write(MsgOut,'(A)')               &
+            '  fixatm_select_index        =       none'
       end if
 
       write(MsgOut,'(A)') ' '
@@ -253,27 +293,32 @@ contains
   !
   !  Subroutine    setup_constraints
   !> @brief        setup constraints information
-  !! @authors      TM
+  !! @authors      TM, KY
   !! @param[in]    cons_info :CONSTRAINTS section control parameters information
+  !! @param[in]    sel_info  : SELECTION section control parameters information
   !! @param[in]    dynamics    : dynamics information
-  !! @param[in]    boundary    : information of boundary condition
+  !! @param[inout] boundary    : information of boundary condition
   !! @param[inout] molecule    : molecule information
   !! @param[inout] enefunc     : potential energy functions information
   !! @param[inout] constraints : constraints information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_constraints(cons_info, dynamics, boundary, molecule, &
-                               enefunc, constraints)
+  subroutine setup_constraints(cons_info, sel_info, dynamics, boundary, &
+                               molecule, enefunc, constraints)
 
     ! formal arguments
     type(s_cons_info),       intent(in)    :: cons_info
+    type(s_sel_info),        intent(in)    :: sel_info
     type(s_dynamics),        intent(in)    :: dynamics
-    type(s_boundary),        intent(in)    :: boundary
+    type(s_boundary),        intent(inout) :: boundary
     type(s_molecule),        intent(inout) :: molecule
-    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_enefunc), target, intent(inout) :: enefunc
     type(s_constraints),     intent(inout) :: constraints
 
+    ! local arguments
+    type(s_qmmm), pointer :: qmmm
+    qmmm => enefunc%qmmm
 
     ! initialize
     !
@@ -288,11 +333,18 @@ contains
     constraints%water_rHH       = cons_info%water_rHH
     constraints%water_rOH       = cons_info%water_rOH
     
+    ! setup fixed atoms
+    !
+    call setup_fixatm(molecule, boundary, dynamics, enefunc, &
+                      sel_info, cons_info, constraints)
+
 
     ! decide hydrogen atom
     !
     call check_light_atom_name(cons_info%hydrogen_mass_upper_bound, &
                                molecule)
+    if (.not. trim(cons_info%noshake_index) .eq. '') &
+      call exclude_light_atom(cons_info%noshake_index, sel_info, molecule)
 
     if (cons_info%rigid_bond) then
 
@@ -312,7 +364,7 @@ contains
       ! setup SHAKE and RATTLE
       !
       call setup_shake(molecule, enefunc, constraints)
-      if (enefunc%qmmm%do_qmmm) then
+      if (qmmm%do_qmmm .and. .not. dynamics%esp_mm) then
         call setup_shake_qmmm(cons_info, molecule, enefunc, constraints)
       end if
 
@@ -325,7 +377,7 @@ contains
                          ' = VVER is not supported')
         end if
 
-        call setup_lincs(molecule, constraints)
+        call setup_lincs(molecule, dynamics, constraints)
 
       end if
 
@@ -419,7 +471,8 @@ contains
       endif
 
       if (cl1 .or. cl2 .or. &
-           enefunc%forcefield == ForcefieldKBGO) then
+           (enefunc%forcefield == ForcefieldKBGO .or. &
+            enefunc%forcefield == ForcefieldRESIDCG )) then
         s_found = s_found + 1
       end if
     end do
@@ -481,7 +534,8 @@ contains
       endif
 
       if (cl1 .or. cl2 .or. &
-           enefunc%forcefield == ForcefieldKBGO) then
+           enefunc%forcefield == ForcefieldKBGO .or.  &
+           enefunc%forcefield == ForcefieldRESIDCG ) then
         s_found = s_found + 1
         constraints%bond_dist(s_found)     = temp_r0(i)
         constraints%bond_list(1:2,s_found) = temp_list(1:2,i)
@@ -591,7 +645,8 @@ contains
       endif
 
       if (cl1 .or. cl2 .or. &
-           enefunc%forcefield == ForcefieldKBGO) then
+           enefunc%forcefield == ForcefieldKBGO .or.  &
+           enefunc%forcefield == ForcefieldRESIDCG ) then
         s_found = s_found + 1
       end if
     end do
@@ -639,6 +694,13 @@ contains
     s_found  = 0
 
     do i = 1, nbond
+
+      if (cons_info%fast_water .and. &
+          trim(molecule%residue_name(qm_bond_list(1,i))) == trim(water_model)) cycle
+
+      if (constraints%fixatm(qm_bond_list(1,i)) .and. &
+          constraints%fixatm(qm_bond_list(2,i))) cycle
+
       mi1 = molecule%light_atom_mass(qm_bond_list(1,i))
       mi2 = molecule%light_atom_mass(qm_bond_list(2,i))
       cl1 = molecule%light_atom_name(qm_bond_list(1,i))
@@ -652,7 +714,9 @@ contains
       endif
 
       if (cl1 .or. cl2 .or. &
-           enefunc%forcefield == ForcefieldKBGO) then
+           enefunc%forcefield == ForcefieldKBGO .or.  &
+           enefunc%forcefield == ForcefieldRESIDCG ) then
+
         s_found = s_found + 1
         constraints%bond_list(1:2,nsbond_mm+s_found) = qm_bond_list(1:2,i)   !YA
         r1=molecule%atom_coord(:,qm_bond_list(1,i))
@@ -690,14 +754,16 @@ contains
   !> @brief        setup fast shake (LINCS)
   !! @authors      TM
   !! @param[in]    molecule    : molecule information
+  !! @param[in]    dynamics    : dynamics information
   !! @param[inout] constraints : constraints information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_lincs(molecule, constraints)
+  subroutine setup_lincs(molecule, dynamics, constraints)
 
     ! formal arguments
     type(s_molecule),            intent(in)    :: molecule
+    type(s_dynamics),            intent(in)    :: dynamics
     type(s_constraints), target, intent(inout) :: constraints
 
     ! local variables
@@ -705,6 +771,7 @@ contains
     integer                      :: i, j, nsbond
     integer                      :: ncc, nncc(8)
     integer                      :: cmax, con, an1, an2, comm
+    logical                      :: friction
 
     integer,             pointer :: list(:,:)
 
@@ -721,6 +788,10 @@ contains
       end if
       return
     end if
+
+    friction = ((dynamics%integrator == IntegratorBDEM) .or. &
+                (dynamics%integrator == IntegratorBD2N) .or. &
+                (dynamics%integrator == IntegratorSDMP))
 
     ! define cmax
     !
@@ -769,8 +840,13 @@ contains
       constraints%num_connected_cons(i) = ncc
       nncc(ncc+1) = nncc(ncc+1) + 1
 
-      imass1 = molecule%inv_mass(an1)
-      imass2 = molecule%inv_mass(an2)
+      if (friction) then
+        imass1 = molecule%inv_stokes_radius(an1)
+        imass2 = molecule%inv_stokes_radius(an2)
+      else
+        imass1 = molecule%inv_mass(an1)
+        imass2 = molecule%inv_mass(an2)
+      end if
       constraints%s_diagonal(i) = 1.0_wp / sqrt(imass1 + imass2)
 
     end do
@@ -801,9 +877,15 @@ contains
 
       do j = 1, ncc
         con = constraints%connected_cons_idx(j,i)
-        constraints%lincs_coef(j,i) = constraints%s_diagonal(i)  &
-                                   * constraints%s_diagonal(con) &
-                                   * molecule%inv_mass(comm)
+        if (friction) then
+          constraints%lincs_coef(j,i) = constraints%s_diagonal(i)  &
+                                     * constraints%s_diagonal(con) &
+                                     * molecule%inv_stokes_radius(comm)
+        else
+          constraints%lincs_coef(j,i) = constraints%s_diagonal(i)  &
+                                     * constraints%s_diagonal(con) &
+                                     * molecule%inv_mass(comm)
+        end if
         if (an1 == list(1,con) .or. an2 == list(2,con)) then
           constraints%lincs_coef(j,i) = -constraints%lincs_coef(j,i)
         end if
@@ -874,7 +956,7 @@ contains
 
     do i = 1, natom
       if (molecule%residue_name(i) == water_model .and.  &
-          .not. boundary%fixatm(i)) &
+          .not. constraints%fixatm(i)) &
         nwater = nwater + 1
     end do
 
@@ -910,7 +992,7 @@ contains
         exit
 
       if (molecule%residue_name(i) == water_model .and. &
-          .not. boundary%fixatm(i)) then
+          .not. constraints%fixatm(i)) then
 
         an1 = molecule%atom_name(i)
         an2 = molecule%atom_name(i+1)
@@ -1138,6 +1220,807 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_fixatm
+  !> @brief        setup atoms fixed in space
+  !! @authors      KY
+  !! @param[in]    molecule    : molecule information
+  !! @param[in]    boundary    : information of boundary condition
+  !! @param[in]    dynamics    : dynamics information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[in]    sel_info    : selector input information
+  !! @param[in]    cons_info   : CONSTRAINTS section control parameters
+  !! @param[inout] constraints : constraints information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_fixatm(molecule, boundary, dynamics, enefunc, &
+                          sel_info, cons_info, constraints)
+
+    ! formal arguments
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_dynamics),        intent(in)    :: dynamics
+    type(s_enefunc), target, intent(inout) :: enefunc
+    type(s_sel_info),        intent(in)    :: sel_info
+    type(s_cons_info),       intent(in)    :: cons_info
+    type(s_constraints),     intent(inout) :: constraints
+
+    ! local variables
+    integer               :: i, j, n
+    type(s_qmmm), pointer :: qmmm
+
+    integer                       :: ngroup, igroup
+    integer,          allocatable :: group_list(:)
+    type(s_selatoms), allocatable :: selatoms(:)
+
+    qmmm => enefunc%qmmm
+
+
+    call alloc_constraints(constraints, ConstraintsFixatm, molecule%num_atoms)
+
+    ! fixed atoms at the boundary
+    if (boundary%num_fixatm > 0) then
+      constraints%num_fixatm = boundary%num_fixatm
+      constraints%fixatm     = boundary%fixatm
+      call update_num_deg_freedom('After setup of fixed atoms at boundary', &
+                           -3*boundary%num_fixatm, molecule%num_deg_freedom)
+    end if
+
+    ! fix QM atoms for ESP/MM-MD
+    if (dynamics%esp_mm) then
+      n = 0
+      do i = 1, qmmm%qm_natoms
+        if (.not. constraints%fixatm(qmmm%qmatom_id(i))) then
+          n = n + 1
+          constraints%fixatm(qmmm%qmatom_id(i)) = .true.
+          constraints%num_fixatm = constraints%num_fixatm + 1
+        end if
+      end do
+      call update_num_deg_freedom('After setup of fixed QM atoms', &
+                                   -3*n, molecule%num_deg_freedom)
+    end if
+
+    ! fixed atoms from the input
+    !
+    ngroup = split_num(trim(cons_info%fixatm_select_index))
+    if (ngroup /= 0) then
+      allocate(group_list(ngroup), selatoms(ngroup))
+      call split(ngroup, ngroup, cons_info%fixatm_select_index, group_list)
+
+      n = 0
+      do i = 1, ngroup
+        igroup = group_list(i)
+        call select_atom(molecule, sel_info%groups(igroup), selatoms(i))
+        do j = 1, size(selatoms(i)%idx)
+          if (.not. constraints%fixatm(selatoms(i)%idx(j))) then
+            !dbg if (main_rank) write(MsgOut,'("debug: ",i8)') selatoms(i)%idx(j)
+            n = n + 1
+            constraints%fixatm(selatoms(i)%idx(j)) = .true.
+            constraints%num_fixatm = constraints%num_fixatm + 1
+          end if
+        end do
+      end do
+      deallocate(group_list, selatoms)
+
+      call update_num_deg_freedom('After setup of fixed atoms', &
+                                   -3*n, molecule%num_deg_freedom)
+
+    end if
+
+
+    if (constraints%num_fixatm > 0) &
+      call remove_fixatm(molecule%num_atoms, constraints%fixatm, enefunc)
+
+    return
+
+  end subroutine setup_fixatm
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm
+  !> @brief        remove potential functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc   : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! bond
+    !
+    if (enefunc%num_bonds > 0) &
+      call remove_fixatm_bond(num_atoms, fixatm, enefunc)
+
+    ! angle
+    !
+    if (enefunc%num_angles > 0) &
+      call remove_fixatm_angl(num_atoms, fixatm, enefunc)
+
+    ! Urey-Bradley
+    !
+    if (enefunc%num_ureys > 0) &
+      call remove_fixatm_urey(num_atoms, fixatm, enefunc)
+
+    ! dihedral
+    !
+    if (enefunc%num_dihedrals > 0) &
+      call remove_fixatm_dihe(num_atoms, fixatm, enefunc)
+
+    ! RB dihedral
+    !
+    if (enefunc%num_rb_dihedrals > 0) &
+      call remove_fixatm_rb_dihe(num_atoms, fixatm, enefunc)
+
+    ! improper
+    !
+    if (enefunc%num_impropers > 0) &
+      call remove_fixatm_impr(num_atoms, fixatm, enefunc)
+
+    ! cmap
+    !
+    if (enefunc%num_cmaps > 0) &
+      call remove_fixatm_cmap(num_atoms, fixatm, enefunc)
+
+    if (main_rank) then
+
+      write(MsgOut,'(A)') &
+           'Remove_Fixatm> Modified Interactions'
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  bond_ene        = ', enefunc%num_bonds,           &
+           '  angle_ene       = ', enefunc%num_angles
+      if (enefunc%num_ureys > 0)   &
+        write(MsgOut,'(A20,I10)')  &
+           '  urey_ene        = ', enefunc%num_ureys
+      write(MsgOut,'(A20,I10,A20,I10)')                         &
+           '  torsion_ene     = ', enefunc%num_dihedrals,       &
+           '  improper_ene    = ', enefunc%num_impropers
+      if (enefunc%num_rb_dihedrals > 0) &
+        write(MsgOut,'(A20,I10)')       &
+           '  rb_dihed_ene    = ', enefunc%num_rb_dihedrals
+      !write(MsgOut,'(A20,I10)')                                 &
+      !     '  cmap_ene        = ', enefunc%num_cmaps
+      write(MsgOut,'(A)') ' '
+    end if
+
+  end subroutine remove_fixatm
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_bond
+  !> @brief        remove bond functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_bond(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: nbonds, nbonds_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
+    integer,   allocatable   :: temp_list(:,:)
+
+    nbonds = enefunc%num_bonds
+
+    ! count the number of bonds including fixed atoms
+    !
+    found = 0
+    do i = 1, nbonds
+      if (fixatm(enefunc%bond_list(1,i)) .and. &
+          fixatm(enefunc%bond_list(2,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+    nbonds_new = nbonds - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_fc(nbonds), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_r0(nbonds), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(2,nbonds), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_fc   = enefunc%bond_force_const
+    temp_r0   = enefunc%bond_dist_min
+    temp_list = enefunc%bond_list
+
+    ! re-allocate EneFuncBond
+    !
+    call dealloc_enefunc(enefunc, EneFuncBond)
+
+    enefunc%num_bonds = nbonds_new
+    call alloc_enefunc(enefunc, EneFuncBond, nbonds_new)
+
+    ! modify enefunc%bond
+    !
+    found = 0
+    do i = 1, nbonds
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)))) then
+        found = found + 1
+        enefunc%bond_force_const(found) = temp_fc(i)
+        enefunc%bond_dist_min(found)    = temp_r0(i)
+        enefunc%bond_list(:,found)      = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_bonds, istart, iend)
+    enefunc%istart_bond = istart
+    enefunc%iend_bond   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_fc, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_r0, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_bond
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_angl
+  !> @brief        remove angle and UB functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_angl(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: nangles, nangles_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
+    integer,   allocatable   :: temp_list(:,:)
+
+    nangles = enefunc%num_angles
+
+    ! count the number of angles including fixed atoms
+    !
+    found = 0
+    do i = 1, nangles
+      if (fixatm(enefunc%angl_list(1,i)) .and. &
+          fixatm(enefunc%angl_list(2,i)) .and. &
+          fixatm(enefunc%angl_list(3,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+
+    nangles_new = nangles - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_fc(nangles), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_r0(nangles), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(3,nangles), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_fc   = enefunc%angl_force_const
+    temp_r0   = enefunc%angl_theta_min
+    temp_list = enefunc%angl_list
+
+    ! re-allocate EneFuncAngl
+    !
+    call dealloc_enefunc(enefunc, EneFuncAngl)
+
+    enefunc%num_angles = nangles_new
+    call alloc_enefunc(enefunc, EneFuncAngl, nangles_new)
+
+    ! modify enefunc%angle
+    !
+    found = 0
+    do i = 1, nangles
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)) .and. &
+                 fixatm(temp_list(3,i)))) then
+        found = found + 1
+        enefunc%angl_force_const(found) = temp_fc(i)
+        enefunc%angl_theta_min(found)   = temp_r0(i)
+        enefunc%angl_list(:,found)      = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_angles, istart, iend)
+    enefunc%istart_angle = istart
+    enefunc%iend_angle   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_fc, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_r0, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_angl
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_urey
+  !> @brief        remove Urey-Bradley functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_urey(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: nureys, nureys_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_fc(:), temp_r0(:)
+    integer,   allocatable   :: temp_list(:,:)
+
+    nureys = enefunc%num_ureys
+
+    ! count the number of ureys including fixed atoms
+    !
+    found = 0
+    do i = 1, nureys
+      if (fixatm(enefunc%urey_list(1,i)) .and. &
+          fixatm(enefunc%urey_list(2,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+
+    nureys_new = nureys - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_fc(nureys), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_r0(nureys), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(3,nureys), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_fc   = enefunc%urey_force_const
+    temp_r0   = enefunc%urey_rmin
+    temp_list = enefunc%urey_list
+
+    ! re-allocate EneFuncUrey
+    !
+    call dealloc_enefunc(enefunc, EneFuncUrey)
+
+    enefunc%num_ureys = nureys_new
+    call alloc_enefunc(enefunc, EneFuncUrey, nureys_new)
+
+    ! modify enefunc%urey
+    !
+    found = 0
+    do i = 1, nureys
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)))) then
+        found = found + 1
+        enefunc%urey_force_const(found) = temp_fc(i)
+        enefunc%urey_rmin(found)        = temp_r0(i)
+        enefunc%urey_list(:,found)      = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_ureys, istart, iend)
+    enefunc%istart_urey = istart
+    enefunc%iend_urey   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_fc, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_r0, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_urey
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_dihe
+  !> @brief        remove dihedral functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_dihe(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: ndihedrals, ndihedrals_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_fc(:), temp_phase(:)
+    real(wp),  allocatable   :: temp_scee(:), temp_scnb(:)
+    integer,   allocatable   :: temp_list(:,:), temp_period(:)
+
+    ndihedrals = enefunc%num_dihedrals
+
+    ! count the number of dihedrals including fixed atoms
+    !
+    found = 0
+    do i = 1, ndihedrals
+      if (fixatm(enefunc%dihe_list(1,i)) .and. &
+          fixatm(enefunc%dihe_list(2,i)) .and. &
+          fixatm(enefunc%dihe_list(3,i)) .and. &
+          fixatm(enefunc%dihe_list(4,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+
+    ndihedrals_new = ndihedrals - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_fc(ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_phase(ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_scee(ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_scnb(ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_period(ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(4,ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_fc     = enefunc%dihe_force_const
+    temp_phase  = enefunc%dihe_phase
+    temp_scee   = enefunc%dihe_scee
+    temp_scnb   = enefunc%dihe_scnb
+    temp_period = enefunc%dihe_periodicity
+    temp_list   = enefunc%dihe_list
+
+    ! re-allocate EneFuncDihe
+    !
+    call dealloc_enefunc(enefunc, EneFuncDihe)
+
+    enefunc%num_dihedrals = ndihedrals_new
+    call alloc_enefunc(enefunc, EneFuncDihe, ndihedrals_new)
+
+    ! modify enefunc%dihe
+    !
+    found = 0
+    do i = 1, ndihedrals
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)) .and. &
+                 fixatm(temp_list(3,i)) .and. &
+                 fixatm(temp_list(4,i)))) then
+        found = found + 1
+        enefunc%dihe_force_const(found) = temp_fc(i)
+        enefunc%dihe_phase(found)       = temp_phase(i)
+        enefunc%dihe_scee(found)        = temp_scee(i)
+        enefunc%dihe_scnb(found)        = temp_scnb(i)
+        enefunc%dihe_periodicity(found) = temp_period(i)
+        enefunc%dihe_list(:,found)      = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_dihedrals, istart, iend)
+    enefunc%istart_dihedral = istart
+    enefunc%iend_dihedral   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_fc, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_phase, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_scee, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_scnb, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_period, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_dihe
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_rb_dihe
+  !> @brief        remove RB dihedral functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_rb_dihe(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: ndihedrals, ndihedrals_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_c(:,:)
+    integer,   allocatable   :: temp_list(:,:)
+
+    ndihedrals = enefunc%num_rb_dihedrals
+
+    ! count the number of RB dihedrals including fixed atoms
+    !
+    found = 0
+    do i = 1, ndihedrals
+      if (fixatm(enefunc%rb_dihe_list(1,i)) .and. &
+          fixatm(enefunc%rb_dihe_list(2,i)) .and. &
+          fixatm(enefunc%rb_dihe_list(3,i)) .and. &
+          fixatm(enefunc%rb_dihe_list(4,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+
+    ndihedrals_new = ndihedrals - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_c(6,ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(4,ndihedrals), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_c    = enefunc%rb_dihe_c
+    temp_list = enefunc%rb_dihe_list
+
+    ! re-allocate EneFuncRBDihe
+    !
+    call dealloc_enefunc(enefunc, EneFuncRBDihe)
+
+    enefunc%num_rb_dihedrals = ndihedrals_new
+    call alloc_enefunc(enefunc, EneFuncRBDihe, ndihedrals_new)
+
+    ! modify RB enefunc%dihe
+    !
+    found = 0
+    do i = 1, ndihedrals
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)) .and. &
+                 fixatm(temp_list(3,i)) .and. &
+                 fixatm(temp_list(4,i)))) then
+        found = found + 1
+        enefunc%rb_dihe_c(:,found)    = temp_c(:,i)
+        enefunc%rb_dihe_list(:,found) = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_rb_dihedrals, istart, iend)
+    enefunc%istart_rb_dihed = istart
+    enefunc%iend_rb_dihed   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_c, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_rb_dihe
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_impr
+  !> @brief        remove improper functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_impr(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: nimpropers, nimpropers_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_fc(:), temp_phase(:)
+    integer,   allocatable   :: temp_list(:,:), temp_period(:)
+
+    nimpropers = enefunc%num_impropers
+
+    ! count the number of impropers including fixed atoms
+    !
+    found = 0
+    do i = 1, nimpropers
+      if (fixatm(enefunc%impr_list(1,i)) .and. &
+          fixatm(enefunc%impr_list(2,i)) .and. &
+          fixatm(enefunc%impr_list(3,i)) .and. &
+          fixatm(enefunc%impr_list(4,i)))      &
+        found = found + 1
+    end do
+
+    if (found == 0) return
+
+    nimpropers_new = nimpropers - found
+
+    ! copy information from enefunc to temp array
+    !
+    allocate(temp_fc(nimpropers), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_period(nimpropers), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_phase(nimpropers), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+    allocate(temp_list(4,nimpropers), stat=alloc_stat)
+    if (alloc_stat /= 0) call error_msg_alloc
+
+    temp_fc     = enefunc%impr_force_const
+    temp_period = enefunc%impr_periodicity
+    temp_phase  = enefunc%impr_phase
+    temp_list   = enefunc%impr_list
+
+    ! re-allocate EneFuncDihe
+    !
+    call dealloc_enefunc(enefunc, EneFuncImpr)
+
+    enefunc%num_impropers = nimpropers_new
+    call alloc_enefunc(enefunc, EneFuncImpr, nimpropers_new)
+
+    ! modify enefunc%dihe
+    !
+    found = 0
+    do i = 1, nimpropers
+      if (.not. (fixatm(temp_list(1,i)) .and. &
+                 fixatm(temp_list(2,i)) .and. &
+                 fixatm(temp_list(3,i)) .and. &
+                 fixatm(temp_list(4,i)))) then
+        found = found + 1
+        enefunc%impr_force_const(found) = temp_fc(i)
+        enefunc%impr_periodicity(found) = temp_period(i)
+        enefunc%impr_phase(found)       = temp_phase(i)
+        enefunc%impr_list(:,found)      = temp_list(:,i)
+      end if
+
+    end do
+
+    ! re-setup loop index
+    !
+    call get_loop_index(enefunc%num_impropers, istart, iend)
+    enefunc%istart_improper = istart
+    enefunc%iend_improper   = iend
+
+    ! deallocate temp array
+    !
+    deallocate(temp_fc, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_period, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_phase, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+    deallocate(temp_list, stat=dealloc_stat)
+    if (dealloc_stat /= 0) call error_msg_dealloc
+
+  end subroutine remove_fixatm_impr
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    remove_fixatm_cmap
+  !> @brief        remove CMAP functions for fixed atoms
+  !! @authors      KY
+  !! @param[in]    num_atoms : number of atoms
+  !! @param[in]    fixatm    : information of fixed atom
+  !! @param[inout] enefunc  : energy potential functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine remove_fixatm_cmap(num_atoms, fixatm, enefunc)
+
+    ! formal arguments
+    integer,         intent(in)    :: num_atoms
+    logical,         intent(in)    :: fixatm(num_atoms)
+    type(s_enefunc), intent(inout) :: enefunc
+
+    ! local variables
+    integer    :: i, j, k
+    integer    :: ncmaps, ncmaps_new
+    integer    :: found
+    integer    :: istart, iend
+    integer    :: alloc_stat, dealloc_stat
+
+    real(wp),  allocatable   :: temp_force(:,:,:), temp_coef(:,:,:,:,:)
+    integer,   allocatable   :: temp_list(:,:), temp_res(:), temp_type(:)
+
+    ! TODO
+
+  end subroutine remove_fixatm_cmap
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    compute_constraints
   !> @brief        update coordinates and velocities
   !! @authors      TM, JJ
@@ -1180,7 +2063,7 @@ contains
                            dynvars%coord_ref, dynvars%coord,        &
                            dynvars%virial_const, constraints)
       else
-        call compute_shake(dt, molecule%inv_mass,                   &
+        call compute_shake(dt, molecule, molecule%inv_mass,         &
                            dynvars%coord_ref, dynvars%coord,        &
                            dynvars%velocity, dynvars%virial_const,  &
                            constraints, .false.)
@@ -1198,7 +2081,7 @@ contains
                             constraints, dt, .true.)
       end if
 
-      call compute_shake(dt, molecule%inv_mass,                     &
+      call compute_shake(dt, molecule, molecule%inv_mass,           &
                          dynvars%coord_ref, dynvars%coord,          &
                          dynvars%velocity, dynvars%virial_const,    &
                          constraints, .true.)
@@ -1225,10 +2108,103 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    exclude_light_atom
+  !> @brief        exclude atoms for SHAKE
+  !! @authors      KY
+  !! @param[in]    noshake_index : index of no-shake atoms
+  !! @param[in]    sel_info  : SELECTION section control parameters information
+  !! @param[inout] molecule  : molecule information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine exclude_light_atom(noshake_index, sel_info, molecule)
+
+    ! formal arguments
+    character(MaxLine)       :: noshake_index
+    type(s_sel_info),        intent(in)    :: sel_info
+    type(s_molecule),        intent(inout) :: molecule
+
+    ! local variables
+    integer                       :: i, j, k, idx, ncount
+    integer                       :: ngroup, igroup, natom, iatom
+    integer,          allocatable :: group_list(:)
+    logical,          allocatable :: switch(:)
+    type(s_selatoms), allocatable :: selatoms(:)
+    integer                       :: kalloc_stat, kdealloc_stat
+
+    ngroup = split_num(trim(noshake_index))
+    allocate(group_list(ngroup), stat = kalloc_stat)
+    if(kalloc_stat /= 0) call error_msg_alloc
+
+    call split(ngroup, ngroup, noshake_index, group_list)
+    allocate(selatoms(ngroup), stat = kalloc_stat)
+    if(kalloc_stat /= 0) call error_msg_alloc
+
+    natom = 0
+    do i = 1, ngroup
+      igroup = group_list(i)
+      call select_atom(molecule, sel_info%groups(igroup), selatoms(i))
+      natom  = natom + size(selatoms(i)%idx)
+    end do
+
+    if (natom == 0) then
+      deallocate(selatoms, stat = kdealloc_stat)
+      if(kdealloc_stat /= 0) call error_msg_dealloc
+      deallocate(group_list, stat = kdealloc_stat)
+      if(kdealloc_stat /= 0) call error_msg_dealloc
+      return
+    end if
+
+    allocate(switch(natom), stat = kalloc_stat)
+    switch = .false.
+
+    ncount = 0
+    k      = 1
+    do i = 1, ngroup
+      natom  = size(selatoms(i)%idx)
+      do j = 1, natom
+        idx = selatoms(i)%idx(j)
+
+        if (molecule%light_atom_mass(idx) .or. &
+            molecule%light_atom_name(idx) ) then
+          molecule%light_atom_mass(idx) = .false.
+          molecule%light_atom_name(idx) = .false.
+          switch(k) = .true.
+          ncount = ncount + 1
+        end if
+        k = k + 1
+
+      end do
+    end do
+
+    if (main_rank .and. ncount > 0) then
+      write(MsgOut,'(A)') &
+        'Setup_Constraints> The following atoms are excluded from SHAKE:'
+      k = 1
+      do i = 1, ngroup
+        natom  = size(selatoms(i)%idx)
+        do j = 1, natom
+          idx = selatoms(i)%idx(j)
+
+          if (switch(k)) then
+            write(MsgOut,'(i8,$)') idx
+            if (mod(k,10) == 0) write(MsgOut,*)
+          end if
+          k = k + 1
+
+        end do
+      end do
+      write(MsgOut,*)
+    end if
+
+  end subroutine exclude_light_atom
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    compute_shake
   !> @brief        SHAKE for rigid bonds
   !! @authors      TM, JJ
-  !! @param[in]    inv_mass    : inversion of atomic mass
+  !! @param[in]    molecule    : molecule information
   !! @param[in]    coord_old   : reference coordinates at t
   !! @param[in]    coord       : unconstrained coordinates at t + dt
   !! @param[out]   coord       : constrained   coordinates at t + dt
@@ -1238,11 +2214,12 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine compute_shake(dt, inv_mass, coord_old, coord, vel, virial, &
-                           constraints, vel_update)
+  subroutine compute_shake(dt, molecule, inv_mass, coord_old, coord, vel, &
+                           virial, constraints, vel_update)
 
     ! formal arguments
     real(wp),                    intent(in)    :: dt
+    type(s_molecule), target,    intent(in)    :: molecule
     real(wp),                    intent(in)    :: inv_mass(:)
     real(wp),                    intent(in)    :: coord_old(:,:)
     real(wp),                    intent(inout) :: coord(:,:)
@@ -1262,6 +2239,7 @@ contains
     integer                      :: atm1, atm2
     integer                      :: nbond, iteration
     logical                      :: shake_end
+    logical, allocatable         :: shake_end_j(:)
 
     real(dp),            pointer :: vec(:,:)
     real(wp),            pointer :: r0(:), force(:)
@@ -1279,6 +2257,8 @@ contains
 
     inv_dt    = 1.0_wp/dt
 
+    allocate(shake_end_j(nbond))
+
     ! initialize force and store old bond vector
     !
     do j = 1, nbond
@@ -1292,7 +2272,8 @@ contains
     !
     do i = 1, iteration
 
-      shake_end = .true.
+      shake_end   = .true.
+      shake_end_j = .true.
 
       do j = 1, nbond
 
@@ -1305,6 +2286,7 @@ contains
 
         if (abs(dist - real(r0(j),dp)) >= tolerance) then
           shake_end = .false.
+          shake_end_j(j) = .false.
 
           imass1 = real(inv_mass(atm1),dp)
           imass2 = real(inv_mass(atm2),dp)
@@ -1340,8 +2322,30 @@ contains
 
     ! error check
     !
-    if (.not. shake_end) &
+    if (.not. shake_end) then
+      if (main_rank) then
+        write(MsgOut,'("Compute_Shake> SHAKE altorithm failed to converge")')
+        do j = 1, nbond
+          if (.not. shake_end_j(j)) then
+            atm1 = bond_list(1,j)
+            atm2 = bond_list(2,j)
+            write(MsgOut,'(i8,x,a4,x,i6,x,a4,x,a6," - ",i8,x,a4,x,i6,x,a4,x,a6)')  &
+              atm1,                         &
+              molecule%segment_name(atm1),  &
+              molecule%residue_no(atm1),    &
+              molecule%residue_name(atm1),  &
+              molecule%atom_name(atm1),     &
+              atm2,                         &
+              molecule%segment_name(atm2),  &
+              molecule%residue_no(atm2),    &
+              molecule%residue_name(atm2),  &
+              molecule%atom_name(atm2)
+          end if
+        end do
+      end if
       call error_msg('Compute_Shake> SHAKE algorithm failed to converge (see "Chapter: Trouble shooting" in the user manual)')
+
+    end if
 
     do j = 1, nbond
       d12_old(1:3) = vec(1:3,j)
@@ -2058,5 +3062,39 @@ contains
     return
 
   end subroutine compute_settle_vv2
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    clear_component
+  !> @brief        clear to zero the specified component
+  !! @authors      KY
+  !! @param[in]    constraints : boundary conditions information
+  !! @param[in]    natom    : number of atoms
+  !! @param[inout] comp     : velocity or force
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine clear_fixatm_component(constraints, natom, comp)
+
+    ! formal arguments
+    type(s_constraints), intent(in)    :: constraints
+    integer,             intent(in)    :: natom
+    real(wp),            intent(inout) :: comp(3,natom)
+
+    ! local variable
+    integer  :: i
+
+    if (constraints%num_fixatm == 0) return
+
+    !$omp parallel 
+    !$omp do 
+    do i = 1, natom
+      if (constraints%fixatm(i)) comp(:,i) = 0.0_wp
+    end do
+    !$omp end do
+    !$omp end parallel
+
+  end subroutine clear_fixatm_component
+
 
 end module at_constraints_mod

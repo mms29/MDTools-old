@@ -25,23 +25,25 @@ module rc_option_str_mod
   ! structures
   type, public :: s_option
 
-    logical              :: check_only
-    integer              :: convert_type
-    integer, allocatable :: convert_ids(:)
-    integer              :: num_replicas
-    integer              :: nsteps
-    integer              :: exchange_period
-    integer              :: crdout_period
-    integer              :: eneout_period
-    integer              :: trjout_format
-    integer              :: trjout_type
-    character(MaxLine)   :: trjout_atom_exp
-    type(s_selatoms)     :: trjout_atom
-    logical              :: centering
-    character(MaxLine)   :: centering_atom_exp
-    type(s_selatoms)     :: centering_atom
-    real(wp)             :: center_coord(3)
-    integer              :: pbcc_mode
+    logical                :: check_only
+    integer                :: convert_type
+    integer, allocatable   :: convert_ids(:)
+    integer                :: num_replicas
+    integer                :: nsteps
+    integer                :: exchange_period
+    integer                :: crdout_period
+    integer                :: eneout_period
+    integer                :: logout_period
+    integer                :: trjout_period
+    integer                :: trjout_format
+    integer                :: trjout_type
+    character(MaxLineLong) :: trjout_atom_exp
+    type(s_selatoms)       :: trjout_atom
+    logical                :: centering
+    character(MaxLineLong) :: centering_atom_exp
+    type(s_selatoms)       :: centering_atom
+    real(wp)               :: center_coord(3)
+    integer                :: pbcc_mode
 
   end type s_option
 

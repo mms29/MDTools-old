@@ -28,9 +28,9 @@ module fa_option_str_mod
     logical             :: check_only
 
     ! parameters for FRET efficiency
-    character(MaxLine)  :: analysis_atom_exp(2)
-    type(s_selatoms)    :: analysis_atom(2)
-    real(wp)            :: Forster_radius
+    character(MaxLineLong) :: analysis_atom_exp(2)
+    type(s_selatoms)       :: analysis_atom(2)
+    real(wp)               :: Forster_radius
 
   end type s_option
 

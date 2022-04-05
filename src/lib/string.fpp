@@ -26,6 +26,7 @@ module string_mod
   integer,      public, parameter :: MaxLineLong_CV   = 100000
   integer,      public, parameter :: LineBuffer       = 128
   integer,      public, parameter :: MaxFilename      = MaxLine
+  integer,      public, parameter :: MaxFilenameLong  = MaxLineLong
   integer,      public, parameter :: MaxMultiFilename = MaxLine
 
   ! subroutines and functions

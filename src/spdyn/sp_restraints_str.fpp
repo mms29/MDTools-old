@@ -72,6 +72,8 @@ module sp_restraints_str_mod
   integer,      public, parameter :: RestraintsFuncREPULCOM = 14
   integer,      public, parameter :: RestraintsFuncFB       = 15
   integer,      public, parameter :: RestraintsFuncFBCOM    = 16
+  integer,      public, parameter :: RestraintsFuncCONF     = 17
+  integer,      public, parameter :: RestraintsFuncCONFCOM  = 18
 
   ! parameters for maximum number
   integer,      public, parameter :: RestraintsMaxConst     = 4
@@ -84,7 +86,7 @@ module sp_restraints_str_mod
   integer,      public, parameter :: RestraintsDirZ         = 4
 
   ! restraints func type strings
-  character(*), public, parameter :: RestraintsFuncTypes(16) = (/'POSI     ', &
+  character(*), public, parameter :: RestraintsFuncTypes(18) = (/'POSI     ', &
                                                                  'DIST     ', &
                                                                  'DISTMASS ', &
                                                                  'RMSD     ', &
@@ -99,7 +101,9 @@ module sp_restraints_str_mod
                                                                  'REPUL    ', &
                                                                  'REPULMASS', &
                                                                  'FB       ', &
-                                                                 'FBMASS   '/)
+                                                                 'FBMASS   ', &
+                                                                 'CONF     ', &
+                                                                 'CONFMASS '/)
  
   character(*), public, parameter :: RestraintsDirTypes(4) = (/'ALL ', &
                                                                'X   ', &

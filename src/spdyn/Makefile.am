@@ -7,6 +7,12 @@
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
 
+if INTERNAL_LAPACK
+  INT_LAPACK_LIB=$(LAPACK_LIB1)
+else
+  INT_LAPACK_LIB=
+endif
+
 SUBDIRS	:= ../lib .
 
 if PARALLEL_IO
@@ -30,6 +36,7 @@ spdyn_SOURCES = \
 	sp_dynvars_str.fpp \
 	sp_dynamics_str.fpp \
 	sp_minimize_str.fpp \
+	sp_alchemy_str.fpp \
 	sp_output_str.fpp \
 	sp_remd_str.fpp \
 	sp_rpath_str.fpp \
@@ -55,6 +62,7 @@ spdyn_SOURCES = \
 	sp_energy_gamd.fpp \
 	sp_energy.fpp \
 	sp_grest_energy.fpp \
+	sp_fep_energy.fpp \
 	sp_enefunc_table.fpp \
 	sp_enefunc_restraints.fpp \
 	sp_enefunc_localres.fpp \
@@ -76,7 +84,10 @@ spdyn_SOURCES = \
 	sp_md_vverlet.fpp \
 	sp_md_respa.fpp \
 	sp_md_mts.fpp \
+	sp_alchemy.fpp \
 	sp_remd.fpp \
+    sp_fep_topology.fpp \
+    sp_fep_utils.fpp \
 	sp_rpath.fpp \
 	sp_gamd.fpp \
 	sp_dynamics.fpp \
@@ -96,7 +107,7 @@ spdyn_SOURCES += \
 	spdyn.fpp
 endif
 
-spdyn_ADDLIB = ../lib/lib.a
+spdyn_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
 
 prst_setup_SOURCES = \
 	sp_domain_str.fpp \
@@ -111,6 +122,7 @@ prst_setup_SOURCES = \
 	sp_dynvars_str.fpp \
 	sp_dynamics_str.fpp \
 	sp_minimize_str.fpp \
+	sp_alchemy_str.fpp \
 	sp_output_str.fpp \
 	sp_remd_str.fpp \
 	sp_rpath_str.fpp \
@@ -136,6 +148,7 @@ prst_setup_SOURCES = \
 	sp_energy_gamd.fpp \
 	sp_energy.fpp \
 	sp_grest_energy.fpp \
+	sp_fep_energy.fpp \
 	sp_enefunc_table.fpp \
 	sp_enefunc_restraints.fpp \
 	sp_enefunc_localres.fpp \
@@ -157,7 +170,10 @@ prst_setup_SOURCES = \
 	sp_md_vverlet.fpp \
 	sp_md_respa.fpp \
 	sp_md_mts.fpp \
+	sp_alchemy.fpp \
 	sp_remd.fpp \
+	sp_fep_topology.fpp \
+	sp_fep_utils.fpp \
 	sp_rpath.fpp \
 	sp_gamd.fpp \
 	sp_dynamics.fpp \
@@ -190,7 +206,7 @@ prst_setup_SOURCES += \
 	prst_setup.fpp
 endif
 
-prst_setup_ADDLIB = ../lib/lib.a
+prst_setup_ADDLIB = ../lib/lib.a $(INT_LAPACK_LIB)
 
 SUFFIXES = .fpp
 
@@ -198,6 +214,40 @@ DEPENDS	= Makefile.depends
 MAINTAINERCLEANFILES = Makefile.in
 
 CLEANFILES = $(bin_PROGRAMS) $(spdyn_OBJECTS) $(prst_setup_OBJECTS) *.f90 *~ *.mod
+
+#sp_pairlist.o : sp_pairlist.fpp
+#if USEKCOMP
+#	cp $*.fpp $*.f90
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+#	mv $*.cpp.f90 $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_PAIRLIST) -c $*.f90
+#else
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+#endif
+
+sp_energy_table_linear_nowater.o : sp_energy_table_linear_nowater.fpp
+if USEKCOMP
+	cp $*.fpp $*.f90
+	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+	mv $*.cpp.f90 $*.f90
+	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_NONBOND) -c $*.f90
+else
+	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+endif
+
+#sp_energy_table_linear_water.o : sp_energy_table_linear_water.fpp
+#if USEKCOMP
+#	cp $*.fpp $*.f90
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.f90
+#	mv $*.cpp.f90 $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS_KERNELS_PAIRLIST) -c $*.f90
+#else
+#	$(FPP) $(PPFLAGS) $(DEFS) $*.fpp $*.f90
+#	$(FC)  $(DEFAULT_INCLUDES) $(INCLUDES) -I../lib $(FCFLAGS) -c $*.f90
+#endif
+
 
 .fpp.o:
 if USEKCOMP

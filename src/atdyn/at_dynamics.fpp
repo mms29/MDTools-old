@@ -18,6 +18,7 @@ module at_dynamics_mod
 
   use at_md_leapfrog_mod
   use at_md_vverlet_mod
+  use at_md_vverlet_cg_mod
   use at_output_mod
   use at_restraints_mod
   use at_boundary_mod
@@ -30,6 +31,9 @@ module at_dynamics_mod
   use at_pairlist_str_mod
   use at_enefunc_str_mod
   use at_restraints_str_mod
+  use at_energy_str_mod
+  use at_energy_mod
+  use at_qmmm_mod
   use random_mod
   use fileio_rst_mod
   use molecules_mod
@@ -38,7 +42,7 @@ module at_dynamics_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -70,12 +74,24 @@ module at_dynamics_mod
     real(wp)         :: initial_value    =  0.0_wp
     real(wp)         :: final_value      =  0.0_wp
 
+    ! box expansion & shrink MD
+    logical          :: shrink_box       = .false.
+    integer          :: shrink_period    =     0
+    real(wp)         :: dbox_x           =   0.0_wp
+    real(wp)         :: dbox_y           =   0.0_wp
+    real(wp)         :: dbox_z           =   0.0_wp
+    ! ESP/MM - MD
+    logical          :: esp_mm           = .false.
+    integer          :: calc_qm_period   = 0
+    logical          :: avg_qm_charge    = .false.
+
   end type s_dyn_info
 
   ! subroutines
   public  :: show_ctrl_dynamics
   public  :: read_ctrl_dynamics
   public  :: setup_dynamics
+  public  :: setup_dynamics_espmm
   public  :: run_md
 
 contains
@@ -104,7 +120,7 @@ contains
       case ('md')
 
         write(MsgOut,'(A)') '[DYNAMICS]'
-        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER]'
+        write(MsgOut,'(A)') 'integrator    = LEAP      # [LEAP,VVER, VVER_CG]'
         write(MsgOut,'(A)') 'nsteps        = 100       # number of MD steps'
         write(MsgOut,'(A)') 'timestep      = 0.001     # timestep (ps)'
         write(MsgOut,'(A)') 'eneout_period = 10        # energy output period'
@@ -123,6 +139,10 @@ contains
         write(MsgOut,'(A)') '# steered_md    = no        # targeted MD simulation'
         write(MsgOut,'(A)') '# initial_value  = 0.0      # initial TMD target RMSD'
         write(MsgOut,'(A)') '# final_value    = 0.0      # final TMD target RMSD'
+
+        write(MsgOut,'(A)') '# esp_mm         = NO       # ESP/MM MD'
+        write(MsgOut,'(A)') '# calc_qm_period = 0        # QM calculation period'
+        write(MsgOut,'(A)') '# avg_qm_charge  = YES      # Average QM charges'
         write(MsgOut,'(A)') ' '
 
 
@@ -140,6 +160,10 @@ contains
         write(MsgOut,'(A)') '# nbupdate_period = 10      # nonbond update period'
         write(MsgOut,'(A)') '# iseed         = -1        # random number seed '
         write(MsgOut,'(A)') '# initial_time  = 0.0       # initial time (ps)'
+
+        write(MsgOut,'(A)') '# esp_mm         = NO       # ESP/MM MD'
+        write(MsgOut,'(A)') '# calc_qm_period = 0        # QM calculation period'
+        write(MsgOut,'(A)') '# avg_qm_charge  = YES      # Average QM charges'
         write(MsgOut,'(A)') ' '
 
       end select
@@ -228,6 +252,19 @@ contains
                                dyn_info%initial_value)
     call read_ctrlfile_real   (handle, Section, 'final_value',    &
                                dyn_info%final_value)
+    call read_ctrlfile_logical(handle, Section, 'esp_mm',         &
+                               dyn_info%esp_mm)
+    call read_ctrlfile_integer(handle, Section, 'calc_qm_period', &
+                               dyn_info%calc_qm_period)
+    call read_ctrlfile_logical(handle, Section, 'avg_qm_charge',  &
+                               dyn_info%avg_qm_charge)
+
+    call read_ctrlfile_real   (handle, Section, 'dbox_x',  &
+                               dyn_info%dbox_x)
+    call read_ctrlfile_real   (handle, Section, 'dbox_y',  &
+                               dyn_info%dbox_y)
+    call read_ctrlfile_real   (handle, Section, 'dbox_z',  &
+                               dyn_info%dbox_z)
 
     call end_ctrlfile_section(handle)
 
@@ -288,6 +325,20 @@ contains
               '  final value     = ', dyn_info%final_value
       else
         write(MsgOut,'(A)') '  steered_md      =         no'
+      end if
+
+
+      if (dyn_info%esp_mm) then
+        write(MsgOut,'(A)') '  esp_mm          =        yes'
+        write(MsgOut,'(A20,I10)')                                  &
+              '  calc_qm_period  = ', dyn_info%calc_qm_period
+        if (dyn_info%avg_qm_charge) then
+          write(MsgOut,'(A)') '  avg_qm_charge   =        yes'
+        else
+          write(MsgOut,'(A)') '  avg_qm_charge   =         no'
+        end if
+      else
+        write(MsgOut,'(A)') '  esp_mm          =         no'
       end if
 
       write(MsgOut,'(A)') ' '
@@ -357,6 +408,30 @@ contains
               'mod(crdout_period,nbupdate_period) is not ZERO')
         end if
       end if
+      if (dyn_info%shrink_box) then
+        if (dyn_info%shrink_period > 0) then
+          if (mod(dyn_info%shrink_period, dyn_info%nbupdate_period) /=0) then
+            call error_msg('Read_Ctrl_Dynamics> '//                    &
+                           'mod(shrink_period, nbupdate_period) is not ZERO')
+          end if
+        end if
+
+        if (dyn_info%annealing) then
+          call error_msg('Read_Ctrl_Dynamics>'//                    &
+                         'annealing and shrink_md are not set at the same time')
+        end if
+
+        if (dyn_info%target_md) then
+          call error_msg('Read_Ctrl_Dynamics>'//                    &
+                         'target_md and shrink_md are not set at the same time')
+        end if
+
+        if (dyn_info%steered_md) then
+          call error_msg('Read_Ctrl_Dynamics>'//                    &
+                         'steered_md and shrink_md are not set at the same time')
+        end if
+      end if
+
 
       if (dyn_info%steered_md .and. dyn_info%target_md) then
         call error_msg('Read_Ctrl_Dynamics> steered_md and target_md are not set at the same time')
@@ -423,22 +498,32 @@ contains
     dynamics%steered_md       = dyn_info%steered_md
     dynamics%initial_value    = dyn_info%initial_value
     dynamics%final_value      = dyn_info%final_value
-
+    dynamics%shrink_box       = dyn_info%shrink_box
+    dynamics%shrink_period    = dyn_info%shrink_period
+    dynamics%dbox_x           = dyn_info%dbox_x
+    dynamics%dbox_y           = dyn_info%dbox_y
+    dynamics%dbox_z           = dyn_info%dbox_z
+    dynamics%esp_mm           = dyn_info%esp_mm
+    dynamics%calc_qm_period   = dyn_info%calc_qm_period
+    dynamics%avg_qm_charge    = dyn_info%avg_qm_charge
+    
     iseed = dyn_info%iseed
     if (rst%rstfile_type == RstfileTypeUndef .or. &
         rst%rstfile_type == RstfileTypeMin ) then
       dynamics%restart        = .false.
+      dynamics%multiple_random_seed = .true.
       dynamics%random_restart = .false.
       if (dyn_info%iseed == -1) then
         if (main_rank) &
           call random_seed_initial_time(iseed)
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_bcast(iseed, 1, mpi_integer, 0, mpi_comm_country, ierror)
 #endif
       endif
       dynamics%iseed          = iseed + 1000 * my_country_no
     else
       dynamics%restart        = .true.
+      dynamics%multiple_random_seed = .false.
       if (dyn_info%iseed == -1) then
         dynamics%iseed        = rst%iseed
       else
@@ -497,6 +582,64 @@ contains
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
+  !  Subroutine    setup_dynamics_espmm
+  !> @brief        setup ESP/MM-MD
+  !> @authors      KY
+  !! @param[in]    molecule   : information of molecules
+  !! @param[in]    dynanmics  : dynamics information
+  !! @param[inout] dynvars    : information of dynamic variables
+  !! @param[inout] qmmm       : qmmm information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_dynamics_espmm(molecule, dynamics, dynvars, qmmm)
+
+    ! formal arguments
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_dynamics),        intent(in)    :: dynamics
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_qmmm),            intent(inout) :: qmmm
+
+    ! local variables
+    type(s_energy)   :: dummy_ene
+    real(wp)         :: dummy_force(1,1)
+
+    if (.not. qmmm%do_qmmm) then
+        call error_msg('Setup_Dynamics_ESPMM> QMMM must be set '// &
+                       'to perform ESP/MM-MD')
+    end if
+
+    ! QMMM setings
+    qmmm%qm_classical = .true.
+    qmmm%qm_get_esp   = .true.
+    qmmm%ene_only     = .true.
+
+    ! check for ESP charge
+    if (.not. qmmm%is_qm_charge) then
+
+      if(main_rank) &
+        write(MsgOut,'(a,/)') &
+               "Setup_Dynamics_ESPMM> QM charges are not found. "// &
+               "Now, computing QM charges (this may take some time) ..."
+
+      qmmm%qm_count = 0
+      qmmm%qm_classical = .false.
+      call compute_energy_qmmm(molecule, dynvars%coord, qmmm, &
+                               dummy_ene, dummy_force)
+      qmmm%qm_classical = .true.
+
+    else
+      if(main_rank) &
+        write(MsgOut,'("Setup_Dynamics_ESPMM> QM charge from rstfile",/)') 
+
+    end if
+ 
+    return
+
+  end subroutine setup_dynamics_espmm
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
   !  Subroutine    run_md
   !> @brief        perform MD simulation
   !! @authors      YS
@@ -550,6 +693,11 @@ contains
     case (IntegratorVVER)
 
       call vverlet_dynamics (output, molecule, enefunc, dynvars, dynamics, &
+                             pairlist, boundary, constraints, ensemble)
+
+    case (IntegratorVVER_CG)
+
+      call vverlet_dynamics_cg (output, molecule, enefunc, dynvars, dynamics, &
                              pairlist, boundary, constraints, ensemble)
 
     end select

@@ -10,6 +10,7 @@
 SUBDIRS = comcrd_analysis \
           trj_analysis \
           qval_analysis \
+          qval_residcg_analysis \
           drms_analysis \
           rmsd_analysis \
           rg_analysis \
@@ -20,4 +21,4 @@ SUBDIRS = comcrd_analysis \
 	  msd_analysis \
           diffusion_analysis \
           fret_analysis \
-          energy_analysis
+		  ring_analysis

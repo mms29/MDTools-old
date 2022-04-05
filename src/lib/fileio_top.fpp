@@ -50,6 +50,9 @@ module fileio_top_mod
   ! parameters
   integer,     private, parameter :: MAXROW = 80
 
+  ! local variables
+  logical,                private :: vervose = .true.
+
   ! subroutines
   public  :: input_top
   public  :: init_top
@@ -81,7 +84,7 @@ contains
     ! local variables
     type(s_top)              :: top0
     integer                  :: unit_no, i
-    character(100)           :: filename
+    character(MaxFilename)   :: filename
 
 
     call init_top(top)
@@ -107,12 +110,13 @@ contains
 
     end do
 
-    if (main_rank) then
+    if (main_rank .and. vervose) then 
       write(MsgOut,'(A)') 'Input_Top> Summary of Topfile'
       write(MsgOut,'(A20,I10,A20,I10)') &
            '  num_atom_class  = ', top%num_atom_cls, &
            '  num_resi_type   = ', top%num_res_type
       write(MsgOut,'(A)') ' '
+      vervose = .false.
     end if
 
     return

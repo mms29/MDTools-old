@@ -24,7 +24,7 @@ module sp_energy_pme_mod
   use mpi_parallel_mod
   use constants_mod
   use fft3d_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -68,6 +68,10 @@ module sp_energy_pme_mod
   integer,          save :: maxproc
   integer,          save :: ngridmax
   integer,          save :: fft_scheme
+  !FEP
+  real(dp), public, save :: u_self_preserve ! Ewald self energy
+  real(dp), public, save :: u_self_appear   ! Ewald self energy
+  real(dp), public, save :: u_self_vanish   ! Ewald self energy
 
   real(wp),         save, allocatable :: b2(:,:)        ! b^2(hx,hy,hz)
   real(wp),         save, allocatable :: gx(:)
@@ -116,6 +120,9 @@ module sp_energy_pme_mod
   public  :: dealloc_pme
   public  :: pme_pre
   public  :: pme_recip
+  !FEP
+  public  :: pme_pre_fep
+  public  :: pme_recip_fep
 
 contains
 
@@ -432,7 +439,7 @@ contains
 
       ! new communicator according to the grid index
       !
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_comm_split(mpi_comm_city, index_x,my_city_rank,grid_commx,ierror)
       call mpi_comm_size (grid_commx, nprocx, ierror)
       call mpi_comm_rank (grid_commx, my_x_rank, ierror)
@@ -632,7 +639,7 @@ contains
     !$omp end parallel
 
     deallocate(gx, gy, gz, vir_fact, vi, qdf, qdf_real, &
-               theta, qdf_work, ftqdf, ftqdf_work,      &
+               theta, qdf_work, ftqdf_work,      &
                stat = dealloc_stat)
 
     if (dealloc_stat /= 0) call error_msg_dealloc
@@ -640,6 +647,9 @@ contains
       deallocate(theta_local, c_work, c_work1, c_work2,         &
                  c_work3, r_work, r_work1, r_work2, r_work3,    &
                  stat = dealloc_stat)
+      if (dealloc_stat /= 0) call error_msg_dealloc
+    else
+      deallocate(ftqdf, stat = dealloc_stat)
       if (dealloc_stat /= 0) call error_msg_dealloc
     end if
 
@@ -1151,7 +1161,7 @@ contains
 
       !$omp barrier
       !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_alltoall(qdf_real, nlocalx*nlocaly*nlocalz/nprocx, mpi_wp_real, &
                         qdf_work, nlocalx*nlocaly*nlocalz/nprocx, mpi_wp_real, &
                         grid_commx, ierror)
@@ -1183,7 +1193,7 @@ contains
 
       !$omp barrier
       !$omp master
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       call mpi_allgather(qdf_real, nlocalx*nlocaly*nlocalz, mpi_wp_real,         &
                          qdf_work, nlocalx*nlocaly*nlocalz, mpi_wp_real,         &
                          grid_commx, ierror)
@@ -1600,5 +1610,1006 @@ contains
     return
 
   end subroutine pme_recip
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    pme_pre_fep
+  !> @brief        Prepare functions for PME calculation for FEP calculation
+  !! @authors      NK
+  !! @param[in]    domain   : domain information
+  !! @param[in]    boundary : boundary information
+  !! @note         Extracted from setup_pme for NPT calculation
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine pme_pre_fep(domain, boundary)
+
+    ! formal arguments
+    type(s_domain),          intent(in)    :: domain
+    type(s_boundary),        intent(in)    :: boundary
+    ! local variables
+    integer                  :: i, j, k, is, js, ks, ix, iy, iz, iproc
+    integer                  :: ic, kk, iprocx, iprocy, ixs, izs, k_f, k_t
+    integer                  :: nix, nix1, niy, niz, iorg
+    integer                  :: ix_start, ix_end, iz_start
+    integer                  :: iz_end, iy_start, iy_end
+    real(wp)                 :: fact, gfact(3), g2
+
+
+    box(1) = boundary%box_size_x
+    box(2) = boundary%box_size_y
+    box(3) = boundary%box_size_z
+
+    do k = 1, 3
+      box_inv(k) = 1.0_wp / box(k)
+      r_scale(k) = real(ngrid(k),wp) * box_inv(k)
+    end do
+
+    vol_fact2 = 2.0_wp * PI * el_fact * box_inv(1)*box_inv(2)*box_inv(3)
+    vol_fact4 = 2.0_wp * vol_fact2
+
+    if (fft_scheme == FFT_2dalltoall) then
+      theta_local(1:nlocalx*nlocaly*nlocalz) = 0.0_wp
+    end if
+
+    ! Prepareing theta = F^-1[theta](h), h shifted
+    ! Gx, Gy, Gz, and vir_fact=-2(1+G^2/4a)/G^2 are also prepared 
+    ! for virial calculation
+    !
+    do k = 1, 3
+      gfact(k) = 2.0_wp * PI * box_inv(k)
+    end do
+
+    fact = 0.25_wp / alpha2m
+
+    if (fft_scheme == FFT_2dalltoall) then
+
+      do i = x_start1, x_end1
+
+        ix = i - x_start1 + 1
+        is = i - 1
+        gx(ix) = gfact(1) * real(is,wp)
+
+        do j = y_start, y_end
+
+          iy = j - y_start + 1
+          if (j <= ngrid(2)/2+1) then
+            js = j - 1
+          else
+            js = j - 1 - ngrid(2)
+          end if
+
+          gy(iy) = gfact(2) * real(js,wp)
+
+          do iproc = 1, nprocz
+            do iz = 1, nlocalz
+              k = (iproc-1)*nlocalz + iz
+              if (k <= ngrid(3)/2+1) then
+                ks = k - 1
+              else
+                ks = k - 1 - ngrid(3)
+              end if
+              gz(iz,iproc) = gfact(3) * real(ks,wp)
+              g2 = gx(ix)**2 + gy(iy)**2 + gz(iz,iproc)**2
+              if (g2 > EPS) then
+                if (iproc == (my_z_rank+1)) &
+                  vir_fact(iz,iy,ix) = -2.0_wp * (1.0_wp - g2 * fact)/g2
+                if (iproc == (my_z_rank+1)) then
+                  kk = ix + (iy-1)*nlocalx1 + (iz-1)*nlocalx1*nlocaly
+                  theta_local(kk) = b2(i,1) * b2(j,2) * b2(k,3)             & 
+                                    * exp(g2 * fact)/g2
+                endif
+              end if
+
+            end do
+
+          end do
+
+        end do
+
+      end do
+
+      if (my_x_rank == 0 .and. my_y_rank == 0 .and. my_z_rank == 0) &
+        theta_local(1) = 0.0d0
+
+      nix = (nlocalx1-1)/nprocy
+      nix1 = nix+1
+      niy = nlocaly/nprocz
+      niz = nlocalz/nprocx
+
+      call mpi_alltoall(theta_local, nlocalx1*nlocaly*niz, mpi_wp_real, &
+                        r_work1,     nlocalx1*nlocaly*niz, mpi_wp_real, &
+                        grid_commx, ierror)
+
+      do iz = 1, nlocalz
+        do iy = 1, nlocaly
+          do ix = 1, nlocalx1
+            k_f = ix + (iy-1)*nlocalx1 + (iz-1)*nlocalx1*nlocaly
+            k_t = iy + (ix-1)*nlocaly  + (iz-1)*nlocalx1*nlocaly
+            r_work2(k_t) = r_work1(k_f)
+          enddo
+        enddo
+      enddo
+
+      r_work1 = 0.0_wp
+      do iprocx = 0, nprocx-1
+        iz_start = iprocx*niz+1
+        iz_end = iz_start+niz-1
+        do iprocy = 0, nprocy-1
+          ix_start = iprocy*nix+1
+          ix_end   = ix_start+nix-1
+          if(iprocy == nprocy-1) ix_end = ix_start+nix1-1
+          iorg = nlocaly*nix1*niz*(iprocx+nprocx*iprocy)
+          do iz = iz_start, iz_end
+            izs = iz - iz_start
+            do ix = ix_start, ix_end
+              ixs = ix - ix_start
+              k = iorg+nlocaly*ixs+nlocaly*nix1*izs
+              do iy = 1, nlocaly
+                kk = iy + (ix-1)*nlocaly  + (iz-1)*nlocalx1*nlocaly
+                r_work1(k+iy) = r_work2(kk)
+              enddo
+            enddo
+          enddo
+        enddo
+      enddo
+
+      call mpi_alltoall(r_work1, nlocaly*nix1*niz, mpi_wp_real, &
+                        r_work2, nlocaly*nix1*niz, mpi_wp_real, &
+                        grid_commxy, ierror)
+
+      do iprocx = 0, nprocx-1
+        iz_start = iprocx*niz+1
+        iz_end = iz_start+niz-1
+        do iprocy = 0, nprocy-1
+          ix_start = iprocy*nix1+1
+          ix_end   = ix_start+nix1-1
+          iorg = nlocaly*nix1*niz*(iprocx+nprocx*iprocy)
+          do iz = iz_start, iz_end
+            izs = iz - iz_start
+            do ix = ix_start, ix_end
+              ixs = ix - ix_start
+              k = iorg+nlocaly*ixs+nlocaly*nix1*izs
+              do iy = 1, nlocaly
+                r_work3(iy,ix,iz) = r_work2(k+iy)
+              enddo
+            enddo
+          enddo
+        enddo
+      enddo
+
+      do iz = 1, nlocalz
+        do ix = 1, nix1
+          do iproc = 1, nprocy
+            k = (iproc-1)*nlocaly
+            ixs = (iproc-1)*nix1 + ix
+            do iy = 1, nlocaly
+              kk = iz + nlocalz*(ixs-1) + nlocalz*nix1*nprocy*(iy-1)
+              r_work2(kk) = r_work3(iy,ixs,iz)
+            end do
+          end do
+        end do
+      end do
+
+      call mpi_alltoall(r_work2, nix1*nprocy*niy*nlocalz, mpi_wp_real, &
+                        r_work1, nix1*nprocy*niy*nlocalz, mpi_wp_real, &
+                        grid_commz, ierror)
+
+      do iy = 1,nlocaly
+        do ix = 1,nix1*nprocy
+          do iz = 1,nlocalz
+             kk = iz + nlocalz*(ix-1) + nlocalz*nix1*nprocy*(iy-1)
+             theta_local(kk) = r_work1(kk)
+           enddo
+        enddo
+      enddo
+      if (my_x_rank == 0 .and. my_y_rank == 0) &
+        theta(1,1,1,1) = 0.0_wp
+
+    else if (fft_scheme == FFT_1dalltoall) then
+
+      niy = nlocaly / nprocz
+      iy_start = y_start + niy*my_z_rank
+      iy_end   = iy_start + niy - 1
+
+      do i = x_start1, x_end1
+
+        ix = i - x_start1 + 1
+        is = i - 1
+        gx(ix) = gfact(1) * real(is,wp)
+
+        do j = iy_start, iy_end
+
+          iy = j - iy_start + 1
+
+          if (j <= ngrid(2)/2+1) then
+            js = j - 1
+          else
+            js = j - 1 - ngrid(2)
+          end if
+          gy(iy) = gfact(2) * real(js,wp)
+
+          do k = 1, ngrid(3)
+            if (k <= ngrid(3)/2+1) then
+              ks = k - 1
+            else
+              ks = k - 1 - ngrid(3)
+            end if
+            gz(k,1) = gfact(3) * real(ks,wp)
+
+            g2 = gx(ix)**2 + gy(iy)**2 + gz(k,1)**2
+            if (g2 > EPS) then
+              vir_fact(k,iy,ix) = -2.0_wp * (1.0_wp - g2 * fact) / g2
+              theta(k,iy,ix,1) = b2(i,1)*b2(j,2)*b2(k,3)*exp(g2*fact) / g2
+            end if
+
+          end do
+
+        end do
+
+      end do
+      if (my_x_rank == 0 .and. my_y_rank == 0 .and. my_z_rank == 0) &
+        theta(1,1,1,1) = 0.0_wp
+
+    else
+
+      do i = x_start1, x_end1
+
+        ix = i - x_start1 + 1
+        is = i - 1
+        gx(ix) = gfact(1) * real(is,wp)
+
+        do j = y_start, y_end
+
+          iy = j - y_start + 1
+
+          if (j <= ngrid(2)/2+1) then
+            js = j - 1
+          else
+            js = j - 1 - ngrid(2)
+          end if
+
+          gy(iy) = gfact(2) * real(js,wp)
+
+          do iproc = 1, nprocz
+            do iz = 1, nlocalz
+              k = (iproc-1)*nlocalz + iz
+              if (k <= ngrid(3)/2+1) then
+                ks = k - 1
+              else
+                ks = k - 1 - ngrid(3)
+              end if
+              gz(iz,iproc) = gfact(3) * real(ks,wp)
+              g2 = gx(ix)**2 + gy(iy)**2 + gz(iz,iproc)**2
+              if (g2 > EPS) then
+                if (iproc == (my_z_rank+1)) &
+                  vir_fact(iz,iy,ix) = -2.0_wp * (1.0_wp - g2 * fact)/g2
+                theta(iz,iy,ix,iproc) = &
+                     b2(i,1) * b2(j,2) * b2(k,3) * exp(g2 * fact)/g2
+              end if
+
+            end do
+
+          end do
+
+        end do
+
+      end do
+      if (my_x_rank == 0 .and. my_y_rank == 0) &
+        theta(1,1,1,1) = 0.0_wp
+
+    end if
+
+    if (my_city_rank == 0) &
+      vir_fact(1,1,1) = 0.0_wp
+
+    ! Calculating self energy
+    !
+    u_self_preserve = 0.0_dp
+    u_self_appear   = 0.0_dp
+    u_self_vanish   = 0.0_dp
+
+    do i = 1, domain%num_cell_local
+      do ix = 1, domain%num_atom_preserve(i)
+        u_self_preserve = u_self_preserve &
+                          + domain%charge(domain%pmelist_preserve(ix,i),i)**2
+      end do
+      do ix = 1, domain%num_atom_appear_gr(i)
+        u_self_appear = u_self_appear &
+                        + domain%charge(domain%pmelist_appear_gr(ix,i),i)**2
+      end do
+      do ix = 1, domain%num_atom_vanish_gr(i)
+        u_self_vanish = u_self_vanish &
+                        + domain%charge(domain%pmelist_vanish_gr(ix,i),i)**2
+      end do
+    end do
+
+    u_self_preserve = - u_self_preserve * el_fact * alpha/sqrt(PI)
+    u_self_appear   = - u_self_appear * el_fact * alpha/sqrt(PI)
+    u_self_vanish   = - u_self_vanish * el_fact * alpha/sqrt(PI)
+
+
+    return
+
+  end subroutine pme_pre_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    pme_recip_fep
+  !> @brief        Calculate PME reciprocal part with domain decomposition
+  !                for FEP calculation
+  !! @authors      NK
+  !! @param[in]    domain : domain information
+  !! @param[in]    enefunc: enefunc information
+  !! @param[in]    flg_fep: flag for FEP calculations
+  !! @param[inout] force  : forces of target systems
+  !! @param[inout] virial : virial term of target systems
+  !! @param[inout] eelec  : electrostatic energy of target systems
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine pme_recip_fep(domain, enefunc, flg_fep, force, virial, eelec)
+
+    ! formal arguments
+    type(s_domain),  target, intent(in)    :: domain
+    type(s_enefunc), target, intent(in)    :: enefunc
+    integer,                 intent(in)    :: flg_fep
+    real(dp),                intent(inout) :: force(:,:,:)
+    real(dp),                intent(inout) :: virial(3,3,nthread)
+    real(dp),                intent(inout) :: eelec(nthread)
+
+    ! local variables
+    real(wp)                 :: elec_temp
+    real(wp)                 :: vr(3), dv(3), bsc_tmp(3,n_bs), bscd_tmp(3,n_bs)
+    real(wp)                 :: vxx, vyy, vzz, temp
+    real(wp)                 :: tqq
+    real(wp)                 :: f_1, f_2, f_3
+    integer                  :: i, k, k1, icel, iproc, id
+    integer                  :: ix, iv, iy, iz, ixs, iys, izs, ip
+    integer                  :: ixyz, nix, nix1, niy, niz
+    integer                  :: ixx, iyy, izz, ii(3)
+    integer                  :: vx_tmp(n_bs), vy_tmp(n_bs), vz_tmp(n_bs)
+    integer                  :: ncell, omp_get_thread_num
+    integer                  :: kk, iorg, k_f, k_t
+    integer                  :: iprocx, iprocy
+    integer                  :: ix_start, ix_end, iz_start, iz_end
+
+    complex(wp), allocatable :: work1(:), work2(:)
+    real(dp),        pointer :: coord(:,:,:)
+    real(wp),        pointer :: charge(:,:)
+    integer,         pointer :: natom(:)
+    integer,         pointer :: pmelist(:,:)
+
+    real(dp)                 :: eelec_temp(nthread)
+    real(wp)                 :: lambel
+
+
+    coord  => domain%coord
+    charge => domain%charge
+    ncell  = domain%num_cell_local + domain%num_cell_boundary
+
+    select case (flg_fep)
+
+    case(FEP_PRESERVE)
+      natom   => domain%num_atom_preserve
+      pmelist => domain%pmelist_preserve
+      lambel  =  1.0_wp - enefunc%lambelB - enefunc%lambelA
+
+    case(FEP_APPEAR)
+      natom   => domain%num_atom_appear_gr
+      pmelist => domain%pmelist_appear_gr
+      lambel  =  enefunc%lambelB
+
+    case(FEP_VANISH)
+      natom   => domain%num_atom_vanish_gr
+      pmelist => domain%pmelist_vanish_gr
+      lambel  =  enefunc%lambelA
+
+    end select
+
+    ! Initializing the energy and force
+    !
+    qdf_real(1:nlocalx*nlocaly*nlocalz) = 0.0_wp
+    eelec_temp(1:nthread) = 0.0_dp
+
+    !$omp parallel default(shared)                                             &
+    !$omp private(id, i, iv, ix, iy, iz, icel, k, ii, dv, izz, izs, iyy, iys,  &
+    !$omp         iz_start, iz_end, ix_start, ix_end, iorg, k_f, k_t,          &
+    !$omp         ixx, ixs, vxx, vyy, vzz, iproc, tqq, k1, temp, vr, &
+    !$omp         work1, work2, elec_temp, f_1, f_2, f_3, ixyz, vx_tmp, vy_tmp,&
+    !$omp         vz_tmp, nix, nix1, niy, niz, bsc_tmp, bscd_tmp, kk, iprocx,  &
+    !$omp         iprocy, ip)
+    !
+
+#ifdef OMP
+    id = omp_get_thread_num()
+#else
+    id = 0
+#endif
+
+    !$omp barrier
+
+    ! initialization
+    !
+    allocate(work1(ngridmax), work2(2*ngridmax))
+
+    ! Initialization of Q-fanction
+    !
+!#ifndef USE_GPU
+    do iz = 1, nlocalz
+      do iy = 1, nlocaly
+        do ix = 1, nlocalx
+          qdf(ix,iy,iz,id+1) = 0.0_wp
+        end do
+      end do
+    end do
+
+
+    ! Calculateing Q-fanction
+    !
+    do icel = id+1, ncell, nthread
+      do i = 1, natom(icel)
+        ip = pmelist(i,icel)
+
+        vr(1:3) = coord(1:3,ip,icel) * r_scale(1:3)
+        vr(1:3) = vr(1:3) + real(ngrid(1:3)/2,wp) &
+                - real(ngrid(1:3),wp)*anint(vr(1:3)/real(ngrid(1:3),wp))
+
+        do k = 1, 3
+          ii(k) = int(vr(k))
+          if (ii(k) >= ngrid(k)) then
+            vr(k) = real(ngrid(k),wp) - 0.00001_wp
+            ii(k) = ngrid(k)-1
+          endif
+          vi(k,ip,icel) = ii(k)
+          dv(k) = vr(k) - real(ii(k),wp)
+          call b_spline_dev_coef(n_bs, dv(k), bsc(1,k,ip,icel), &
+                                   bscd(1,k,ip,icel))
+        end do
+
+        nix = 0 
+        niy = 0 
+        niz = 0 
+
+        do ixyz = 1, n_bs
+          ixs = ii(1) - ixyz + 2
+          iys = ii(2) - ixyz + 2
+          izs = ii(3) - ixyz + 2
+          if (ixs <= 0) ixs = ixs + ngrid(1)
+          if (iys <= 0) iys = iys + ngrid(2)
+          if (izs <= 0) izs = izs + ngrid(3)
+
+          if (ixs >= x_start .and. ixs <= x_end) then
+            nix = nix + 1
+            vx_tmp(nix) = ixs - x_start + 1
+            bsc_tmp(1,nix) = bsc(ixyz,1,ip,icel)
+          end if
+
+          if (iys >= y_start .and. iys <= y_end) then
+            niy = niy + 1
+            vy_tmp(niy) = iys - y_start + 1
+            bsc_tmp(2,niy) = bsc(ixyz,2,ip,icel)
+          end if
+
+          if (izs >= z_start .and. izs <= z_end) then
+            niz = niz + 1
+            vz_tmp(niz) = izs - z_start + 1
+            bsc_tmp(3,niz) = bsc(ixyz,3,ip,icel)
+          end if
+        end do
+
+        do iz = 1, niz
+          izs = vz_tmp(iz)
+          do iy = 1, niy
+            iys = vy_tmp(iy)
+            do ix = 1, nix
+              ixs = vx_tmp(ix)
+              qdf(ixs,iys,izs,id+1) = qdf(ixs,iys,izs,id+1)           &
+                                    + bsc_tmp(1,ix)*bsc_tmp(2,iy)     &
+                                     * bsc_tmp(3,iz)*charge(ip,icel)  &
+                                     * bs_fact3
+            end do
+          end do
+        end do
+      end do
+    end do
+
+    !$omp barrier
+    do iproc = 1, nthread
+      !$omp do
+      do iz = 1, nlocalz
+        do iy = 1, nlocaly
+          k = (iy-1)*nlocalx + (iz-1)*nlocalx*nlocaly
+          do iv = 1, nlocalx, 16
+            do ix = iv, min0(iv+15,nlocalx)
+              qdf_real(k+ix) = qdf_real(k+ix) + qdf(ix,iy,iz,iproc)
+            end do
+          end do
+        end do
+      end do
+    end do
+
+    !$omp barrier
+
+!#else
+!    !$omp master
+!    call gpu_pme_recip_build_qdf( qdf_real, coord, charge, natom, &
+!         MaxAtom, ncell, nlocalx, nlocaly, nlocalz, ngrid, &
+!         x_start, x_end, y_start, y_end, z_start, z_end, &
+!         r_scale, &
+!         bs_fact3, &
+!         vi, bsc, bscd )
+!    !$omp end master
+!#endif
+
+    ! FFT (forward)
+    !
+    if ( (fft_scheme == FFT_1dalltoall) .or.   &
+         (fft_scheme == FFT_2dalltoall) ) then
+
+      !$omp barrier
+      !$omp master
+#ifdef HAVE_MPI_GENESIS
+      call mpi_alltoall(qdf_real, nlocalx*nlocaly*nlocalz/nprocx, mpi_wp_real, &
+                        qdf_work, nlocalx*nlocaly*nlocalz/nprocx, mpi_wp_real, &
+                        grid_commx, ierror)
+#else
+      qdf_work(1:nlocalx*nlocaly*nlocalz,1) = qdf_real(1:nlocalx*nlocaly*nlocalz)
+#endif
+      !$omp end master
+      !$omp barrier
+
+      if (fft_scheme == FFT_1dalltoall) then
+        call fft3d_1d_alltoall(qdf_work, ftqdf, ftqdf2, ftqdf3, ftqdf4, ftqdf5,    &
+                         ftqdf_work, ftqdf_work, ftqdf_work, ftqdf_work,           &
+                         ftqdf_work2, ftqdf_work3, work1, work2, nlocalx, nlocaly, &
+                         nlocalz, nlocalx1, x_local1, ngrid(1), ngrid(2), ngrid(3),&
+                         nprocx, nprocy, nprocz, id, nthread, my_x_rank, my_y_rank,&
+                         my_z_rank, x_start1, x_end1, y_start, y_end, z_start,     &
+                         z_end, grid_commx, grid_commy, grid_commz)
+
+      else
+        call fft3d_2d_alltoall(qdf_work, ftqdf_work, work1, work2, nlocalx,        &
+                         nlocaly, nlocalz, nlocalx1, x_local1, ngrid(1), ngrid(2), &
+                         ngrid(3), nprocx, nprocy, nprocz, id, nthread, my_x_rank, &
+                         my_y_rank, my_z_rank, x_start1, x_end1, y_start, y_end,   &
+                         z_start, z_end, grid_commx, grid_commy, grid_commz,       &
+                         grid_commxy, c_work, c_work1, c_work2, c_work3)
+      end if
+
+    else if (fft_scheme == FFT_1dallgather) then
+
+      !$omp barrier
+      !$omp master
+#ifdef HAVE_MPI_GENESIS
+      call mpi_allgather(qdf_real, nlocalx*nlocaly*nlocalz, mpi_wp_real,         &
+                         qdf_work, nlocalx*nlocaly*nlocalz, mpi_wp_real,         &
+                         grid_commx, ierror)
+#else
+      qdf_work(1:nlocalx*nlocaly*nlocalz,1) = qdf_real(1:nlocalx*nlocaly*nlocalz)
+#endif
+      !$omp end master
+      !$omp barrier
+
+      call fft3d(qdf_work, ftqdf, ftqdf, ftqdf, ftqdf_work, ftqdf_work,          &
+                 ftqdf_work, work1, work2, nlocalx, nlocaly,                     &
+                 nlocalz, nlocalx1, x_local1, ngrid(1), ngrid(2), ngrid(3),      &
+                 nprocx, nprocy, nprocz, id, nthread, my_x_rank, x_start1,       &
+                 x_end1, y_start, y_end, z_start, z_end, grid_commx, grid_commy, &
+                 grid_commz)
+    end if
+
+    ! Energy calculation
+    !
+    iproc = my_z_rank + 1
+
+    if (fft_scheme == FFT_2dalltoall) then
+
+      !$omp barrier
+      nix = (nlocalx1-1)/nprocy
+      nix1 = nix+1
+      niy = nlocaly/nprocz
+      niz = nlocalz/nprocx
+
+      !$omp do
+      do iy = 1, nlocaly
+        do ix = 1, nix1*nprocy
+          iorg = nlocalz*(ix-1) + nlocalz*nix1*nprocy*(iy-1)
+          elec_temp = 0.0_wp
+          do iz = 1, nlocalz
+            k = iz + iorg
+            r_work(k) = real(c_work(iz,ix,iy),wp)**2 + imag(c_work(iz,ix,iy))**2
+            c_work(iz,ix,iy) = c_work(iz,ix,iy) * cmplx(theta_local(k),0.0_wp,wp)
+            tqq = r_work(k)
+            tqq = tqq * theta_local(k) * vol_fact4
+            elec_temp = elec_temp + tqq
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+        end do
+      end do
+
+      if(my_x_rank == 0 .and. my_y_rank == 0) then
+
+        !$omp do
+        do iy = 1, nlocaly
+          do iprocy = 0, nprocy-1
+            ix = iprocy*nix1+1
+            iorg = nlocalz*(ix-1) + nlocalz*nix1*nprocy*(iy-1)
+            elec_temp = 0.0_wp
+            do iz = 1, nlocalz
+              k = iz + iorg
+              tqq = r_work(k)
+              tqq = tqq * theta_local(k) * vol_fact2
+              elec_temp = elec_temp - tqq
+            end do
+            eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          end do
+        end do
+      end if
+
+      if(my_x_rank == (nprocx-1) .and. my_y_rank == (nprocy-1)) then
+
+        !$omp do
+        do iy = 1, nlocaly
+          do iprocy = 0, nprocy-1
+            ix = (iprocy+1)*nix1-1
+            iorg = nlocalz*(ix-1) + nlocalz*nix1*nprocy*(iy-1)
+            elec_temp = 0.0_wp
+            do iz = 1, nlocalz
+              k = iz + iorg
+              tqq = r_work(k)
+              tqq = tqq * theta_local(k) * vol_fact2
+              elec_temp = elec_temp - tqq
+            end do
+            eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          end do
+        end do
+      end if
+
+    else if (fft_scheme == FFT_1dalltoall) then
+
+      niy = nlocaly / nprocz
+      do ix = 1, x_local1
+        do iy = id+1, niy, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, ngrid(3)
+            tqq = real(ftqdf_work2(iz,ix,iy),wp)**2 + &
+                  imag(ftqdf_work2(iz,ix,iy))**2
+            tqq = tqq * theta(iz,iy,ix,1) * vol_fact4
+            elec_temp = elec_temp + tqq
+            tqq = tqq * lambel
+
+            ! virial
+            ! 
+            vxx = vxx + tqq * (1.0_wp + vir_fact(iz,iy,ix) * gx(ix) * gx(ix))
+            vyy = vyy + tqq * (1.0_wp + vir_fact(iz,iy,ix) * gy(iy) * gy(iy))
+            vzz = vzz +                                                        &
+                  tqq * (1.0_wp + vir_fact(iz,iy,ix) * gz(iz,1) * gz(iz,1))
+
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end do
+
+      if (my_x_rank == 0) then
+        do iy = id+1, niy, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, ngrid(3)
+            tqq = real(ftqdf_work2(iz,1,iy),wp)**2 + &
+                  imag(ftqdf_work2(iz,1,iy))**2
+            tqq = tqq * theta(iz,iy,1,1) * vol_fact2
+            elec_temp = elec_temp - tqq
+            tqq = tqq * lambel
+            vxx = vxx - tqq * (1.0_wp + vir_fact(iz,iy,1) * gx(1) * gx(1))
+            vyy = vyy - tqq * (1.0_wp + vir_fact(iz,iy,1) * gy(iy) * gy(iy))
+            vzz = vzz - tqq * (1.0_wp + vir_fact(iz,iy,1) * gz(iz,1) * gz(iz,1))
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end if
+
+      if (my_x_rank == (nprocx-1)) then
+        ix = x_local1
+        do iy = id+1, niy, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, ngrid(3)
+            tqq = real(ftqdf_work2(iz,ix,iy),wp)**2 + &
+                  imag(ftqdf_work2(iz,ix,iy))**2
+            tqq = tqq * theta(iz,iy,ix,1) * vol_fact2
+            elec_temp = elec_temp - tqq
+            tqq = tqq * lambel
+            vxx = vxx - tqq * (1.0_wp + vir_fact(iz,iy,ix) * gx(ix) * gx(ix))
+            vyy = vyy - tqq * (1.0_wp + vir_fact(iz,iy,ix) * gy(iy) * gy(iy))
+            vzz = vzz                                                          &
+                  - tqq * (1.0_wp + vir_fact(iz,iy,ix) * gz(iz,1) * gz(iz,1))
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end if
+
+
+      ! F^-1[Th]*F^-1[Q] (=X)
+      !
+      !$omp barrier
+      do ix = 1, x_local1
+        do iy = id+1, niy, nthread
+          k = (iy-1)*ngrid(3) + (ix-1)*ngrid(3)*niy
+          do iz = 1, ngrid(3)
+            ftqdf_work(k+iz,1) = ftqdf_work2(iz,ix,iy)   &
+                               * cmplx(theta(iz,iy,ix,1),0.0_wp,wp)
+          end do
+        end do
+      end do
+
+    else if (fft_scheme == FFT_1dallgather) then
+
+      do ix = 1, x_local1
+        do iy = id+1, nlocaly, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, nlocalz
+            k = iz + (iy-1)*nlocalz + (ix-1)*nlocalz*nlocaly
+            tqq = real(ftqdf_work(k,iproc),wp)**2 + &
+                  imag(ftqdf_work(k,iproc))**2
+            tqq = tqq * theta(iz,iy,ix,iproc) * vol_fact4
+            elec_temp = elec_temp + tqq
+            tqq = tqq * lambel
+
+            ! virial
+            ! 
+            vxx = vxx + tqq * (1.0_wp + vir_fact(iz,iy,ix) * gx(ix) * gx(ix))
+            vyy = vyy + tqq * (1.0_wp + vir_fact(iz,iy,ix) * gy(iy) * gy(iy))
+            vzz = vzz + tqq                                                     &
+                 * (1.0_wp + vir_fact(iz,iy,ix) * gz(iz,iproc) * gz(iz,iproc))
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end do
+
+      if (my_x_rank == 0) then
+        do iy = id+1, nlocaly, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, nlocalz
+            k = iz + (iy-1)*nlocalz
+            tqq = real(ftqdf_work(k,iproc),wp)**2 + imag(ftqdf_work(k,iproc))**2
+            tqq = tqq * theta(iz,iy,1,iproc) * vol_fact2
+            elec_temp = elec_temp - tqq
+            tqq = tqq * lambel
+            vxx = vxx - tqq * (1.0_wp + vir_fact(iz,iy,1) * gx(1) * gx(1))
+            vyy = vyy - tqq * (1.0_wp + vir_fact(iz,iy,1) * gy(iy) * gy(iy))
+            vzz = vzz - tqq                                                    &
+                 * (1.0_wp + vir_fact(iz,iy,1) * gz(iz,iproc) * gz(iz,iproc))
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end if
+
+      if (my_x_rank == (nprocx-1)) then
+        ix = x_local1
+        do iy = id+1, nlocaly, nthread
+          elec_temp = 0.0_wp
+          vxx = 0.0_wp
+          vyy = 0.0_wp
+          vzz = 0.0_wp
+          do iz = 1, nlocalz
+            k = iz + (iy-1)*nlocalz + (x_local1-1)*nlocalz*nlocaly
+            tqq = real(ftqdf_work(k,iproc),wp)**2 + &
+                  imag(ftqdf_work(k,iproc))**2
+            tqq = tqq * theta(iz,iy,ix,iproc) * vol_fact2
+            elec_temp = elec_temp - tqq
+            tqq = tqq * lambel
+            vxx = vxx - tqq * (1.0_wp + vir_fact(iz,iy,ix) * gx(ix) * gx(ix))
+            vyy = vyy - tqq * (1.0_wp + vir_fact(iz,iy,ix) * gy(iy) * gy(iy))
+            vzz = vzz - tqq                                                    &
+                 * (1.0_wp + vir_fact(iz,iy,ix) * gz(iz,iproc) * gz(iz,iproc))
+          end do
+          eelec_temp(id+1) = eelec_temp(id+1) + elec_temp
+          virial(1,1,id+1) = virial(1,1,id+1) + vxx
+          virial(2,2,id+1) = virial(2,2,id+1) + vyy
+          virial(3,3,id+1) = virial(3,3,id+1) + vzz
+        end do
+      end if
+
+      ! F^-1[Th]*F^-1[Q] (=X)
+      !
+      !$omp barrier
+      do ix = 1, x_local1
+        do iy = id+1, niy, nthread
+          k = (iy-1)*nlocalz + (ix-1)*nlocalz*nlocaly
+          do iproc = 1, nprocz
+            ftqdf_work(k+1:k+nlocalz,iproc) = ftqdf_work(k+1:k+nlocalz,iproc)  &
+                                          * cmplx(theta(1:nlocalz,iy,ix,iproc),0.0_wp,wp)
+          end do
+        end do
+      end do
+      !$omp barrier
+
+    end if
+
+    ! FFT(backward)
+    ! 
+    if (fft_scheme == FFT_1dalltoall) then
+      call bfft3d_1d_alltoall(qdf_work, qdf_real, ftqdf, ftqdf2, ftqdf3,   &
+                  ftqdf_work3, ftqdf_work2, ftqdf_work, work1, work2,      &
+                  nlocalx, nlocaly, nlocalz, nlocalx1, x_local1, ngrid(1), &
+                  ngrid(2), ngrid(3), nprocx, nprocy, nprocz, id, nthread, &
+                  my_x_rank, my_y_rank, my_z_rank, x_start1, x_end1,       &
+                  y_start, y_end, z_start, z_end, grid_commx, grid_commy,  &
+                  grid_commz, niy)
+    else if (fft_scheme == FFT_2dalltoall) then
+      call bfft3d_2d_alltoall(qdf_work, qdf_real, ftqdf_work, work1,       &
+                  work2, nlocalx, nlocaly, nlocalz, nlocalx1, x_local1,    &
+                  ngrid(1), ngrid(2), ngrid(3), nprocx, nprocy, nprocz,    &
+                  id, nthread, my_x_rank, my_y_rank, my_z_rank, x_start1,  &
+                  x_end1, y_start, y_end, z_start, z_end, grid_commx,      &
+                  grid_commy, grid_commz, grid_commxy, c_work, c_work1,    &
+                  c_work2,c_work3)
+    else if (fft_scheme == FFT_1dallgather) then
+      call bfft3d(qdf_work, qdf_real, ftqdf, ftqdf, ftqdf, ftqdf_work,     &
+                  ftqdf_work, ftqdf_work, work1, work2, nlocalx, nlocaly,  &
+                  nlocalz, nlocalx1, x_local1, ngrid(1), ngrid(2),         &
+                  ngrid(3), nprocx, nprocy, nprocz, id, nthread,           &
+                  my_x_rank, x_start1, x_end1, y_start, y_end, z_start,    &
+                  z_end, grid_commx, grid_commy,  grid_commz)
+    end if
+
+    !$omp barrier
+
+!#ifndef USE_GPU
+    ! Gradient on CPU 
+    !
+    ! X is saved on qdf
+    !
+    do iz = id+1, nlocalz, nthread
+      do iy = 1, nlocaly
+        k = (iy-1)*nlocalx + (iz-1)*nlocalx*nlocaly
+        do ix = 1, nlocalx
+          qdf(ix,iy,iz,1) = qdf_real(k+ix)
+        end do
+      end do
+    end do
+
+    !$omp barrier
+
+    do icel = id+1, ncell, nthread
+      do i = 1, natom(icel)
+
+        ip = pmelist(i,icel)
+
+        f_1 = 0.0_wp
+        f_2 = 0.0_wp
+        f_3 = 0.0_wp
+
+        do k = 1, 3
+          ii(k) = vi(k,ip,icel)
+        end do
+
+        nix = 0
+        niy = 0
+        niz = 0
+
+        do ixyz = 1, n_bs
+
+          ixs = ii(1) - (ixyz-1) + 1
+          iys = ii(2) - (ixyz-1) + 1
+          izs = ii(3) - (ixyz-1) + 1
+          if (ixs <= 0) ixs = ixs + ngrid(1)
+          if (iys <= 0) iys = iys + ngrid(2)
+          if (izs <= 0) izs = izs + ngrid(3)
+
+          if (ixs >= x_start .and. ixs <= x_end) then
+            nix = nix + 1
+            vx_tmp(nix) = ixs - x_start + 1
+            bsc_tmp(1,nix)  = bsc(ixyz,1,ip,icel)
+            bscd_tmp(1,nix) = bscd(ixyz,1,ip,icel)
+          end if
+
+          if (iys >= y_start .and. iys <= y_end) then
+            niy = niy + 1
+            vy_tmp(niy) = iys - y_start + 1
+            bsc_tmp(2,niy)  = bsc(ixyz,2,ip,icel)
+            bscd_tmp(2,niy) = bscd(ixyz,2,ip,icel)
+          end if
+
+          if (izs >= z_start .and. izs <= z_end) then
+            niz = niz + 1
+            vz_tmp(niz) = izs - z_start + 1
+            bsc_tmp(3,niz)  = bsc(ixyz,3,ip,icel)
+            bscd_tmp(3,niz) = bscd(ixyz,3,ip,icel)
+          end if
+        end do
+
+        if (nix*niy*niz == 0) cycle
+
+        do iz = 1, niz
+          izs = vz_tmp(iz)
+          do iy = 1, niy
+            iys = vy_tmp(iy)
+            do ix = 1, nix
+              ixs = vx_tmp(ix)
+
+              f_1 = f_1                                  &
+                  + bscd_tmp(1,ix)*bsc_tmp(2,iy)         &
+                  * bsc_tmp(3,iz)*qdf(ixs,iys,izs,1)
+              f_2 = f_2                                  &
+                  + bsc_tmp(1,ix)*bscd_tmp(2,iy)         &
+                  * bsc_tmp(3,iz)*qdf(ixs,iys,izs,1)
+              f_3 = f_3                                  &
+                  + bsc_tmp(1,ix)*bsc_tmp(2,iy)          &
+                  * bscd_tmp(3,iz)*qdf(ixs,iys,izs,1)
+            end do
+          end do
+        end do
+
+        force(1,ip,icel) = force(1,ip,icel) &
+             - lambel * f_1 * charge(ip,icel) &
+             * r_scale(1) * vol_fact4 * bs_fact3d
+        force(2,ip,icel) = force(2,ip,icel) &
+             - lambel * f_2 * charge(ip,icel) &
+             * r_scale(2) * vol_fact4 * bs_fact3d
+        force(3,ip,icel) = force(3,ip,icel) &
+             - lambel * f_3 * charge(ip,icel) &
+             * r_scale(3) * vol_fact4 * bs_fact3d
+
+      end do
+    end do
+
+    eelec(id+1) = eelec(id+1) + lambel*eelec_temp(id+1)
+
+!#else
+!    !
+!    ! Gradient on GPU 
+!    !
+!    !$omp master
+!    call gpu_pme_recip_interpolate_force( &
+!         force, qdf_real, charge, natom, &
+!         MaxAtom, ncell, nlocalx, nlocaly, nlocalz, ngrid, &
+!         x_start, x_end, y_start, y_end, z_start, z_end, &
+!         r_scale, bs_fact3d, vol_fact4, &
+!         vi, bsc, bscd )
+!    !$omp end master
+!
+!    !$omp barrier
+!
+!#endif
+
+    !$omp barrier
+
+    deallocate(work1, work2)
+
+    !$omp end parallel
+ 
+    return
+
+  end subroutine pme_recip_fep
 
 end module sp_energy_pme_mod

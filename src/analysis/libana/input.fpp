@@ -16,6 +16,7 @@ module input_mod
 
   use input_str_mod
   use fileio_control_mod
+  use fileio_mt_mod
   use fileio_rtp_mod
   use fileio_atp_mod
   use fileio_grocrd_mod
@@ -48,13 +49,16 @@ module input_mod
     character(MaxFilename) :: grocrdfile  = ''
     character(MaxFilename) :: groreffile  = ''
     character(MaxFilename) :: grotopfile  = ''
+    character(MaxFilename) :: mtfile      = ''
     character(MaxFilename) :: indexfile   = ''
     character(MaxFilename) :: logfile     = ''
+    character(MaxFilename) :: enefile     = ''
     character(MaxFilename) :: msdfile     = ''
     character(MaxFilename) :: pathfile    = ''
     character(MaxFilename) :: pathcvfile  = ''
     character(MaxFilename) :: pcafile     = ''
     character(MaxFilename) :: pdbfile     = ''
+    character(MaxFilename) :: pdb_tgtfile = ''
     character(MaxFilename) :: pdb_avefile = ''
     character(MaxFilename) :: pdb_aftfile = ''
     character(MaxFilename) :: pdb_sphfile = ''
@@ -62,6 +66,7 @@ module input_mod
     character(MaxFilename) :: prmtopfile  = ''
     character(MaxFilename) :: psffile     = ''
     character(MaxFilename) :: radfile     = ''
+    character(MaxFilename) :: refenefile  = ''
     character(MaxFilename) :: reffile     = ''
     character(MaxFilename) :: fitfile     = ''
     character(MaxFilename) :: remfile     = ''
@@ -170,11 +175,17 @@ contains
       if (toks(i) == 'grotop') &
         write(MsgOut,'(A)') 'grotopfile     = input.top       # GROMACS topology file'
 
+      if (toks(i) == 'mt') &
+        write(MsgOut,'(A)') 'mtfile         = input.mt        # motion tree infom'
+
       if (toks(i) == 'index') &
         write(MsgOut,'(A)') 'indexfile      = input.idx       # Index file'
 
       if (toks(i) == 'LOG') &
         write(MsgOut,'(A)') 'logfile        = input{}.log     # REMD energy log file'
+
+      if (toks(i) == 'ene') &
+        write(MsgOut,'(A)') 'enefile        = input{}.ene     # gREST ene file'
 
       if (toks(i) == 'msd') &
         write(MsgOut,'(A)') 'msdfile        = input.msd       # Mean-square-displacement file'
@@ -196,6 +207,9 @@ contains
 
       if (toks(i) == 'pdb') &
         write(MsgOut,'(A)') 'pdbfile        = input.pdb       # PDB file'
+
+      if (toks(i) == 'pdb_tgt') &
+        write(MsgOut,'(A)') 'pdb_tgtfile    = input.pdb       # PDB file (Target coordinates for MultiBasin)'
 
       if (toks(i) == 'pdb_ave') &
         write(MsgOut,'(A)') 'pdb_avefile    = input_ave.pdb   # PDB file (Average coordinates)'
@@ -324,12 +338,18 @@ contains
          inp_info%groreffile)
     call read_ctrlfile_string(handle, Section, 'Grocrdfile', &
          inp_info%grocrdfile)
+    call read_ctrlfile_string(handle, Section, 'Groreffile', &
+         inp_info%groreffile)
     call read_ctrlfile_string(handle, Section, 'Grotopfile', &
          inp_info%grotopfile)
+    call read_ctrlfile_string(handle, Section, 'Mtfile', &
+         inp_info%mtfile)
     call read_ctrlfile_string(handle, Section, 'Indexfile', &
          inp_info%indexfile)
     call read_ctrlfile_string(handle, Section, 'Logfile', &
          inp_info%logfile)
+    call read_ctrlfile_string(handle, Section, 'Enefile', &
+         inp_info%enefile)
     call read_ctrlfile_string(handle, Section, 'msdfile', &
          inp_info%msdfile)
     call read_ctrlfile_string(handle, Section, 'pathfile', &
@@ -340,6 +360,8 @@ contains
          inp_info%pcafile)
     call read_ctrlfile_string(handle, Section, 'Pdbfile', &
          inp_info%pdbfile)
+    call read_ctrlfile_string(handle, Section, 'Pdb_tgtfile', &
+         inp_info%pdb_tgtfile)
     call read_ctrlfile_string(handle, Section, 'Pdb_avefile', &
          inp_info%pdb_avefile)
     call read_ctrlfile_string(handle, Section, 'Pdb_aftfile', &
@@ -354,6 +376,8 @@ contains
          inp_info%psffile)
     call read_ctrlfile_string(handle, Section, 'Radfile', &
          inp_info%radfile)
+    call read_ctrlfile_string(handle, Section, 'Refenefile', &
+         inp_info%refenefile)      
     call read_ctrlfile_string(handle, Section, 'Reffile', &
          inp_info%reffile)
     call read_ctrlfile_string(handle, Section, 'Fitfile', &
@@ -416,8 +440,12 @@ contains
         write(MsgOut,'(A20,A)') '  indexfile       = ', trim(inp_info%indexfile)
       if (len_trim(inp_info%logfile) > 0) &
         write(MsgOut,'(A20,A)') '  logfile         = ', trim(inp_info%logfile)
+      if (len_trim(inp_info%enefile) > 0) &
+        write(MsgOut,'(A20,A)') '  enefile         = ', trim(inp_info%enefile)
       if (len_trim(inp_info%msdfile) > 0) &
         write(MsgOut,'(A20,A)') '  msdfile         = ', trim(inp_info%msdfile)
+      if (len_trim(inp_info%mtfile) > 0) &
+        write(MsgOut,'(A20,A)') '  mtfile          = ', trim(inp_info%mtfile)
       if (len_trim(inp_info%pathfile) > 0) &
         write(MsgOut,'(A20,A)') '  pathfile        = ', trim(inp_info%pathfile)
       if (len_trim(inp_info%pathcvfile) > 0) &
@@ -440,6 +468,8 @@ contains
         write(MsgOut,'(A20,A)') '  psffile         = ', trim(inp_info%psffile)
       if (len_trim(inp_info%radfile) > 0) &
         write(MsgOut,'(A20,A)') '  radfile         = ', trim(inp_info%radfile)
+      if (len_trim(inp_info%refenefile) > 0) &
+        write(MsgOut,'(A20,A)') '  refenefile      = ', trim(inp_info%refenefile)        
       if (len_trim(inp_info%reffile) > 0) &
         write(MsgOut,'(A20,A)') '  reffile         = ', trim(inp_info%reffile)
       if (len_trim(inp_info%fitfile) > 0) &
@@ -501,13 +531,16 @@ contains
     input%grocrdfile  = inp_info%grocrdfile
     input%groreffile  = inp_info%groreffile
     input%grotopfile  = inp_info%grotopfile
+    input%mtfile      = inp_info%mtfile
     input%indexfile   = inp_info%indexfile
     input%logfile     = inp_info%logfile
+    input%enefile     = inp_info%enefile
     input%msdfile     = inp_info%msdfile
     input%pathfile    = inp_info%pathfile
     input%pathcvfile  = inp_info%pathcvfile
     input%pcafile     = inp_info%pcafile
     input%pdbfile     = inp_info%pdbfile
+    input%pdb_tgtfile = inp_info%pdb_tgtfile
     input%pdb_avefile = inp_info%pdb_avefile
     input%pdb_aftfile = inp_info%pdb_aftfile
     input%pdb_sphfile = inp_info%pdb_sphfile
@@ -515,6 +548,7 @@ contains
     input%prmtopfile  = inp_info%prmtopfile
     input%psffile     = inp_info%psffile
     input%radfile     = inp_info%radfile
+    input%refenefile  = inp_info%refenefile    
     input%reffile     = inp_info%reffile
     input%fitfile     = inp_info%fitfile
     input%remfile     = inp_info%remfile
@@ -545,15 +579,18 @@ contains
   !! @param[out]   top      : CHARMM topology information [optional]
   !! @param[out]   prmtop   : AMBER parameter / topology information [optional]
   !! @param[out]   ambcrd   : AMBER coordinate information [optional]
+  !! @param[out]   ambref   : AMBER coordinate information [optional]
   !! @param[out]   grotop   : GROMACS parameter / topology information [optiona]
   !! @param[out]   grocrd   : GROMACS coordinate information [optional]
+  !! @param[out]   groref   : GROMACS coordinate information [optional]
   !! @param[out]   atp      : GROMACS atp information [optional]
   !! @param[out]   rtp      : GROMACS rtp information [optional]
+  !! @param[out]   mt       : Motion Tree information [optional]
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
   subroutine input_files(inp_info, psf, ref, fit, pdb, gpr, top, prmtop, &
-                         ambref, ambcrd, grotop, groref, grocrd, atp, rtp)
+                         ambref, ambcrd, grotop, groref, grocrd, atp, rtp, mt)
 
     ! formal arguments
     type(s_inp_info),         intent(in)    :: inp_info
@@ -564,13 +601,14 @@ contains
     type(s_gpr),    optional, intent(inout) :: gpr
     type(s_top),    optional, intent(inout) :: top
     type(s_prmtop), optional, intent(inout) :: prmtop
-    type(s_ambcrd), optional, intent(inout) :: ambref
     type(s_ambcrd), optional, intent(inout) :: ambcrd
+    type(s_ambcrd), optional, intent(inout) :: ambref
     type(s_grotop), optional, intent(inout) :: grotop
     type(s_grocrd), optional, intent(inout) :: groref
     type(s_grocrd), optional, intent(inout) :: grocrd
     type(s_atp),    optional, intent(inout) :: atp
     type(s_rtp),    optional, intent(inout) :: rtp
+    type(s_mt),     optional, intent(inout) :: mt
 
 
     if (present(gpr))    call init_gpr(gpr)
@@ -581,7 +619,9 @@ contains
     if (present(pdb))    call init_pdb(pdb)
     if (present(fit))    call init_pdb(fit)
     if (present(ambcrd)) call init_ambcrd(ambcrd)
+    if (present(ambref)) call init_ambcrd(ambref)
     if (present(grocrd)) call init_grocrd(grocrd)
+    if (present(groref)) call init_grocrd(groref)
     if (present(ref))    call init_pdb(ref)
 
     if (len_trim(inp_info%psffile) > 0 .and. present(psf)) then
@@ -616,6 +656,10 @@ contains
       call input_ambcrd(inp_info%ambcrdfile, ambcrd)
     end if
 
+    if (len_trim(inp_info%ambreffile) > 0 .and. present(ambref)) then
+      call input_ambcrd(inp_info%ambreffile, ambref)
+    end if
+
     if (len_trim(inp_info%grotopfile) > 0 .and. present(grotop)) then
       call input_grotop(inp_info%grotopfile, grotop)
     end if
@@ -628,8 +672,16 @@ contains
       call input_grocrd(inp_info%grocrdfile, grocrd)
     end if
 
+    if (len_trim(inp_info%groreffile) > 0 .and. present(groref)) then
+      call input_grocrd(inp_info%groreffile, groref)
+    end if
+
     if (len_trim(inp_info%atpfile) > 0 .and. present(atp)) then
       call input_atp(inp_info%atpfile, atp)
+    end if
+
+    if (len_trim(inp_info%mtfile) > 0 .and. present(mt)) then
+      call input_mt(inp_info%mtfile, mt)
     end if
 
     if (len_trim(inp_info%rtpfile) > 0 .and. present(rtp)) then

@@ -22,7 +22,7 @@ module sp_enefunc_restraints_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -168,6 +168,17 @@ contains
  
         write(MsgOut,'(A,I5)') ' exponend of function = ',                &
                                enefunc%restraint_exponent_func(i)
+
+        ! summary for confinement restraint
+        !
+        if (enefunc%restraint_kind(i) == RestraintsFuncCONF .or. &
+            enefunc%restraint_kind(i) == RestraintsFuncCONFCOM) then
+          write(MsgOut,'(A,F8.3)') &
+            ' force constant        = ', enefunc%restraint_const(1,i)
+          write(MsgOut,'(A,F8.3)') &
+            ' distance from boundary= ', enefunc%restraint_ref(1,i)
+        end if
+
 
         ! summary for distance restraint
         !
@@ -401,6 +412,10 @@ contains
         if (ndata <  2) &
           call error_msg('Setup_Enefunc_Rest_Func> Error in index for FB')
 
+      case(RestraintsFuncCONF:RestraintsFuncCONFCOM)
+        if (ndata /=  1) &
+          call error_msg('Setup_Enefunc_Rest_Func> Error in index for CONF')
+
       case(RestraintsFuncPC:RestraintsFuncPCCOM)
         if (ndata == 0) &
           call error_msg('Setup_Enefunc_Rest_Func> Error in index for PC')
@@ -558,7 +573,9 @@ contains
           enefunc%restraint_kind(i) == RestraintsFuncREPUL    .or. &
           enefunc%restraint_kind(i) == RestraintsFuncREPULCOM .or. &
           enefunc%restraint_kind(i) == RestraintsFuncFB       .or. &
-          enefunc%restraint_kind(i) == RestraintsFuncFBCOM ) then
+          enefunc%restraint_kind(i) == RestraintsFuncFBCOM    .or. &
+          enefunc%restraint_kind(i) == RestraintsFuncCONF     .or. & 
+          enefunc%restraint_kind(i) == RestraintsFuncCONFCOM) then
         do ig = 1, enefunc%restraint_funcgrp(i)
           do ix = 1, num_atoms(grouplist(ig,i))
             k = k + 1
@@ -615,7 +632,7 @@ contains
           end if
 
         end do
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_allreduce(k, enefunc%nrmsd, 1, mpi_integer, mpi_sum, &
                            mpi_comm_country, ierror)
 #else
@@ -678,7 +695,9 @@ contains
           enefunc%restraint_kind(i) == RestraintsFuncREPUL    .or. &
           enefunc%restraint_kind(i) == RestraintsFuncREPULCOM .or. &
           enefunc%restraint_kind(i) == RestraintsFuncFB       .or. &
-          enefunc%restraint_kind(i) == RestraintsFuncFBCOM ) then
+          enefunc%restraint_kind(i) == RestraintsFuncFBCOM    .or. &
+          enefunc%restraint_kind(i) == RestraintsFuncCONF     .or. & 
+          enefunc%restraint_kind(i) == RestraintsFuncCONFCOM) then
  
         do ig = 1, enefunc%restraint_funcgrp(i)
           do ix = 1, num_atoms(grouplist(ig,i))

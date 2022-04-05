@@ -23,6 +23,7 @@ module at_restraints_mod
   use string_mod
   use messages_mod
   use mpi_parallel_mod
+  use constants_mod
 
   implicit none
   private
@@ -43,6 +44,8 @@ module at_restraints_mod
      character(MaxLine), allocatable :: weight_dist(:)
      logical                         :: pressure_position = .false.
      logical                         :: pressure_rmsd     = .false.
+     character(MaxLine), allocatable :: caging(:)
+     character(MaxLine), allocatable :: flat_radius(:)
   end type s_res_info
 
   ! subroutines
@@ -73,7 +76,7 @@ contains
 
       select case (run_mode)
 
-      case ('md', 'remd', 'min')
+      case ('md', 'remd', 'min', 'bd')
 
         write(MsgOut,'(A)') '[SELECTION]'
         write(MsgOut,'(A)') '# group1        = an:CA              # restraint group 1'
@@ -203,7 +206,9 @@ contains
              res_info%mode         (nfunc), &
              res_info%exponent     (nfunc), &
              res_info%exponent_dist(nfunc), &
-             res_info%weight_dist  (nfunc))
+             res_info%weight_dist  (nfunc), &
+             res_info%caging       (nfunc), &
+             res_info%flat_radius  (nfunc))
 
     res_info%function     (1:nfunc) = RestraintsFuncPOSI
     res_info%constant     (1:nfunc) = ''
@@ -214,6 +219,8 @@ contains
     res_info%exponent     (1:nfunc) = 2
     res_info%exponent_dist(1:nfunc) = ''
     res_info%weight_dist  (1:nfunc) = ''
+    res_info%caging       (1:nfunc) = ''
+    res_info%flat_radius  (1:nfunc) = ''
 
 
     ! read each restraint function
@@ -256,6 +263,14 @@ contains
       write(name,'(a,i0)') 'weight_dist', i
       call read_ctrlfile_string (handle, Section, name, &
                                  res_info%weight_dist(i))
+
+      write(name,'(a,i0)') 'caging', i
+      call read_ctrlfile_string (handle, Section, name, &
+                                 res_info%caging(i))
+
+      write(name,'(a,i0)') 'flat_radius', i
+      call read_ctrlfile_string (handle, Section, name, &
+                                 res_info%flat_radius(i))
 
       if (res_info%exponent(i) <= 0) &
         call error_msg('Read_Ctrl_Restraints> exponent is incorrect')
@@ -307,6 +322,15 @@ contains
 
         write(MsgOut,'(a,a)') &
               '    weight_dist   = ',trim(res_info%weight_dist(i))
+
+        if (res_info%function(i) == RestraintsFuncRG .or. &
+            res_info%function(i) == RestraintsFuncRGWOMASS ) then
+          write(MsgOut,'(a,a)') &
+                '    caging        = ',trim(res_info%caging(i))
+          write(MsgOut,'(a,a)') &
+                '    flat_radius   = ',trim(res_info%flat_radius(i))
+        end if
+
 
         write(MsgOut,'(a)') ''
       end do
@@ -361,10 +385,11 @@ contains
     type(s_selatoms),        allocatable :: selatoms(:)
 
 
-    restraints%nfunctions = res_info%nfunctions
+    restraints%nfunctions      = res_info%nfunctions
     restraints%target_function = res_info%target_function
-    restraints%num_groups = size(sel_info%groups)
-    restraints%verbose    = res_info%verbose
+    restraints%num_groups      = size(sel_info%groups)
+    restraints%verbose         = res_info%verbose
+    restraints%climber_flag    = .false.
 
     nfunc  = restraints%nfunctions
     ngroup = restraints%num_groups
@@ -387,6 +412,8 @@ contains
       restraints%exponent     (1:nfunc) = res_info%exponent     (1:nfunc)
       restraints%exponent_dist(1:nfunc) = res_info%exponent_dist(1:nfunc)
       restraints%weight_dist  (1:nfunc) = res_info%weight_dist  (1:nfunc)
+      restraints%caging       (1:nfunc) = res_info%caging       (1:nfunc)
+      restraints%flat_radius  (1:nfunc) = res_info%flat_radius  (1:nfunc)
     endif
     if (ngroup /= 0) then
       restraints%group       (1:ngroup) = sel_info%groups      (1:ngroup)
@@ -395,7 +422,7 @@ contains
     restraints%restraint_flag = (restraints%nfunctions > 0)
     restraints%pressure_position  = res_info%pressure_position
     restraints%pressure_rmsd      = res_info%pressure_rmsd
-    
+
     ! set parameters for selection
     !
     call setup_selection(sel_info, molecule)

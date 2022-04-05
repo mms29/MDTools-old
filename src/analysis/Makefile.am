@@ -7,4 +7,5 @@
 #
 #--------1---------2---------3---------4---------5---------6---------7---------8
 
-SUBDIRS = libana converter interface mode_analysis trj_analysis utilities free_energy clustering
+SUBDIRS = libana converter interface mode_analysis trj_analysis utilities sp_analysis free_energy clustering
+EXTRA_DIST = cg_tools

@@ -46,12 +46,20 @@ module sp_remd_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+  use sp_alchemy_str_mod
+  use sp_fep_utils_mod
+  use sp_fep_energy_mod
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
   use sp_energy_pme_mod
 
   implicit none
+#ifdef HAVE_MPI_GENESIS
+#ifdef MSMPI
+!GCC$ ATTRIBUTES DLLIMPORT :: MPI_BOTTOM, MPI_IN_PLACE
+#endif
+#endif
   private
 
   ! structures
@@ -112,6 +120,12 @@ module sp_remd_mod
   private :: get_neighbouring_parmsetid
   private :: get_replica_temperature
   private :: compute_energy_restraints_remd
+  !FEP
+  public  :: run_remd_fep
+  private :: perform_replica_exchange_fep
+  private :: setup_fep_remd
+  private :: fep_remd
+  private :: assign_condition_fep
 
 contains
 
@@ -351,7 +365,6 @@ contains
     if (trep == 0) &
       call error_msg('Read_Ctrl_Remd> error in nreplicas in [REMD]')
 
-
     call end_ctrlfile_section(handle)
 
     ! write parameters to MsgOut
@@ -380,6 +393,15 @@ contains
           write(MsgOut,'(A)')   '  variable        = SOLUTE TEMPERATURE'
           write(MsgOut,'(A,A)') '  select_index    = ', trim(rep_info%select_index(i))
           write(MsgOut,'(A,A)') '  param_type      = ', trim(rep_info%param_type(i))
+        else if (rep_info%types(i) == RemdAlchemy) then
+          write(MsgOut,'(A)')   '  type            = ALCHEMY'
+        else if (rep_info%types(i) == RemdAlchemyRest) then
+          if ( rep_info%dimension > 1 ) then
+            call error_msg('Read_Ctrl_Remd> dimension > 1 is not allowed for FEP/REST')
+          end if
+          write(MsgOut,'(A)')       '  type            = ALCHEMYREST (FEP/REST)'
+          write(MsgOut,'(A20,A30)') '  select_index    = ', rep_info%select_index(i)
+          write(MsgOut,'(A20,A30)') '  param_type      = ', rep_info%param_type(i)
         end if
 
         if (rep_info%cyclic_params(i)) then
@@ -424,7 +446,8 @@ contains
 
     has_rest = .false.
     do i = 1, rep_info%dimension
-      if (rep_info%types(i) == RemdSoluteTempering) then
+      if ((rep_info%types(i) == RemdSoluteTempering) .or. &
+          (rep_info%types(i) == RemdAlchemyRest)) then
         has_rest = .true.
       end if
     end do
@@ -435,7 +458,8 @@ contains
     end if
 
     do i = 1, rep_info%dimension
-      if (rep_info%types(i) == RemdSoluteTempering) then
+      if ((rep_info%types(i) == RemdSoluteTempering) .or. &
+          (rep_info%types(i) == RemdAlchemyRest)) then
 
         ndata = split_num(rep_info%select_index(i))
 
@@ -492,8 +516,8 @@ contains
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_remd(rep_info, rst, boundary, dynamics, molecule, domain, &
-                        restraints, ensemble, enefunc, remd)
+  subroutine setup_remd(rep_info, rst, boundary, dynamics, molecule, &
+                        domain, restraints, ensemble, enefunc, remd, alchemy)
 
     ! formal arguments
     type(s_rep_info),        intent(in)    :: rep_info
@@ -506,6 +530,7 @@ contains
     type(s_ensemble),        intent(inout) :: ensemble
     type(s_enefunc),         intent(inout) :: enefunc
     type(s_remd),    target, intent(inout) :: remd
+    type(s_alchemy),optional,intent(inout) :: alchemy
 
     ! local variables
     integer                    :: i, j, k, m
@@ -523,6 +548,10 @@ contains
     integer,       allocatable :: ndigit(:), parmid(:)
     integer                    :: funcid
     character(MaxLine)         :: ft
+
+    ! FEP
+    integer                    :: lambid
+    real(wp)                   :: soltemp
 
 
     if (main_rank) then
@@ -569,6 +598,14 @@ contains
       if (remd%types(i) == RemdGamma .and.  &
           ensemble%ensemble /= EnsembleNPgT) &
          call error_msg('Setup_Remd> Ensemble should be NPgT in gamma-REMD')
+      ! FEP
+      if ((remd%types(i) == RemdAlchemy) .or. &
+        (remd%types(i) == RemdAlchemyRest)) then
+        if (ensemble%tpcontrol /= TpcontrolLangevin .and. &
+            ensemble%tpcontrol /= TpcontrolBussi .and.    &
+            ensemble%tpcontrol /= TpcontrolNO)            &
+            call error_msg('Setup_Remd> tpcontrol should be Langevin, Bussi, or No in FEP')
+      end if
     end do
 
     ! check cyclic_params
@@ -615,22 +652,38 @@ contains
     ! setup replica exchange period
     !
     if (rep_info%exchange_period > 0) then
+      if (dynamics%rstout_period > 0) then
+        if (mod(dynamics%rstout_period,rep_info%exchange_period) /= 0) then
+          call error_msg('Setup_Remd> mod(rstout_period, exchange_period)'//&
+                         ' must be zero')
+        endif
+      endif
       if (dynamics%eneout_period > rep_info%exchange_period) then
         call error_msg('Setup_Remd> (eneout_period <= exchange_period)'//&
                        ' is required')
       else
         if (mod(rep_info%exchange_period,dynamics%eneout_period) /= 0) then
           call error_msg('Setup_Remd> mod(exchange_period,eneout_period)'//&
-                         ' must be zero)')
+                         ' must be zero')
         end if
         if (mod(rep_info%exchange_period,dynamics%thermo_period) /= 0) then
           call error_msg('Setup_Remd> mod(exchange_period,thermo_period)'//&
-                         ' must be zero)')
+                         ' must be zero')
         end if
         if (mod(rep_info%exchange_period,dynamics%baro_period) /= 0) then
           call error_msg('Setup_Remd> mod(exchange_period,baro_period)'//&
-                         ' must be zero)')
+                         ' must be zero')
         end if
+        ! FEP
+        do i = 1, remd%dimension
+          if ((remd%types(i) == RemdAlchemy) .or. &
+            (remd%types(i) == RemdAlchemyRest)) then
+            if (mod(rep_info%exchange_period,dynamics%fepout_period) /= 0) then
+              call error_msg('Setup_Remd> mod(exchange_period,fepout_period)'//&
+                ' must be zero')
+            end if
+          end if
+        end do
       end if
       cycles = 2*rep_info%exchange_period*remd%dimension
       if (mod(dynamics%nsteps,cycles) /= 0) then
@@ -676,7 +729,8 @@ contains
     allocate(ddata(max_nreplicas))
 
     do i = 1, remd%dimension
-      if (remd%types(i) /= RemdRestraint) then
+      if ((remd%types(i) /= RemdRestraint) .and. &
+          (remd%types(i) /= RemdAlchemy)) then
         param = rep_info%parameters(i)
         if (split_num(param) /= remd%nreplicas(i)) &
           call error_msg('Setup_Remd> "nreplicas" and number of data in "parameters" are inconsistent')
@@ -725,6 +779,13 @@ contains
         write(MsgOut,*)
       end if
     end do
+
+    if (present(alchemy)) then
+      ! FEP: setup lambda-exchange FEP (FEP-REMD) or fep with 
+      ! generalized replica exchange with solute tempering (FEP-gREST)
+      call setup_fep_remd(rep_info, molecule, domain, remd, &
+                          restraints, enefunc, alchemy)
+    end if
 
     ! generate multi-dimensional parameter sets
     !
@@ -782,7 +843,12 @@ contains
     !
     replicaid = my_country_no + 1
     parmsetid = remd%repid2parmsetid(replicaid)
-    call assign_condition(parmsetid, remd, domain, ensemble, enefunc)
+    if (present(alchemy)) then
+      ! FEP
+      call assign_condition_fep(parmsetid, remd, domain, ensemble, enefunc, alchemy)
+    else
+      call assign_condition(parmsetid, remd, domain, ensemble, enefunc)
+    end if
 
 
     ! write the summary of setup
@@ -804,16 +870,19 @@ contains
       write(MsgOut,'(A)') '  Parameters'
 
       do i = 1, remd%dimension
-        if (remd%types(i) /= RemdRestraint) then
-          write(ctrep,'(I3)') remd%nreplicas(i)
-          frmt2 = '(A,I4,A,' // ctrep // 'F11.3)'
-          write(MsgOut,frmt2) &
-            '    Dim', i, ' = ', remd%dparameters(i,1:remd%nreplicas(i))
-        else
+        if ((remd%types(i) == RemdRestraint) .or. &
+            (remd%types(i) == RemdAlchemy)   .or. &
+            (remd%types(i) == RemdAlchemyRest)) then
           write(ctrep,'(I3)') remd%nreplicas(i)
           frmt2 = '(A,I4,A,' // ctrep // 'I11  )'
           write(MsgOut,frmt2) &
             '    Dim', i, ' = ', remd%iparameters(i,1:remd%nreplicas(i))
+        else
+          write(ctrep,'(I3)') remd%nreplicas(i)
+          frmt2 = '(A,I4,A,' // ctrep // 'F11.3)'
+          write(MsgOut,frmt2) &
+            '    Dim', i, ' = ', remd%dparameters(i,1:remd%nreplicas(i))
+          write(MsgOut,'(A)') ''
         end if
       end do
 
@@ -834,6 +903,50 @@ contains
                          'reference = ', remd%rest_reference(i,k)
           end do
         write(MsgOut,'(A)') ''
+      end do
+
+      ! FEP: show replica information of fepremd or feprest
+      do i = 1, remd%dimension
+        if ((remd%types(i) == RemdAlchemy) .or. &
+            (remd%types(i) == RemdAlchemyRest)) then
+          write(MsgOut,'(A)') ''
+          write(MsgOut,'(A)') '  FEP Windows'
+          do j = 1, remd%nreplicas(i)
+
+            lambid  = remd%iparameters(i,j)
+            soltemp = remd%dparameters(i,j)
+
+            write(MsgOut,'(A,I4)') '    Window index = ', j
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambljA = ', remd%dlambljA(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambljB = ', remd%dlambljB(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambelA = ', remd%dlambelA(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambelB = ', remd%dlambelB(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambbondA = ', remd%dlambbondA(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambbondB = ', remd%dlambbondB(lambid)
+
+            write(MsgOut,'(6X,A,F10.5,5X)') &
+              ' lambrest = ', remd%dlambrest(lambid)
+
+            if (remd%types(i) == RemdAlchemyRest) then
+              write(MsgOut,'(6X,A,F10.5,5X)') &
+                ' solute_temp = ', soltemp
+            end if
+
+            write(MsgOut,'(A)') ''
+          end do
+        end if
       end do
 
     end if
@@ -1178,7 +1291,7 @@ contains
         !
         call setup_remd_solute_tempering_bonds( remd%solute_tempering(i), &
                                                 domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_bonds, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1192,7 +1305,7 @@ contains
         !
         call setup_remd_solute_tempering_angles( remd%solute_tempering(i), &
                                                  domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_angles, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1201,7 +1314,7 @@ contains
         if (main_rank) then
           write(MsgOut,'(a,i0)') '  num_solute_angles       = ', nrest
         end if
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_ureys, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1215,7 +1328,7 @@ contains
         !
         call setup_remd_solute_tempering_dihedrals( remd%solute_tempering(i), &
                                                     domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_dihedrals, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1229,7 +1342,7 @@ contains
         !
         call setup_remd_solute_tempering_rb_dihedrals( &
                         remd%solute_tempering(i), domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_rb_dihedrals, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1243,7 +1356,7 @@ contains
         !
         call setup_remd_solute_tempering_impropers( remd%solute_tempering(i), &
                                                     domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_impropers, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1257,7 +1370,7 @@ contains
         !
         call setup_remd_solute_tempering_cmaps( remd%solute_tempering(i), &
                                                 domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_cmaps, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1271,7 +1384,7 @@ contains
         !
         call setup_remd_solute_tempering_contacts( remd%solute_tempering(i), &
                                                    domain, enefunc )
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
         call mpi_reduce(remd%solute_tempering(i)%num_contacts, nrest, &
                         1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
 #else
@@ -1601,7 +1714,7 @@ contains
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce(flags, gflags, ncmap_type*num_unit, mpi_integer, &
                        mpi_sum, mpi_comm_country, ierror)
     num_new_types = 0
@@ -1759,7 +1872,7 @@ contains
     ! local variables
     integer :: i, j, ix, localcount, oldcount, org, new, ncell
     integer :: newcount
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     integer :: ierror
 #endif
 
@@ -1780,7 +1893,7 @@ contains
       end do
     end do
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allreduce( MPI_IN_PLACE, check_cls, enefunc%num_atom_cls, &
                         MPI_LOGICAL, MPI_LOR, mpi_comm_country, ierror )
 #endif
@@ -2472,7 +2585,7 @@ contains
     call mpi_bcast(eneval, 1, mpi_wp_real, 0, mpi_comm_country, ierror)
 
     before_gather = eneval
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2619,7 +2732,7 @@ contains
     before_gather =  boundary%box_size_x &
                    * boundary%box_size_y &
                    * boundary%box_size_z 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2744,7 +2857,7 @@ contains
     !
     before_gather =  boundary%box_size_x &
                    * boundary%box_size_y 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2902,7 +3015,7 @@ contains
     call compute_energy_restraints_remd(.true., enefunc, domain, boundary, eneval)
     before_gather = eneval
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -2947,7 +3060,7 @@ contains
     end if
 
     before_gather = eneval
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -3117,7 +3230,7 @@ contains
     call mpi_bcast(eneval, 1, mpi_wp_real, 0, mpi_comm_country, ierror)
 
     before_gather = eneval
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -3164,7 +3277,7 @@ contains
     end if
 
     before_gather = eneval
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     call mpi_allgather(before_gather, 1, mpi_wp_real, &
                        after_gather,  1, mpi_wp_real, &
                        mpi_comm_airplane, ierror)
@@ -3377,7 +3490,7 @@ contains
     integer  :: alist(8), i, j, ix, num, tgt, n, org, ncell, counter
     real(wp) :: coeff_full, coeff_half, wgt, tmp1, tmp2
     real(wp) :: el_fact, alpha
-    real(dp) :: u_self_org
+    real(dp) :: u_self
 
     coeff_full = ensemble%temperature / rest_param
     coeff_half = sqrt( coeff_full )
@@ -3410,6 +3523,9 @@ contains
           end if
         end do
       end do
+#ifdef USE_GPU
+      call gpu_upload_charge( domain%charge )
+#endif /* USE_GPU */
 
       ! need to update PME self energy (not necessary for NPT?)
       u_self = 0.0_dp
@@ -3840,5 +3956,1127 @@ contains
     return
 
   end subroutine compute_energy_restraints_remd
+
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!  !
+!  !  Subroutine    setup_remd_solute_tempering_lj
+!  !> @brief        REST setup for lj terms
+!  !! @authors      MK
+!  !! @param[inout] soltemp    : REST information
+!  !! @param[inout] molecule   : molecule information
+!  !! @param[inout] domain     : domain information
+!  !! @param[inout] enefunc    : potential energy functions information
+!  !
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!
+!  subroutine setup_remd_solute_tempering_lj( soltemp, molecule, domain, &
+!                                             enefunc )
+!
+!    ! formal arguments
+!    type(s_soltemp),         intent(inout) :: soltemp
+!    type(s_molecule),        intent(inout) :: molecule
+!    type(s_domain),          intent(inout) :: domain
+!    type(s_enefunc),         intent(inout) :: enefunc
+!
+!    ! temporal allocatable arrays
+!    real(wp),                allocatable   :: tmp_lj(:,:)
+!    ! work around for nbfix extension
+!    logical,                 allocatable   :: check_cls(:)
+!    integer,                 allocatable   :: lc_atom_cls(:)
+!
+!    ! local variables
+!    integer :: i, j, ix, localcount, oldcount, org, new, ncell
+!#ifdef HAVE_MPI_GENESIS
+!    integer :: ierror
+!#endif
+!
+!    soltemp%num_atom_cls = 0
+!    if ( .not. soltemp%sw_lj ) return
+!
+!    !! check solute atom types
+!    allocate( check_cls(enefunc%num_atom_cls), &
+!              lc_atom_cls(enefunc%num_atom_cls) )
+!    check_cls(1:enefunc%num_atom_cls) = .false.
+!    lc_atom_cls(1:enefunc%num_atom_cls) = 2000 ! force to cause error
+!
+!    do i = 1, domain%num_cell_local + domain%num_cell_boundary
+!      do ix = 1, domain%num_atom(i)
+!        if ( soltemp%is_solute(domain%id_l2g(ix,i)) > 0 ) then
+!          check_cls(domain%atom_cls_no(ix,i)) = .true.
+!        end if
+!      end do
+!    end do
+!
+!#ifdef HAVE_MPI_GENESIS
+!    call mpi_allreduce( MPI_IN_PLACE, check_cls, enefunc%num_atom_cls, &
+!                        MPI_LOGICAL, MPI_LOR, mpi_comm_country, ierror )
+!#endif
+!
+!    localcount = 0
+!    do i = 1, enefunc%num_atom_cls
+!      if ( check_cls(i) ) then
+!        localcount = localcount + 1
+!        lc_atom_cls(i) = localcount
+!        soltemp%atom_cls_no_org(localcount) = i
+!      end if
+!    end do
+!    soltemp%num_atom_cls = localcount
+!    soltemp%istart_atom_cls = enefunc%num_atom_cls + 1
+!
+!    ! loop over local cells; modify atom type
+!    !
+!    ncell = domain%num_cell_local + domain%num_cell_boundary
+!    do i = 1, ncell
+!      do ix = 1, domain%num_atom(i)
+!        if ( soltemp%is_solute(domain%id_l2g(ix,i)) > 0 ) then
+!          org = lc_atom_cls(domain%atom_cls_no(ix,i))
+!          domain%atom_cls_no(ix,i) = org + enefunc%num_atom_cls
+!        end if
+!      end do
+!    end do
+!
+!    oldcount = enefunc%num_atom_cls
+!    allocate( tmp_lj(oldcount,oldcount) )
+!    enefunc%num_atom_cls = oldcount + localcount
+!    max_class = enefunc%num_atom_cls
+!
+!    if ( allocated(enefunc%nb14_lj6) ) then
+!      tmp_lj(1:oldcount,1:oldcount) = enefunc%nb14_lj6(1:oldcount,1:oldcount)
+!      call setup_remd_solute_tempering_lj_each( &
+!                  oldcount, soltemp, tmp_lj, enefunc%nb14_lj6 )
+!    end if
+!    if ( allocated(enefunc%nb14_lj12) ) then
+!      tmp_lj(1:oldcount,1:oldcount) = enefunc%nb14_lj12(1:oldcount,1:oldcount)
+!      call setup_remd_solute_tempering_lj_each( &
+!                  oldcount, soltemp, tmp_lj, enefunc%nb14_lj12 )
+!    end if
+!    if ( allocated(enefunc%nonb_lj6) ) then
+!      tmp_lj(1:oldcount,1:oldcount) = enefunc%nonb_lj6(1:oldcount,1:oldcount)
+!      call setup_remd_solute_tempering_lj_each( &
+!                  oldcount, soltemp, tmp_lj, enefunc%nonb_lj6 )
+!    end if
+!    if ( allocated(enefunc%nonb_lj12) ) then
+!      tmp_lj(1:oldcount,1:oldcount) = enefunc%nonb_lj12(1:oldcount,1:oldcount)
+!      call setup_remd_solute_tempering_lj_each( &
+!                  oldcount, soltemp, tmp_lj, enefunc%nonb_lj12 )
+!    end if
+!
+!    return
+!
+!  end subroutine setup_remd_solute_tempering_lj
+!
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!  !
+!  !  Subroutine    setup_remd_solute_tempering_lj_each
+!  !> @brief        REST setup for each LJ term such as LJ6, LJ12
+!  !! @authors      MK
+!  !! @param[in]    ljsize     : original array size of interaction matrix
+!  !! @param[inout] soltemp    : REST information
+!  !! @param[inout] tmp_lj     : work matrix
+!  !! @param[inout] nbcoeff    : new interaction matrix
+!  !
+!  !======1=========2=========3=========4=========5=========6=========7=========8
+!
+!  subroutine setup_remd_solute_tempering_lj_each( ljsize, soltemp, &
+!                                                  tmp_lj, nbcoeff )
+!
+!    ! formal arguments
+!    integer,                      intent(in)    :: ljsize
+!    type(s_soltemp),              intent(inout) :: soltemp
+!    real(wp),                     intent(inout) :: tmp_lj(ljsize,ljsize)
+!    real(wp),        allocatable, intent(inout) :: nbcoeff(:,:)
+!
+!    ! local variables
+!    integer :: i, j, newcount, orgi, orgj
+!
+!    newcount = ljsize + soltemp%num_atom_cls
+!
+!    deallocate( nbcoeff )
+!    allocate( nbcoeff( newcount, newcount ) )
+!
+!    nbcoeff(1:newcount,1:newcount) = 0.0_wp
+!    nbcoeff(1:ljsize,1:ljsize) = tmp_lj(1:ljsize,1:ljsize)
+!
+!    do i = 1, soltemp%num_atom_cls
+!      orgi = soltemp%atom_cls_no_org(i)
+!      do j = 1, ljsize
+!        nbcoeff(j,i+ljsize) = tmp_lj(j,orgi)
+!        nbcoeff(i+ljsize,j) = tmp_lj(j,orgi)
+!      end do
+!      do j = ljsize + 1, newcount
+!        orgj = soltemp%atom_cls_no_org(j-ljsize)
+!        nbcoeff(j,i+ljsize) = tmp_lj(orgj,orgi)
+!        nbcoeff(i+ljsize,j) = tmp_lj(orgj,orgi)
+!      end do
+!    end do
+!
+!    return
+!
+!  end subroutine setup_remd_solute_tempering_lj_each
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    assign_condition_solte_tempering_angle_ub
+  !> @brief        reassign force constant involving REST for angles
+  !! @authors      MK
+  !! @param[in]    coeff_full  : coefficient
+  !! @param[in]    n_internal  : number of terms
+  !! @param[in]    aindex      : atom list
+  !! @param[inout] fc          : force constant
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine assign_condition_solute_tempering_angle_ub( soltemp, &
+                                  coeff_full, nangles, aindex, fc, fc_ub )
+
+    ! formal arguments
+    type(s_soltemp),         intent(in)    :: soltemp
+    real(wp),                intent(in)    :: coeff_full
+    integer,                 intent(in)    :: nangles
+    integer,                 intent(in)    :: aindex(:,:)
+    real(wp),                intent(inout) :: fc(:)
+    real(wp),                intent(inout) :: fc_ub(:)
+
+    ! local variables
+    integer  :: alist(3), ix, j, num
+    real(wp) :: wgt
+
+    ! angle and urey
+    do ix = 1, nangles
+      alist(1:3) = aindex(1:3,ix)
+      num = 0
+      do j = 1, 3
+        if (soltemp%is_solute(alist(j)) > 0) num = num + 1
+      end do
+      if ( num > 0 .and. soltemp%sw_angles ) then
+        wgt = real(num,wp) / 3.0_wp
+        wgt = coeff_full ** wgt
+        fc(ix) = wgt * fc(ix)
+      end if
+!      if ( fc_ub(ix) > EPS .and. & soltemp%sw_ureys ) then
+! bug fixed by N.K
+      if ( fc_ub(ix) > EPS .and. soltemp%sw_ureys ) then
+        num = 0
+        if (soltemp%is_solute(alist(1)) > 0) num = num + 1
+        if (soltemp%is_solute(alist(3)) > 0) num = num + 1
+        if ( num > 0 ) then
+          wgt = real(num,wp) / 2.0_wp
+          wgt = coeff_full ** wgt
+          fc_ub(ix) = wgt * fc_ub(ix)
+        end if
+      end if
+    end do
+
+    return
+
+  end subroutine assign_condition_solute_tempering_angle_ub
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    run_remd_fep
+  !> @brief        control replica exchange for FEP calculation
+  !! @authors      NK, HO
+  !! @param[inout] output      : output information
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] dynamics    : dynamics information
+  !! @param[inout] pairlist    : pairlist information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] constraints : constraints information
+  !! @param[inout] ensemble    : ensemble information
+  !! @param[inout] remd        : REMD information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine run_remd_fep(output, domain, enefunc, dynvars, dynamics, &
+                      pairlist, boundary, constraints, ensemble,  &
+                      comm, remd, alchemy)
+
+    ! formal arguments
+    type(s_output),          intent(inout) :: output
+    type(s_domain),  target, intent(inout) :: domain
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_dynvars),         intent(inout) :: dynvars
+    type(s_dynamics),        intent(inout) :: dynamics
+    type(s_pairlist),        intent(inout) :: pairlist
+    type(s_boundary),        intent(inout) :: boundary
+    type(s_constraints),     intent(inout) :: constraints
+    type(s_ensemble),        intent(inout) :: ensemble
+    type(s_comm),            intent(inout) :: comm
+    type(s_remd),            intent(inout) :: remd
+    type(s_alchemy),         intent(inout) :: alchemy
+
+    ! local variables
+    integer                   :: i, replicaid, parmsetid
+    logical                   :: is_feprest
+
+    is_feprest = .false.
+    do i = 1, remd%dimension
+      if (remd%types(i) == RemdAlchemyRest) then
+        is_feprest = .true.
+      end if
+    end do
+
+    ! Open output files
+    !
+    call open_output(output)
+
+    ! output restart data
+    !
+    dynvars%step = 0
+    call output_remd(0, output, domain, dynamics, dynvars, boundary, remd)
+
+    do i = 1, remd%ncycles
+
+      dynamics%istart_step  = (i-1)*remd%exchange_period + 1
+      dynamics%iend_step    =  i   *remd%exchange_period
+      dynamics%initial_time = dynvars%time
+
+      ! set conditions
+      !
+      replicaid = my_country_no + 1
+      parmsetid = remd%repid2parmsetid(replicaid)
+      ! FEP
+      call assign_condition_fep(parmsetid, remd, domain, ensemble, enefunc, alchemy)
+
+      ! MD main loop
+      !
+      ! FEP
+      if (dynamics%integrator == IntegratorLEAP) then
+        call leapfrog_dynamics_fep(output, domain, enefunc, dynvars, &
+          dynamics, pairlist, boundary, &
+          constraints, ensemble, comm, remd, alchemy)
+      else if (dynamics%integrator == IntegratorVVER) then
+        call vverlet_dynamics_fep(output, domain, enefunc, dynvars, &
+          dynamics, pairlist, boundary, &
+          constraints, ensemble, comm, remd, alchemy)
+      else if (dynamics%integrator == IntegratorVRES) then
+        call vverlet_respa_dynamics_fep(output, domain, enefunc, dynvars, &
+          dynamics, pairlist, boundary, constraints,   &
+          ensemble, comm, remd, alchemy)
+      end if
+
+      ! perform remd
+      !
+      ! FEP
+      if ((.not. remd%equilibration_only) .and. &
+          (dynamics%equilsteps < dynamics%iend_step)) then
+        call perform_replica_exchange_fep(i, domain, enefunc, dynvars,         &
+                                      ensemble, boundary, output, remd,        &
+                                      pairlist, alchemy)
+      end if
+
+      ! output restart data
+      !
+      call output_remd(i, output, domain, dynamics, dynvars, boundary, remd)
+
+    end do
+
+    ! close output files
+    !
+    call close_output(output)
+
+
+    return
+
+  end subroutine run_remd_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    perform_replica_exchange_fep
+  !> @brief        perform replica exchange for FEP
+  !! @authors      HO
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] ensemble    : ensemble information
+  !! @param[inout] remd        : REMD information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine perform_replica_exchange_fep(icycle, domain, enefunc, dynvars, &
+                                      ensemble, boundary, output, remd, &
+                                      pairlist, alchemy)
+
+    ! formal arguments
+    integer,                  intent(in)    :: icycle
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_enefunc),          intent(inout) :: enefunc
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_ensemble),         intent(inout) :: ensemble
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_output),           intent(inout) :: output
+    type(s_remd),     target, intent(inout) :: remd
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_alchemy),optional, intent(inout) :: alchemy
+
+    ! local variables
+    integer                   :: exptrn, dimno, itmp, parmsetid
+    integer                   :: i, j, jx, k, neighid, id_old
+    integer                   :: umbr_0, funcid
+    integer                   :: ipara, ipara_ref
+    real(wp)                  :: dpara, dpara_ref
+    character                 :: ctrep*3, frmt1*12, frmt2*12, aorr*1
+    integer,          pointer :: total_nreplicas, iseed
+    integer,          pointer :: num_criteria(:,:,:), num_exchanges(:,:,:)
+    integer,          pointer :: parmidsets(:,:)
+    integer,          pointer :: repid2parmsetid(:), parmsetid2repid(:)
+    integer,          pointer :: repid2parmsetid_ref(:)
+    integer,          pointer :: iparameters(:,:)
+    real(wp),         pointer :: dparameters(:,:)
+
+    integer, save, allocatable :: counter_skip(:)
+    integer, save, allocatable :: counter_tuning(:)
+
+    real(wp) :: temp_i, temp_j, factor
+
+
+    iseed               => remd%iseed
+    total_nreplicas     => remd%total_nreplicas
+    repid2parmsetid     => remd%repid2parmsetid
+    repid2parmsetid_ref => remd%repid2parmsetid_ref
+    parmsetid2repid     => remd%parmsetid2repid
+    parmidsets          => remd%parmidsets
+    dparameters         => remd%dparameters
+    iparameters         => remd%iparameters
+    num_criteria        => remd%num_criteria
+    num_exchanges       => remd%num_exchanges
+
+
+    ! decide dimension to be exchanged and exchange pattern
+    !   pattern 1: 1<>2  3<>4  5<>6  7<>8 ...
+    !   pattern 2: 1  2<>3  4<>5  6<>7  8 ...
+    !
+    itmp  = mod(icycle,2*remd%dimension)
+    dimno = mod(itmp,remd%dimension)+1
+    if (itmp+1 <= remd%dimension) then
+      exptrn = 1
+    else
+      exptrn = 2
+    end if
+
+    ! parameter tuning
+    !
+    if (remd%autoadj(dimno)%param_tuning) then
+      if (.not. allocated(counter_skip)) then
+        allocate(counter_skip(remd%dimension))
+        counter_skip(1:remd%dimension) = 0
+      end if
+      if (.not. allocated(counter_tuning)) then
+        allocate(counter_tuning(remd%dimension))
+        counter_tuning(1:remd%dimension) = 0
+      end if
+      counter_skip(dimno) = counter_skip(dimno) + 1
+      if (counter_skip(dimno) <= 2 * remd%autoadj(dimno)%eq_cycle) then
+        if (main_rank) then
+          write(MsgOut,'(A, I12)') &
+            "Info> skip exchange at step", dynvars%step
+          write(MsgOut,*)
+        end if
+        return
+      end if
+    end if
+
+
+    ! save previous information
+    !
+    repid2parmsetid_ref(1:total_nreplicas) = repid2parmsetid(1:total_nreplicas)
+
+
+    ! generate random number
+    !
+    do i = 1, total_nreplicas-1
+      do j = i+1, total_nreplicas
+        remd%random_table(i,j) = random_get_legacy(iseed)
+        remd%random_table(j,i) = remd%random_table(i,j)
+      end do
+    end do
+
+    
+    ! perform replica exchange
+    !
+    select case(remd%types(dimno))
+
+    case(RemdTemperature)
+
+      call temperature_remd(dimno, exptrn, domain, dynvars, remd)
+
+    case(RemdPressure)
+
+      call pressure_remd(dimno, exptrn, ensemble, boundary, remd)
+
+    case(RemdGamma)
+
+      call surface_tension_remd(dimno, exptrn, ensemble, boundary, remd)
+
+    case(RemdRestraint)
+
+      call restraint_remd(dimno, exptrn, domain, boundary, ensemble, dynvars, &
+                          enefunc, remd)
+
+    case(RemdSoluteTempering)
+
+      call solute_tempering_remd(dimno, exptrn, domain, ensemble, dynvars, &
+                                 enefunc, remd, pairlist, boundary, output)
+
+    case(RemdAlchemy, RemdAlchemyRest)
+
+      if (present(alchemy)) then
+        call fep_remd(dimno, exptrn, domain, ensemble, dynvars, enefunc, remd, &
+                      pairlist, boundary, output, alchemy)
+      else
+        call error_msg('Alchemy infomartion must be needed')
+      end if
+
+    end select
+
+    ! parameter tuning
+    !
+    if (remd%autoadj(dimno)%param_tuning) then
+      counter_tuning(dimno) = counter_tuning(dimno) + 1
+      if (counter_tuning(dimno) >= 2 * remd%autoadj(dimno)%trial_freq) then
+
+        ! in case of temperature REMD, we should remember current temp
+        if ( remd%types(dimno) == RemdTemperature ) then
+          parmsetid = repid2parmsetid(my_country_no+1)
+          temp_i = remd%dparameters(dimno,parmidsets(parmsetid,dimno))
+        end if
+
+        ! check current exchange ratio
+        call remd_autoadj_displacement(dimno,remd)
+
+        if ( remd%types(dimno) == RemdTemperature ) then
+          temp_j = remd%dparameters(dimno,parmidsets(parmsetid,dimno))
+          factor = sqrt(temp_j/temp_i)
+          do j = 1, domain%num_cell_local
+            do jx = 1, domain%num_atom(j)
+              domain%velocity(1:3,jx,j) = domain%velocity(1:3,jx,j) * factor
+            end do
+          end do
+
+          factor = temp_j/temp_i
+          dynvars%thermostat_momentum                 &
+            = dynvars%thermostat_momentum * factor
+          dynvars%barostat_momentum(1:3)              &
+            = dynvars%barostat_momentum(1:3) * factor
+
+        end if
+
+        ! reset counters
+        do i = 1, remd%total_nreplicas
+          remd%num_criteria (i,dimno,1:2) = 0
+          remd%num_exchanges(i,dimno,1:2) = 0
+        end do
+
+        if (main_rank) then
+          write(MsgOut,'("REMD> New parameter set: ")',advance="NO")
+          if (remd%types(dimno) /= RemdRestraint) then
+            do i = 1, remd%nreplicas(dimno)
+              write(MsgOut,'(2X,F10.5)',advance="NO") remd%dparameters(dimno,i)
+            end do
+          else
+            umbr_0 = remd%iparameters(dimno,parmidsets(1,dimno))
+            do k = 1, remd%umbrid2numfuncs(umbr_0)
+              funcid = remd%umbrid2funclist(umbr_0,k)
+              do i = 1, remd%nreplicas(dimno)
+                write(MsgOut,'(2X,F10.5)',advance="NO") remd%rest_reference(i,k)
+              end do
+            end do
+          end if
+          write(MsgOut,*)
+          write(MsgOut,*)
+        end if
+        counter_skip(dimno)   = 0
+        counter_tuning(dimno) = 0
+      end if
+    end if
+
+
+    ! update permutation function
+    !
+    do i = 1, total_nreplicas
+      parmsetid = repid2parmsetid(i)
+      parmsetid2repid(parmsetid) = i
+    end do
+
+
+    ! write results
+    !
+    if (main_rank) then
+
+      write(MsgOut,'(A,I10,3X,A,I4,3X,A,I4)')                           &
+        'REMD> Step: ',dynvars%step,'Dimension: ',dimno,                &
+        'ExchangePattern: ',exptrn
+
+      write(MsgOut,'(A,6X,A,13X,A,6X,A,7X,A)')     &
+        '  Replica', 'ExchangeTrial', 'AcceptanceRatio', 'Before', 'After'
+      do i = 1, total_nreplicas
+        id_old = repid2parmsetid_ref(i)
+        call get_neighbouring_parmsetid(dimno, exptrn, remd, id_old, neighid)
+
+        if ((remd%types(dimno) /= RemdRestraint) .and. &
+            (remd%types(dimno) /= RemdAlchemy)) then
+
+          dpara_ref = dparameters(dimno,parmidsets(repid2parmsetid_ref(i),dimno))
+          dpara     = dparameters(dimno,parmidsets(repid2parmsetid(i),    dimno))
+
+          if (abs(dpara_ref - dpara) < EPS) then
+            aorr = 'R'
+          else
+            aorr = 'A'
+          end if
+          if (neighid == 0) aorr = 'N'
+
+          write(MsgOut,'(I9,6X,I5,A,I5,3X,A1,3X,I9,A,I9,2F12.3)')         &
+               i, id_old, ' > ', neighid, aorr,                           &
+               num_exchanges(repid2parmsetid_ref(i),dimno,exptrn), ' / ', &
+               num_criteria (repid2parmsetid_ref(i),dimno,exptrn),        &
+               dpara_ref, dpara
+        else
+
+          ipara_ref = iparameters(dimno,parmidsets(repid2parmsetid_ref(i),dimno))
+          ipara     = iparameters(dimno,parmidsets(repid2parmsetid(i),    dimno))
+
+          if (ipara_ref == ipara) then
+            aorr = 'R'
+          else
+            aorr = 'A'
+          end if
+          if (neighid == 0) aorr = 'N'
+
+          write(MsgOut,'(I9,6X,I5,A,I5,3X,A1,3X,I9,A,I9,2I12)')           &
+               i, id_old, ' > ', neighid, aorr,                           &
+               num_exchanges(repid2parmsetid_ref(i),dimno,exptrn), ' / ', &
+               num_criteria (repid2parmsetid_ref(i),dimno,exptrn),        &
+               ipara_ref, ipara
+        end if
+      end do
+
+      write(MsgOut,*) ''
+
+      write(ctrep,'(I3)') total_nreplicas
+      frmt1 = '(A,' // trim(adjustl(ctrep)) // 'F10.3)'
+      frmt2 = '(A,' // trim(adjustl(ctrep)) // 'I10  )'
+
+      if ((remd%types(dimno) /= RemdRestraint) .and. &
+          (remd%types(dimno) /= RemdAlchemy)) then
+        write(MsgOut,frmt1) '  Parameter    : ', &
+          dparameters(dimno,parmidsets(repid2parmsetid(1:total_nreplicas),dimno))
+      else
+        write(MsgOut,frmt2) '  Parameter    : ', &
+          iparameters(dimno,parmidsets(repid2parmsetid(1:total_nreplicas),dimno))
+      end if
+      write(MsgOut,frmt2)   '  RepIDtoParmID: ', repid2parmsetid(1:total_nreplicas)
+      write(MsgOut,frmt2)   '  ParmIDtoRepID: ', parmsetid2repid(1:total_nreplicas)
+
+      write(MsgOut,*) ''
+
+    end if
+
+    return
+
+  end subroutine perform_replica_exchange_fep
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_fep_remd
+  !> @brief        setup replica exchange for FEP
+  !! @authors      HO
+  !! @param[in]    rep_info   : REMD section control parameters information
+  !! @param[inout] molecule   : molecule information
+  !! @param[inout] domain     : domain information
+  !! @param[inout] remd       : REMD information
+  !! @param[inout] restraints : restraints information
+  !! @param[inout] enefunc    : potential energy functions information
+  !! @param[inout] alchemy    : ALCHEMY information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_fep_remd( rep_info, molecule, domain, &
+                             remd, restraints, enefunc, alchemy )
+
+    ! formal arguments
+    type(s_rep_info),        intent(in)    :: rep_info
+    type(s_molecule),        intent(inout) :: molecule
+    type(s_domain),          intent(inout) :: domain
+    type(s_remd),            intent(inout) :: remd
+    type(s_restraints),      intent(inout) :: restraints
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_alchemy),         intent(inout) :: alchemy
+
+    ! local variables
+    integer :: i, j, k, ndata, nrest
+    integer :: ierror
+    integer :: lambid, max_nreplicas
+
+    integer, parameter :: max_param_type = 20
+    character(MaxLine) :: param_type_str(max_param_type)
+
+
+    ! allocation
+    !
+    max_nreplicas = maxval(rep_info%nreplicas(1:remd%dimension))
+    call alloc_remd(remd, RemdFEP, remd%dimension, remd%total_nreplicas, max_nreplicas)
+
+    ! make permutation function for FEP
+    !
+    lambid = 0
+    do i = 1, remd%dimension
+      if (remd%types(i) == RemdAlchemy .or. &
+          remd%types(i) == RemdAlchemyRest) then
+        if (alchemy%num_fep_windows /= (remd%nreplicas(i))) &
+          call error_msg('Setup_Remd> &
+            "nreplicas" and number of FEP windows are inconsistent')
+        do j = 1, remd%nreplicas(i)
+          lambid = lambid + 1
+          remd%iparameters(i,j) = lambid
+          remd%dlambljA(lambid) = alchemy%lambljA(j)
+          remd%dlambljB(lambid) = alchemy%lambljB(j)
+          remd%dlambelA(lambid) = alchemy%lambelA(j)
+          remd%dlambelB(lambid) = alchemy%lambelB(j)
+          remd%dlambbondA(lambid) = alchemy%lambbondA(j)
+          remd%dlambbondB(lambid) = alchemy%lambbondB(j)
+          remd%dlambrest(lambid) = alchemy%lambrest(j)
+        end do
+      end if
+
+      if (remd%types(i) == RemdAlchemyRest) then
+
+        ! read paramter type
+        ndata = split_num(rep_info%param_type(i))
+        call split(ndata,max_param_type,rep_info%param_type(i), &
+                   param_type_str)
+
+        remd%fep_rest(i)%sw_bonds        = .false.
+        remd%fep_rest(i)%sw_angles       = .false.
+        remd%fep_rest(i)%sw_ureys        = .false.
+        remd%fep_rest(i)%sw_dihedrals    = .false.
+        remd%fep_rest(i)%sw_impropers    = .false.
+        remd%fep_rest(i)%sw_cmaps        = .false.
+        remd%fep_rest(i)%sw_lj           = .false.
+        remd%fep_rest(i)%sw_charge       = .false.
+
+        do j = 1, ndata
+          call tolower(param_type_str(j))
+          select case (trim(param_type_str(j)))
+            case("all")
+              remd%fep_rest(i)%sw_bonds        = .true.
+              remd%fep_rest(i)%sw_angles       = .true.
+              remd%fep_rest(i)%sw_ureys        = .true.
+              remd%fep_rest(i)%sw_dihedrals    = .true.
+              remd%fep_rest(i)%sw_impropers    = .true.
+              remd%fep_rest(i)%sw_cmaps        = .true.
+              remd%fep_rest(i)%sw_lj           = .true.
+              remd%fep_rest(i)%sw_charge       = .true.
+            case("b", "bond", "bonds")
+              remd%fep_rest(i)%sw_bonds        = .true.
+            case("a", "angle", "angles")
+              remd%fep_rest(i)%sw_angles       = .true.
+            case("u", "urey", "ureys")
+              remd%fep_rest(i)%sw_ureys        = .true.
+            case("d", "dihedral", "dihedrals")
+              remd%fep_rest(i)%sw_dihedrals    = .true.
+            case("i", "improper", "impropers")
+              remd%fep_rest(i)%sw_impropers    = .true.
+            case("cm", "cmap", "cmaps")
+              remd%fep_rest(i)%sw_cmaps        = .true.
+            case("c", "charge", "charges")
+              remd%fep_rest(i)%sw_charge       = .true.
+            case("l", "lj", "ljs")
+              remd%fep_rest(i)%sw_lj           = .true.
+          end select
+        end do
+
+        ! this value is set to true after the first call of assign_condition
+        !
+        remd%fep_rest(i)%done_setup = .false.
+
+        remd%fep_rest(i)%num_solute = 0
+        remd%fep_rest(i)%num_atom_cls = 0
+
+        read(rep_info%select_index(i),*) remd%fep_rest(i)%mygroup
+
+        nrest = restraints%num_atoms(remd%fep_rest(i)%mygroup)
+        remd%fep_rest(i)%num_solute = nrest
+
+        allocate(remd%fep_rest(i)%solute_list(nrest), &
+                 remd%fep_rest(i)%is_solute(molecule%num_atoms), &
+                 remd%fep_rest(i)%atom_cls_no_org(nrest))
+        remd%fep_rest(i)%is_solute(1:molecule%num_atoms) = 0
+
+        ! listup solute atoms
+        !
+        do j = 1, restraints%num_atoms(remd%fep_rest(i)%mygroup)
+          k = restraints%atomlist(j,remd%fep_rest(i)%mygroup)
+          remd%fep_rest(i)%solute_list(j) = k
+          remd%fep_rest(i)%is_solute(k) = 1
+        end do
+
+        if (main_rank) then
+
+          write(MsgOut,'(a)')    'Setup_Remd_Solute_Tempering>'
+          write(MsgOut,'(a,i8)') 'Param types for dimension', i
+          write(MsgOut,'(a,l8)') '  BONDS         = ', &
+                                 remd%fep_rest(i)%sw_bonds
+          write(MsgOut,'(a,l8)') '  ANGLES        = ', &
+                                 remd%fep_rest(i)%sw_angles
+          write(MsgOut,'(a,l8)') '  UREYS         = ', &
+                                 remd%fep_rest(i)%sw_ureys
+          write(MsgOut,'(a,l8)') '  DIHEDRALS     = ', &
+                                 remd%fep_rest(i)%sw_dihedrals
+          write(MsgOut,'(a,l8)') '  IMPROPERS     = ', &
+                                 remd%fep_rest(i)%sw_impropers
+          write(MsgOut,'(a,l8)') '  CMAPS         = ', &
+                                 remd%fep_rest(i)%sw_cmaps
+          write(MsgOut,'(a,l8)') '  CHARGE        = ', &
+                                 remd%fep_rest(i)%sw_charge
+          write(MsgOut,'(a,l8)') '  LJ            = ', &
+                                 remd%fep_rest(i)%sw_lj
+        end if
+
+        if (main_rank) then
+          write(MsgOut,'(a,i8)') 'Solute Atoms for dimension', i
+          write(MsgOut,'(a,i0)') '  num_solute              = ', nrest
+        end if
+
+        ! bond (just count number)
+        !
+        call setup_remd_solute_tempering_bonds( remd%fep_rest(i), &
+                                                domain, enefunc )
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_bonds, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_bonds
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_bond         = ', nrest
+        end if
+
+        ! angle (just count number)
+        !
+        call setup_remd_solute_tempering_angles( remd%fep_rest(i), &
+                                                 domain, enefunc )
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_angles, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_angles
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_angles       = ', nrest
+        end if
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_ureys, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_ureys
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_ureys        = ', nrest
+        end if
+
+        ! dihedral (just count number)
+        !
+        call setup_remd_solute_tempering_dihedrals( remd%fep_rest(i), &
+                                                    domain, enefunc )
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_dihedrals, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_dihedrals
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_dihedrals    = ', nrest
+        end if
+
+        ! improper (just count number)
+        !
+        call setup_remd_solute_tempering_impropers( remd%fep_rest(i), &
+                                                    domain, enefunc )
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_impropers, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_impropers
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_impropers    = ', nrest
+        end if
+
+        ! cmap (just count number)
+        !
+        call setup_remd_solute_tempering_cmaps( remd%fep_rest(i), &
+                                                domain, enefunc )
+#ifdef HAVE_MPI_GENESIS
+        call mpi_reduce(remd%fep_rest(i)%num_cmaps, nrest, &
+                        1, mpi_integer, mpi_sum, 0, mpi_comm_country, ierror)
+#else
+        nrest = remd%fep_rest(i)%num_cmaps
+#endif
+        if (main_rank) then
+          write(MsgOut,'(a,i0)') '  num_solute_cmaps        = ', nrest
+        end if
+
+        ! LJ
+        !
+        call setup_remd_solute_tempering_lj( remd%fep_rest(i), &
+                                             molecule, domain, enefunc )
+
+        ! charges are not modified here; to be done in assign_condition
+        !
+
+      end if
+    end do
+
+    return
+
+  end subroutine setup_fep_remd
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    fep_remd
+  !> @brief        Replica exchange for FEP
+  !! @authors      HO
+  !! @param[in]    dimno    : dimension number
+  !! @param[in]    exptrn   : exchange pattern
+  !! @param[inout] ensemble : ensemble information
+  !! @param[inout] dynvars  : dynamics variables information
+  !! @param[inout] enefunc  : potential energy functions information
+  !! @param[inout] remd     : REMD information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine fep_remd(dimno, exptrn, domain, ensemble, dynvars, enefunc, remd, &
+                      pairlist, boundary, output, alchemy)
+
+    ! formal arguments
+    integer,                  intent(in)    :: dimno
+    integer,                  intent(in)    :: exptrn
+    type(s_domain),   target, intent(inout) :: domain
+    type(s_ensemble),         intent(inout) :: ensemble
+    type(s_dynvars),  target, intent(inout) :: dynvars
+    type(s_enefunc),  target, intent(inout) :: enefunc
+    type(s_remd),     target, intent(inout) :: remd
+    type(s_pairlist),         intent(inout) :: pairlist
+    type(s_boundary),         intent(inout) :: boundary
+    type(s_output),           intent(inout) :: output
+    type(s_alchemy),          intent(inout) :: alchemy
+
+    ! local variables
+    integer                  :: i, j, k, ix
+    integer                  :: natoms
+    integer                  :: repid_i, repid_j
+    integer                  :: parmsetid, parmsetid_i, parmsetid_j
+    integer                  :: neighid
+    integer                  :: funcid, umbr_0, umbr_1
+    real(wp)                 :: cv
+    real(wp)                 :: energy_i_0, energy_j_0
+    real(wp)                 :: energy_i_1, energy_j_1
+    real(wp)                 :: energy_i, energy_j
+    real(wp)                 :: eneval, beta, delta, temperature
+    real(wp)                 :: before_gather
+    logical                  :: does_exist, do_trial, do_exchange, umbr_exist
+    integer,         pointer :: total_nreplicas
+    integer,         pointer :: num_criteria(:,:,:), num_exchanges(:,:,:)
+    integer,         pointer :: parmidsets(:,:)
+    integer,         pointer :: repid2parmsetid(:), parmsetid2repid(:)
+    integer,         pointer :: parameters(:,:)
+    real(wp),        pointer :: after_gather(:), random_table(:,:)
+    real(wp),        pointer :: refcoord0(:,:), refcoord1(:,:)
+
+    after_gather    => remd%after_gather
+    random_table    => remd%random_table
+    total_nreplicas => remd%total_nreplicas
+    repid2parmsetid => remd%repid2parmsetid
+    parmsetid2repid => remd%parmsetid2repid
+    parmidsets      => remd%parmidsets
+    parameters      => remd%iparameters
+    num_criteria    => remd%num_criteria
+    num_exchanges   => remd%num_exchanges
+    refcoord0       => remd%restraint_refcoord0
+    refcoord1       => remd%restraint_refcoord1
+
+    ! allgather energy difference of forward
+    !
+    eneval = dynvars%energy%deltU_fep(3)
+    call mpi_bcast(eneval, 1, mpi_wp_real, 0, mpi_comm_country, ierror)
+
+    before_gather = eneval
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allgather(before_gather, 1, mpi_wp_real, &
+                       after_gather,  1, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)
+#endif
+    do i = 1, total_nreplicas
+      remd%deltU_fwd(i) = after_gather(i)
+    end do
+
+    ! allgather energy difference of reverse
+    !
+    eneval = dynvars%energy%deltU_fep(2)
+    call mpi_bcast(eneval, 1, mpi_wp_real, 0, mpi_comm_country, ierror)
+
+    before_gather = eneval
+#ifdef HAVE_MPI_GENESIS
+    call mpi_allgather(before_gather, 1, mpi_wp_real, &
+                       after_gather,  1, mpi_wp_real, &
+                       mpi_comm_airplane, ierror)
+#endif
+    do i = 1, total_nreplicas
+      remd%deltU_rev(i) = after_gather(i)
+    end do
+
+    ! replica exchange
+    !
+    do i = 1, total_nreplicas
+
+      repid_i     = i
+      parmsetid_i = repid2parmsetid(repid_i)
+
+      ! get neighboring parameter set index and replica index
+      !
+      call get_neighbouring_parmsetid(dimno, exptrn, remd, parmsetid_i, neighid)
+
+      if (neighid /= 0) then
+        parmsetid_j = neighid
+        repid_j     = parmsetid2repid(parmsetid_j)
+        do_trial    = .true.
+      else
+        do_trial    = .false.
+      end if
+
+      if (do_trial) then
+
+        num_criteria(parmsetid_i,dimno,exptrn) &
+          = num_criteria(parmsetid_i,dimno,exptrn) + 1
+
+        ! compute delta
+        !
+        call get_replica_temperature(parmsetid_i, remd, ensemble, temperature)
+
+        beta = 1.0_wp / (KBOLTZ * temperature)
+        if (parmsetid_i < parmsetid_j) then
+          delta = beta*(remd%deltU_fwd(repid_i) + remd%deltU_rev(repid_j))
+        else
+          delta = beta*(remd%deltU_fwd(repid_j) + remd%deltU_rev(repid_i))
+        end if
+
+        ! Metropolis criterion
+        !
+        if (delta <= 0.0_wp) then
+          do_exchange = .true.
+        else if (delta > 0.0_wp) then
+          if (random_table(repid_i,repid_j) <= exp(-delta)) then
+            do_exchange = .true.
+          else
+            do_exchange = .false.
+          end if
+        end if
+
+        if (do_exchange) then
+          num_exchanges(parmsetid_i,dimno,exptrn) &
+            = num_exchanges(parmsetid_i,dimno,exptrn) + 1
+          repid2parmsetid(i) = parmsetid_j
+        else
+          call assign_condition_fep(parmsetid_i, remd, domain, ensemble, &
+                                    enefunc, alchemy)
+        end if
+
+      end if
+    end do
+
+    return
+
+  end subroutine fep_remd
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    assign_condition_fep
+  !> @brief        control replica exchange for FEP
+  !! @authors      HO
+  !! @param[inout] molecule    : molecule information
+  !! @param[inout] enefunc     : potential energy functions information
+  !! @param[inout] dynvars     : dynamics variables information
+  !! @param[inout] boundary    : boundary conditions information
+  !! @param[inout] ensemble    : ensemble information
+  !! @param[inout] remd        : REMD information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine assign_condition_fep(parmsetid, remd, domain, ensemble, enefunc, &
+                                  alchemy)
+
+    ! formal arguments
+    integer,                 intent(in)    :: parmsetid
+    type(s_remd),            intent(inout) :: remd
+    type(s_domain),          intent(inout) :: domain
+    type(s_ensemble),        intent(inout) :: ensemble
+    type(s_enefunc),         intent(inout) :: enefunc
+    type(s_alchemy),         intent(in)    :: alchemy
+
+    ! local variables
+    integer                  :: i, j, k
+    integer                  :: umbrid, funcid, atmid
+    integer                  :: lambid
+    real(wp)                 :: rest_param
+
+    do i = 1, remd%dimension
+      if      (remd%types(i) == RemdTemperature) then
+        ensemble%temperature = remd%dparameters(i,remd%parmidsets(parmsetid,i))
+      else if (remd%types(i) == RemdPressure   ) then
+        ensemble%pressure    = remd%dparameters(i,remd%parmidsets(parmsetid,i))
+      else if (remd%types(i) == RemdGamma      ) then
+        ensemble%gamma       = remd%dparameters(i,remd%parmidsets(parmsetid,i))
+      else if (remd%types(i) == RemdRestraint  ) then
+        umbrid = remd%iparameters(i,remd%parmidsets(parmsetid,i))
+        do k = 1, remd%umbrid2numfuncs(umbrid)
+          funcid = remd%umbrid2funclist(umbrid,k)
+          enefunc%restraint_const(1:2,funcid) = remd%rest_constants(umbrid,k)
+          enefunc%restraint_ref  (1:2,funcid) = remd%rest_reference(umbrid,k)
+
+          if (enefunc%restraint_kind(funcid) == RestraintsFuncRMSD) then
+            enefunc%rmsd_force  = enefunc%restraint_const(1,funcid)
+            enefunc%rmsd_target = enefunc%restraint_ref  (1,funcid)
+          end if
+
+        end do
+      ! FEP
+      else if (remd%types(i) == RemdAlchemy     .or. &
+               remd%types(i) == RemdAlchemyRest) then
+        lambid = remd%iparameters(i,remd%parmidsets(parmsetid,i))
+        enefunc%lambljA   = remd%dlambljA(lambid)
+        enefunc%lambljB   = remd%dlambljB(lambid)
+        enefunc%lambelA   = remd%dlambelA(lambid)
+        enefunc%lambelB   = remd%dlambelB(lambid)
+        enefunc%lambbondA = remd%dlambbondA(lambid)
+        enefunc%lambbondB = remd%dlambbondB(lambid)
+        enefunc%lambrest  = remd%dlambrest(lambid)
+
+        ! Make table of lambda and softcore in FEP
+        call set_lambda_table_fep(enefunc)
+
+      end if
+
+      if (remd%types(i) == RemdAlchemyRest) then
+
+        if (ensemble%ensemble == EnsembleNVE ) then
+          call error_msg('Solute_Tempering> REST is not available for NVE!')
+        end if
+
+        rest_param = remd%dparameters(i,remd%parmidsets(parmsetid,i))
+        call assign_condition_feprest( remd%fep_rest(i), &
+                                       rest_param, domain, &
+                                       ensemble, enefunc )
+
+      end if
+
+    end do
+
+    return
+
+  end subroutine assign_condition_fep
 
 end module sp_remd_mod

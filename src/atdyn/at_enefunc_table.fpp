@@ -22,6 +22,7 @@ module at_enefunc_table_mod
   use math_libs_mod
   use nbond_list_mod
   use molecules_str_mod
+  use fileio_table_mod
   use timers_mod
   use messages_mod
   use mpi_parallel_mod
@@ -42,6 +43,9 @@ module at_enefunc_table_mod
   private :: setup_table_general_pme_linear
   private :: setup_table_general_cutoff_cubic
   private :: setup_table_water_pme_linear
+  private :: setup_user_table_general_pme_linear
+  private :: setup_user_table_general_cutoff_cubic
+  private :: setup_user_table_water_pme_linear
   private :: setup_solute_water_lists
   private :: count_nonb_excl_water
   private :: count_nonb_excl_c19
@@ -54,16 +58,18 @@ contains
   !  Subroutine    setup_enefunc_table
   !> @brief        define lookup table of potential energy function
   !! @param[in]    ene_info : ENERGY section control parameters information
+  !! @param[in]    table    : lookup table information
   !! @param[in]    molecule : molecule information
   !! @param[inout] enefunc  : potential energy functions information
   !! @authors      JJ, TM
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_enefunc_table(ene_info, molecule, enefunc)
+  subroutine setup_enefunc_table(ene_info, table, molecule, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info
+    type(s_table),           intent(in)    :: table
     type(s_molecule),        intent(in)    :: molecule
     type(s_enefunc), target, intent(inout) :: enefunc
 
@@ -79,6 +85,14 @@ contains
       enefunc%table%table = .true.
     else
       enefunc%table%table = .false.
+
+!CK20180325
+      if (ene_info%forcefield == ForcefieldKBGO   .or. &
+          ene_info%forcefield == ForcefieldAAGO   .or. &
+          ene_info%forcefield == ForcefieldCAGO) then
+        call setup_solute_water_lists(molecule, enefunc)
+      end if
+!CK20180325
       return
     end if
 
@@ -123,14 +137,43 @@ contains
     !
     if (ene_info%electrostatic == ElectrostaticPME) then
 
-        call setup_table_general_pme_linear(ene_info, cutoff2, cutoff_int,  &
+      if (.not. ene_info%user_def_table) then
+
+        call setup_table_general_pme_linear(ene_info,            &
+                                            cutoff2, cutoff_int, &
                                             cutoff_int2, enefunc)
-        call setup_table_water_pme_linear  (ene_info, cutoff2, cutoff_int,  &
+        call setup_table_water_pme_linear  (ene_info,            &
+                                            cutoff2, cutoff_int, &
                                             cutoff_int2, enefunc)
+      else
+
+        call setup_user_table_general_pme_linear( &
+                                            ene_info, table,     &
+                                            cutoff2, cutoff_int, &
+                                            cutoff_int2, enefunc)
+        call setup_user_table_water_pme_linear  ( &
+                                            ene_info,            &
+                                            cutoff2, cutoff_int, &
+                                            cutoff_int2, enefunc)
+      end if
+
     else
 
-        call setup_table_general_cutoff_cubic(ene_info, cutoff2, cutoff_int,   &
-                                              cutoff_int2, enefunc)
+      if (.not. ene_info%user_def_table) then
+
+        call setup_table_general_cutoff_cubic( &
+                                            ene_info,            &
+                                            cutoff2, cutoff_int, &
+                                            cutoff_int2, enefunc)
+
+      else
+
+        call setup_user_table_general_cutoff_cubic( &
+                                            ene_info, table,     &
+                                            cutoff2, cutoff_int, &
+                                            cutoff_int2, enefunc)
+
+      end if
 
     end if
 
@@ -165,6 +208,7 @@ contains
   !!               (linear)
   !! @authors      JJ
   !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
   !! @param[inout] enefunc     : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
@@ -217,11 +261,12 @@ contains
     table_grad (1:3*cutoff_int2) = 0.0_wp
 
     if (ene_info%vdw_force_switch) then
-      call table_pme_linear_fswitch(switch_int, cutoff_int, density,      &
-                                   cutoff2, switchdist2, el_fact, alpha,     &
-                                   alpha2sp, alpha2m,                        &
-                                   table_ene, table_grad, table_ecor,        &
-                                   table_decor)
+
+      call table_pme_linear_fswitch(switch_int, cutoff_int, density,           &
+                                     cutoff2, switchdist2, el_fact, alpha,     &
+                                     alpha2sp, alpha2m,                        &
+                                     table_ene, table_grad,                    &
+                                     table_ecor, table_decor)
 
     else if (enefunc%forcefield == ForcefieldAMBER) then
 
@@ -274,12 +319,13 @@ contains
   !> @brief        define lookup table for cutoff
   !! @authors      JJ
   !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
   !! @param[inout] enefunc     : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_table_general_cutoff_cubic(ene_info, cutoff2, cutoff_int, &
-                                              cutoff_int2, enefunc)
+  subroutine setup_table_general_cutoff_cubic(ene_info, cutoff2, &
+                                              cutoff_int, cutoff_int2, enefunc)
 
     ! formal arguments
     type(s_ene_info),        intent(in)    :: ene_info
@@ -318,16 +364,17 @@ contains
     table_ene(1:6*cutoff_int2)  = 0.0_wp
     table_grad(1:6*cutoff_int2) = 0.0_wp
 
-    if (ene_info%vdw_force_switch) then
 
-      call table_cutoff_cubic_fswitch(switch_int, cutoff_int, cutoff_int2,  &
+    if (enefunc%forcefield .eq. ForcefieldAMBER .and. &
+        abs(switchdist-cutoff) < EPS) then
+
+      call table_cutoff_cubic_noswitch(switch_int, cutoff_int, cutoff_int2,  &
                                      density, el_fact,         &
                                    cutoff2, switchdist2, table_ene, table_grad)
 
+    else if (ene_info%vdw_force_switch) then
 
-    else if (enefunc%forcefield .eq. ForcefieldAMBER) then
-
-      call table_cutoff_cubic_noswitch(switch_int, cutoff_int, cutoff_int2,  &
+      call table_cutoff_cubic_fswitch(switch_int, cutoff_int, cutoff_int2,  &
                                      density, el_fact,         &
                                    cutoff2, switchdist2, table_ene, table_grad)
 
@@ -381,12 +428,13 @@ contains
   !> @brief        define lookup table of water (linear interpolation)
   !! @authors      JJ
   !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
   !! @param[inout] enefunc     : potential energy functions information
   !
   !======1=========2=========3=========4=========5=========6=========7=========8
 
-  subroutine setup_table_water_pme_linear(ene_info, cutoff2, cutoff_int,  &
-                                          cutoff_int2, enefunc)
+  subroutine setup_table_water_pme_linear(ene_info, cutoff2, &
+                                          cutoff_int, cutoff_int2, enefunc)
 
     ! formal arguments
     type(s_ene_info),         intent(in)    :: ene_info
@@ -514,6 +562,183 @@ contains
     return
 
   end subroutine setup_table_water_pme_linear
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_user_table_general_pme_linear
+  !> @brief        define lookup table of potential energy function (linear)
+  !! @authors      JJ, NT
+  !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
+  !! @param[inout] enefunc     : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_user_table_general_pme_linear(ene_info, table,     &
+                                                 cutoff2, cutoff_int, &
+                                                 cutoff_int2, enefunc)
+
+    ! formal arguments
+    type(s_ene_info),        intent(in)    :: ene_info
+    type(s_table),           intent(in)    :: table
+    real(wp),                intent(in)    :: cutoff2
+    integer,                 intent(in)    :: cutoff_int
+    integer,                 intent(in)    :: cutoff_int2
+    type(s_enefunc),         intent(inout) :: enefunc
+
+
+    if (.not. check_table(table, &
+                     ene_info%cutoffdist,    &
+                     ene_info%switchdist,    &
+                     ene_info%dielec_const,  &
+                     ene_info%table_density, &
+                     ene_info%table_order,   &
+                     ene_info%pme_alpha)) then
+      call error_msg('Setup_Table_General_Pme_Linear> '//&
+             'table data has different value from GENESIS settings')
+    end if
+
+    call get_table(table, &
+                   enefunc%table%table_ene,      &
+                   enefunc%table%table_grad,     &
+                   enefunc%table%table_ecor,     &
+                   enefunc%table%table_decor)
+    write(MsgOut,'(A)') 'Setup_Table_General_Pme_Linear> '//&
+        'Lookup table was built from user defined table file.'
+    write(MsgOut,'(A)') ''
+
+    return
+
+  end subroutine setup_user_table_general_pme_linear
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_user_table_general_cutoff_cubic
+  !> @brief        define lookup table for cutoff
+  !! @authors      JJ
+  !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
+  !! @param[inout] enefunc     : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_user_table_general_cutoff_cubic(ene_info, table,     &
+                                                   cutoff2, cutoff_int, &
+                                                   cutoff_int2, enefunc)
+
+    ! formal arguments
+    type(s_ene_info),        intent(in)    :: ene_info
+    type(s_table),           intent(in)    :: table
+    real(wp),                intent(in)    :: cutoff2
+    integer,                 intent(in)    :: cutoff_int
+    integer,                 intent(in)    :: cutoff_int2
+    type(s_enefunc), target, intent(inout) :: enefunc
+
+
+    if (.not. check_table(table, &
+                   ene_info%cutoffdist,    &
+                   ene_info%switchdist,    &
+                   ene_info%dielec_const,  &
+                   ene_info%table_density, &
+                   ene_info%table_order,   &
+                   ene_info%pme_alpha)) then
+      call error_msg('Setup_Table_General_Pme_Linear> '//&
+           'table data has different value from GENESIS settings')
+    end if
+
+    call get_table(table, &
+                   enefunc%table%table_ene,      &
+                   enefunc%table%table_grad)
+    write(MsgOut,'(A)') 'Setup_Table_General_Cutoff_Cubic> '//&
+        'Lookup table was built from user defined table file.'
+    write(MsgOut,'(A)') ''
+    return
+
+  end subroutine setup_user_table_general_cutoff_cubic
+
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    setup_user_table_water_pme_linear
+  !> @brief        define lookup table of water (linear interpolation)
+  !! @authors      JJ, CK
+  !! @param[in]    ene_info    : ENERGY section control parameters information
+  !! @param[in]    table       : lookup table information
+  !! @param[inout] enefunc     : potential energy functions information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_user_table_water_pme_linear(ene_info, cutoff2, &
+                                               cutoff_int, cutoff_int2, enefunc)
+
+    ! formal arguments
+    type(s_ene_info),         intent(in)    :: ene_info
+    real(wp),                 intent(in)    :: cutoff2
+    integer,                  intent(in)    :: cutoff_int
+    integer,                  intent(in)    :: cutoff_int2
+    type(s_enefunc),  target, intent(inout) :: enefunc
+
+    ! local variables
+    real(wp)                  :: lj6_OO, lj6_OH, lj6_HH
+    real(wp)                  :: lj12_OO, lj12_OH, lj12_HH
+    real(wp)                  :: cc_OO, cc_OH, cc_HH, charge_O, charge_H
+    real(wp)                  :: switchdist, cutoff
+    real(wp)                  :: switchdist2
+    real(wp)                  :: density, el_fact
+    real(wp)                  :: alpha, alpha2m, alpha2sp
+    integer                   :: i, switch_int, atmcls_O, atmcls_H
+
+    real(wp),         pointer :: table_de_WW(:,:)
+    real(wp),         pointer :: table_ene_WW(:,:)
+
+
+    if (enefunc%table%num_water == 0) return
+
+    density     = enefunc%table%density
+    table_ene_WW => enefunc%table%table_ene_WW
+    table_de_WW  => enefunc%table%table_de_WW
+
+    ! set switch distance etc.
+    !
+    switchdist  = ene_info%switchdist
+    cutoff      = ene_info%cutoffdist
+
+    ! set lennard-jones parameters
+    !
+    switchdist2 = switchdist * switchdist
+    switch_int = int(1.0_wp/switchdist2*cutoff2*density)
+
+    table_ene_WW(1:6*cutoff_int2,1:3) = 0.0_wp
+    table_de_WW (1:2*cutoff_int2,1:3) = 0.0_wp
+
+    ! atom class and charge of water oxygen and hydrogen
+    !
+    atmcls_O = enefunc%table%atom_cls_no_O
+    atmcls_H = enefunc%table%atom_cls_no_H
+    charge_O = enefunc%table%charge_O
+    charge_H = enefunc%table%charge_H
+
+    lj6_OO = enefunc%nonb_lj6(atmcls_O,atmcls_O)
+    lj6_OH = enefunc%nonb_lj6(atmcls_O,atmcls_H)
+    lj6_HH = enefunc%nonb_lj6(atmcls_H,atmcls_H)
+
+    lj12_OO = enefunc%nonb_lj12(atmcls_O,atmcls_O)
+    lj12_OH = enefunc%nonb_lj12(atmcls_O,atmcls_H)
+    lj12_HH = enefunc%nonb_lj12(atmcls_H,atmcls_H)
+
+    cc_OO = charge_O * charge_O 
+    cc_OH = charge_O * charge_H 
+    cc_HH = charge_H * charge_H 
+
+      call table_water_pme_linear_user_defined(enefunc%table%table_ene,       &
+                                               enefunc%table%table_grad,      &
+                                               lj6_OO,  lj6_OH,  lj6_HH,      &
+                                               lj12_OO, lj12_OH, lj12_HH,     &
+                                               cc_OO, cc_OH, cc_HH,           &
+                                               table_ene_WW, table_de_WW)  
+
+    return
+
+  end subroutine setup_user_table_water_pme_linear
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -695,6 +920,14 @@ contains
     integer,         pointer :: qmatom_id(:), ecatom_id(:)
     integer                  :: MAX_EXCL_LOC
 
+
+    ! Return if Go model under PBC condition
+    if ( enefunc%forcefield == ForcefieldKBGO .or. &
+         enefunc%forcefield == ForcefieldAAGO .or. &
+         enefunc%forcefield == ForcefieldCAGO .or. &
+         enefunc%forcefield == ForcefieldSOFT ) then
+      return
+    end if
 
     solute  => enefunc%table%solute_list_inv
     nsolute = enefunc%table%num_solute

@@ -64,7 +64,7 @@ contains
     type(s_atp)              :: atp0
     integer                  :: file, i, nfile
 
-    character(200), allocatable :: files(:)
+    character(MaxFilename), allocatable :: files(:)
 
 
     ! parse filename string
@@ -250,6 +250,16 @@ contains
     type(s_atp)              :: atp
     integer                  :: i, n, nn
 
+
+    if (.not. allocated(atp0%name)) then
+
+      n = size(atp1%name)
+      call alloc_atp(atp0, AtpAtomType, n)
+      atp0%name(1:n) = atp1%name(1:n)
+      atp0%mass(1:n) = atp1%mass(1:n)
+      return
+
+    end if
 
     ! copy atp0 -> atp
     !

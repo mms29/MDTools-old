@@ -510,6 +510,9 @@ c     ************
       double precision one,zero
       parameter        (one=1.0d0,zero=0.0d0)
       
+      cpu2  = zero
+      time2 = zero
+
       if (task .eq. 'START') then
 
          epsmch = epsilon(one)
@@ -532,7 +535,6 @@ c           for the limited memory BFGS matrices:
          nenter = 0
          fold   = zero
          dnorm  = zero
-         cpu1   = zero
          gd     = zero
          stpmx  = zero
          sbgnrm = zero
@@ -552,9 +554,11 @@ c           for stopping tolerance:
          tol = factr*epsmch
 
 c           for measuring running time:
-         cachyt = 0
-         sbtime = 0
-         lnscht = 0
+         cpu1   = zero
+         cachyt = zero
+         sbtime = zero
+         lnscht = zero
+         time1  = zero
  
 c           'word' records the status of subspace solutions.
          word = '---'
@@ -762,7 +766,7 @@ c          refresh the lbfgs memory and restart the iteration.
          theta  = one
          iupdat = 0
          updatd = .false.
-C         call timer(cpu2) 
+C         call timer(cpu2)  
          sbtime = sbtime + cpu2 - cpu1 
          goto 222
       endif 

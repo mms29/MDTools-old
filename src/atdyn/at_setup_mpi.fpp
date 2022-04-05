@@ -24,7 +24,7 @@ module at_setup_mpi_mod
   use messages_mod
   use mpi_parallel_mod
   use constants_mod
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
   use mpi
 #endif
 
@@ -65,7 +65,7 @@ contains
     logical,     allocatable :: nonbreal(:), nonbrecip(:)
 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! Equalize communicators (comm_country & comm_city) between MD
     !
     mpi_comm_country = mpi_comm_world
@@ -80,13 +80,17 @@ contains
         call error_msg('Setup_Mpi_Md> number of MPI processes should be'//&
                        ' multiples of 2,3,5')
     end if
+#else
+    nproc_country    = 1
+    my_country_rank  = 0
+    replica_main_rank = .true.
 #endif
 
     select case (ene_info%electrostatic)
 
     case (ElectrostaticPME)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
       if (ene_info%pme_multiple) then
 
@@ -134,7 +138,7 @@ contains
 
     case (ElectrostaticCUTOFF)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
       real_calc = .true.
       reciprocal_calc = .false.
       mpi_comm_city = mpi_comm_country
@@ -149,7 +153,7 @@ contains
 
     end select
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
     ! Write the summary of setup MP
     !
     allocate(globrank (nproc_world), &
@@ -245,7 +249,7 @@ contains
     logical,     allocatable :: repmast(:), nonbreal(:), nonbrecip(:)
 
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     nreplicas  = product(rep_info%nreplicas(1:rep_info%dimension))
 
@@ -462,7 +466,7 @@ contains
     integer,     allocatable :: globrank(:), repno(:), reprank(:)
     logical,     allocatable :: repmast(:), nonbreal(:), nonbrecip(:)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     nreplica  = rpath_info%nreplica
 
@@ -474,9 +478,12 @@ contains
                        ' is not ZERO')
       nproc_per_rep = int(nproc_world/nreplica)
     else
-      if (mod(nreplica,nproc_world) /= 0)  &
+      if ((mod(nreplica,nproc_world) /= 0) .or. &
+        (rpath_info%rpathmode == 1) .or. (rpath_info%rpathmode == 3)) &
         call error_msg('Setup_Mpi_Rpath> mod(nreplica,total_MPI_procs)'//&
                        ' is not ZERO')
+      nrep_per_proc = int(nreplica/nproc_world)
+
       nproc_per_rep = 1
     end if
 
@@ -737,7 +744,7 @@ contains
     integer,     allocatable :: globrank(:), repno(:), reprank(:)
     logical,     allocatable :: repmast(:), nonbreal(:), nonbrecip(:)
 
-#ifdef MPI
+#ifdef HAVE_MPI_GENESIS
 
     nreplica  = vib_info%nreplica
 
