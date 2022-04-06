@@ -890,10 +890,10 @@ contains
         end if
 
         ! check 4-column over residue number
-        c1 = line(22:22)
-        if (c1>='0' .and. c1<='9') then
-          r_col5 = .true.
-        end if
+        !c1 = line(22:22)
+        !if (c1>='0' .and. c1<='9') then
+        !  r_col5 = .true.
+        !end if
 
         c1 = line(27:27)
         if (c1>='0' .and. c1<='9') then
