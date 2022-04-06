@@ -1326,7 +1326,7 @@ contains
       !$omp shared(pixels, n_pix, image_size, pixel_size, &
       !$omp 	rot_coord, sigma, sim_image, gaussians_saved, atom_id, group_id,&
       !$omp 	exp_image, const1, const2, force_constant,&
-      !$omp 	emfit_img_force,inv_rot_matrix, force, experiments)
+      !$omp 	emfit_img_force,inv_rot_matrix, force, experiments, n_atoms_group)
       !
   
       do a= 1, n_atoms_group
