@@ -1,4 +1,4 @@
-# EMFIT on 2D Images in GENESIS 1.4
+# EMFIT on 2D Images in GENESIS 1.7.1
 
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
