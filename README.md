@@ -1,9 +1,9 @@
-# NMMD in GENESIS 1.4
+# NMMD in GENESIS 1.7.1
 
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
 
-Clone the NMMD repository to `/path/to/NMMD`. The repository contains a modified version of GENESIS 1.4.0 to perform NMMD.
+Clone the NMMD repository to `/path/to/NMMD`. The repository contains a modified version of GENESIS 1.7.1 to perform NMMD.
 To build GENESIS :
 ```
 cd /path/to/NMMD
