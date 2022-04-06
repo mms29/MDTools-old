@@ -127,8 +127,8 @@ am_atdyn_OBJECTS = at_energy_str.$(OBJEXT) at_enefunc_str.$(OBJEXT) \
 	at_restraints.$(OBJEXT) at_ensemble.$(OBJEXT) \
 	at_dynvars.$(OBJEXT) at_input.$(OBJEXT) at_output.$(OBJEXT) \
 	at_md_leapfrog.$(OBJEXT) at_md_vverlet.$(OBJEXT) \
-	at_nmmd.$(OBJEXT) at_md_vverlet_cg.$(OBJEXT) \
-	at_minimize.$(OBJEXT) at_vibration.$(OBJEXT) at_remd.$(OBJEXT) \
+	at_md_vverlet_cg.$(OBJEXT) at_minimize.$(OBJEXT) \
+	at_vibration.$(OBJEXT) at_remd.$(OBJEXT) \
 	at_rpath_mep.$(OBJEXT) at_rpath_fep.$(OBJEXT) \
 	at_rpath.$(OBJEXT) at_morph.$(OBJEXT) at_gamd.$(OBJEXT) \
 	at_dynamics.$(OBJEXT) at_control.$(OBJEXT) \
@@ -388,7 +388,6 @@ atdyn_SOURCES = \
 	at_output.fpp \
 	at_md_leapfrog.fpp \
 	at_md_vverlet.fpp \
-	at_nmmd.fpp \
 	at_md_vverlet_cg.fpp \
 	at_minimize.fpp \
 	at_vibration.fpp \
