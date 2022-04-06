@@ -1,4 +1,5 @@
-# NMMD and 2D Images in GENESIS 1.7.1
+# NMMD and EMFIT on 2D Images in GENESIS 1.7.1
+
 
 ## Installation: 
 *See https://www.r-ccs.riken.jp/labs/cbrt/installation/ for installation requirements*
@@ -56,7 +57,7 @@ nm_dt = 0.001
 - `nm_dt` : Normal mode integration time step in picoseconds. I most cases, it should be the same as the MD time step, default : 0.001
 - `nm_init` : (Optional) Initial values for normal mode amplitudes, must match the number of modes, default : None
 
-# Limitations:
+### Limitations:
 - NMMD is available only for LANGEVIN temperature control in the NVT enemble
 - SHAKE/RATTLE algorithm have to be turn off
 
