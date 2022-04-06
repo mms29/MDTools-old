@@ -203,7 +203,11 @@ contains
 
         end do
 
-        !call output_nmmd(dynvars, dynamics, natom, nmodes)
+        write(MsgOut,'(A)') 'NMMD_outputNM> Output NM amplitudes'
+        write(MsgOut, '(A,A)') '  nm_amp    = '
+        write(MsgOut, *) dynvars%nm_amp
+        write(MsgOut,'(A)') ''
+        call output_nmmd(dynvars, dynamics, natom, nmodes)
 
         return
 
@@ -691,38 +695,40 @@ contains
     !
     !======1=========2=========3=========4=========5=========6=========7=========8
 
-    ! subroutine output_nmmd(dynvars, dynamics, natom, nmodes)
-    !     type(s_dynvars), intent(inout) :: dynvars
-    !     type(s_dynamics), intent(inout) :: dynamics
-    !     integer, intent(inout) :: natom
-    !     integer, intent(inout) :: nmodes
+    subroutine output_nmmd(dynvars, dynamics, natom, nmodes)
+        type(s_dynvars), intent(inout) :: dynvars
+        type(s_dynamics), intent(inout) :: dynamics
+        integer, intent(inout) :: natom
+        integer, intent(inout) :: nmodes
 
-    !     integer :: unit_no
-    !     character(MaxFilename)::restart_file, nm_prefix
-    !     logical :: file_exists
+        integer :: unit_no, idx_period
+        character(MaxFilename):: nm_outfile
+        logical :: file_exists
 
-    !     nm_prefix = dynamics%nm_prefix
-    !     call include_id_to_nm_prefix(nm_prefix)
+        idx_period = index(dynamics%nm_file, '.', back=.true.)
+        nm_outfile = dynamics%nm_file(:idx_period-1)//".nmmd"
 
-    !     if (dynamics%crdout_period > 0) then
-    !         if (mod(dynvars%step,dynamics%crdout_period) == 0) then
+        !call include_id_to_nm_prefix(nm_prefix)
+
+        if (dynamics%crdout_period > 0) then
+            if (mod(dynvars%step,dynamics%crdout_period) == 0) then
                 
-    !             ! Write nm amplitudes
-    !             inquire(file=trim(nm_prefix)//".nmmd", exist=file_exists)
-    !             if (file_exists) then
-    !                 call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputReplace)
-    !             else
-    !                 call open_file (unit_no=unit_no, filename=trim(nm_prefix)//".nmmd", in_out=IOFileOutputNew)
-    !             endif
-    !             write(unit_no, *) dynvars%nm_amp
-    !             call close_file(unit_no)
+                ! Write nm amplitudes
+                inquire(file=nm_outfile, exist=file_exists)
+                if (file_exists) then
+                    call open_file (unit_no=unit_no, filename=nm_outfile, in_out=IOFileOutputReplace)
+                else
+                    call open_file (unit_no=unit_no, filename=nm_outfile, in_out=IOFileOutputNew)
+                endif
+                write(unit_no, *) dynvars%nm_amp
+                call close_file(unit_no)
 
-    !         endif
-    !     endif
+            endif
+        endif
 
-    !     return
+        return
         
-    ! end subroutine output_nmmd
+    end subroutine output_nmmd
 
     !======1=========2=========3=========4=========5=========6=========7=========8
     !
@@ -820,14 +826,18 @@ contains
 
 
         call open_file(unit_no=unit_no, filename=nm_file, in_out=IOFileInput)
-
+        print*, nm_vectors(:,1,1)
+        print*, nm_vectors(:,1,2)
         do i = 1, nmodes
             read (unit_no, '(A)')
             read (unit_no, '(A)')
             do j = 1, natom
-                    read (unit_no, '(A)')
+                    read (unit_no, *) nm_vectors(1:3,j,i)
             end do
         end do
+
+        print*, nm_vectors(:,1,1)
+        print*, nm_vectors(:,1,2)
         call close_file (unit_no)
 
         write(MsgOut,'(A)') 'Read_NMA> Read NMA'
