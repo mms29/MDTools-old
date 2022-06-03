@@ -460,7 +460,7 @@ contains
     call alloc_experiments(experiments, ExperimentsEmfitImg, &
             experiments%emfit_img%image_size,molecule%num_atoms,0,0,0)
 
-    call read_data_spi(exp_info%emfit_target, experiments%emfit_img%target_img)
+    !call read_data_spi(exp_info%emfit_target, experiments%emfit_img%target_img)
 
     emfit_target_test = exp_info%emfit_target
 

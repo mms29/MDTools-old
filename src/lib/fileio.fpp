@@ -46,9 +46,6 @@ module fileio_mod
   integer,      private, parameter :: backup_max_no           = 99
   logical,      save               :: backup_allowed          = .false.
 
-  integer :: num_file_open=0
-  integer :: num_file_close=0
-
   ! subroutines and functions
   public   :: open_file
   public   :: open_binary_file
@@ -62,8 +59,6 @@ module fileio_mod
   private  :: on_input_file_does_not_exist
   private  :: on_output_file_exists
   private  :: on_unknown_io_error
-
-
 
 
 contains
@@ -101,13 +96,6 @@ contains
       open(unit_no, file=filename, status='replace', form='formatted', err=904)
 
     endif
-
-    print*, "============ OPENING FILE ============="
-    num_file_open = num_file_open+1
-    print*, filename
-    print*, num_file_open
-    print*, "======================================="
-
 
     return
 
@@ -197,13 +185,6 @@ contains
 
     endif
 
-
-    print*, "============ OPENING FILE ============="
-    num_file_open = num_file_open+1
-    print*, filename
-    print*, num_file_open
-    print*, "======================================="
-
     return
 
 901 call on_invalid_unit_number(unit_no, filename, "unformatted")
@@ -240,12 +221,6 @@ contains
 
     close(unit_no)
     call free_unit_no(unit_no)
-
-    print*, "============ CLOSING FILE ============="
-    num_file_close = num_file_close+1
-    print*, num_file_close
-    print*, "======================================="
-
 
     return
 

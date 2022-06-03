@@ -274,7 +274,7 @@ contains
 
 
         ! Init parameters to zero
-        coord_ref(1:3,1:natom) = coord(1:3,1:natom)
+        !coord_ref(1:3,1:natom) = coord(1:3,1:natom)
 
         ! Initialize NMMD params
         dynvars%nm_amp(1:nmodes) = 0.0_wp
