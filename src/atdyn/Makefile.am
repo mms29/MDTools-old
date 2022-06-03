@@ -9,7 +9,7 @@
 
 SUBDIRS := ../lib .
 
-bin_PROGRAMS = atdyn
+bin_PROGRAMS = atdyn pardyn
 
 atdyn_SOURCES = \
 	at_energy_str.fpp \
@@ -75,7 +75,8 @@ atdyn_SOURCES = \
 	at_control.fpp \
 	at_setup_atdyn.fpp \
 	at_setup_mpi.fpp \
-	atdyn.fpp
+	atdyn.fpp \
+	pardyn.fpp
 
 at_energy_linear_object = \
 	at_energy_table_linear.o \
@@ -112,10 +113,13 @@ else
 endif
 
 atdyn$(EXEEXT) : $(atdyn_ADDLIB) $(atdyn_OBJECTS)
-	$(FC) -o $(bin_PROGRAMS) $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(LDFLAGS)
+	$(FC) -o atdyn $(atdyn_OBJECTS) $(atdyn_ADDLIB) $(LDFLAGS)
+
+atdyn$(EXEEXT) : $(atdyn_ADDLIB) $(pardyn_OBJECTS)
+	$(FC) -o pardyn $(pardyn_OBJECTS) $(atdyn_ADDLIB) $(LDFLAGS)
 
 clean:
-	rm -f $(bin_PROGRAMS) $(atdyn_OBJECTS) *.f90 *~ *.mod
+	rm -f $(bin_PROGRAMS) $(atdyn_OBJECTS) $(pardyn_OBJECTS) *.f90 *~ *.mod
 
 depend: clean_depend
 	python ../../fortdep.py *.fpp > $(DEPENDS)
