@@ -67,7 +67,7 @@ module at_setup_atdyn_mod
   use fileio_spot_mod
   use messages_mod
   use mpi_parallel_mod
- 
+  use mpi
   implicit none
   private
 
