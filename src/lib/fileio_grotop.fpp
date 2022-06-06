@@ -526,8 +526,7 @@ contains
 
     ! open GROMACS TOP file
     !
-    !file = gro_pp_open_file(strs(1), strs(1:nstr), error)
-    call open_file(file, grotop_filename, IOFileInput)
+    file = gro_pp_open_file(strs(1), strs(1:nstr), error)
     if (file == InvalidUnitNo) &
       call error_msg('Input_Grotop> '//trim(error))
 
@@ -538,7 +537,7 @@ contains
     call read_grotop(file, grotop)
     print*, "--------------GROTOP---------------------------4"
 
-    call error_msg("STOP")
+    
     ! close GROMACS TOP file
     !
     call gro_pp_close_file(file)
