@@ -134,12 +134,13 @@ contains
     macro_cur => macro_head
     macro_cur%def = 'M_A_C_R_O_H_E_A_D'
 
-    print*, "--------------GROTOP---------------------------2.3"
+    print*, "--------------GROTOP---------------------------2.3.1"
 
     ! allocate pre-defined macro
     !
     call predef_macro(predefs, macro_cur)
 
+    print*, "--------------GROTOP---------------------------2.3.2"
 
     ! open include file (read)
     !
@@ -149,7 +150,7 @@ contains
       goto 900
     end if
 
-    print*, "--------------GROTOP---------------------------2.3"
+    print*, "--------------GROTOP---------------------------2.3.3"
 
     ! open preprocessed file (write)
     !
@@ -157,13 +158,14 @@ contains
          trim(filename),      &
          '__gro_pp_file_pid', &
          getpid()
+         print*, "--------------GROTOP---------------------------2.3.4"
 
     call open_file(file_out, pp_filename, IOFileOutputReplace)
     if (file_out == InvalidUnitNo) then
       error = 'file open error. [Temporary-file]'
       goto 900
     end if
-    print*, "--------------GROTOP---------------------------2.3"
+    print*, "--------------GROTOP---------------------------2.3.5"
 
 
     ! preprocessing recursively
@@ -177,6 +179,8 @@ contains
       error = 'Bad pre-processor command state.'
       goto 900
     end if
+    print*, "--------------GROTOP---------------------------2.3.6"
+
     if (error /= '') &
       goto 900
       print*, "--------------GROTOP---------------------------2.4"
