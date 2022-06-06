@@ -1585,6 +1585,7 @@ contains
 
     directive = DUnknown
     unk = .false.
+    print*, "--------------GROTOP---------------------------3.1"
 
     do while(.true.)
       read(file,'(A)',end=100) line
@@ -1692,6 +1693,7 @@ contains
     grotop%num_nbonparms   = size_grotop(grotop, GroTopNbonParm)
     grotop%num_moltypes    = size_grotop(grotop, GroTopMolType)
     grotop%num_molss       = size_grotop(grotop, GroTopMols)
+    print*, "--------------GROTOP---------------------------3.2"
 
     ! bind molecule and type
     !
@@ -1708,6 +1710,7 @@ contains
                          trim(grotop%molss(i)%name))
       end if
     end do
+    print*, "--------------GROTOP---------------------------3.3"
 
     ! write summary of GROTOP information
     !
