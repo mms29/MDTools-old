@@ -104,6 +104,7 @@ contains
     
     file_in  = InvalidUnitNo
     file_out = InvalidUnitNo
+    print*, "--------------GROTOP---------------------------2.1"
 
 
     ! check file handle
@@ -120,6 +121,7 @@ contains
       return
     end if
 
+    print*, "--------------GROTOP---------------------------2.2"
 
     ! allocate head macro
     !
@@ -132,6 +134,7 @@ contains
     macro_cur => macro_head
     macro_cur%def = 'M_A_C_R_O_H_E_A_D'
 
+    print*, "--------------GROTOP---------------------------2.3"
 
     ! allocate pre-defined macro
     !
@@ -146,6 +149,7 @@ contains
       goto 900
     end if
 
+    print*, "--------------GROTOP---------------------------2.3"
 
     ! open preprocessed file (write)
     !
@@ -159,6 +163,7 @@ contains
       error = 'file open error. [Temporary-file]'
       goto 900
     end if
+    print*, "--------------GROTOP---------------------------2.3"
 
 
     ! preprocessing recursively
@@ -174,6 +179,7 @@ contains
     end if
     if (error /= '') &
       goto 900
+      print*, "--------------GROTOP---------------------------2.4"
 
     !DEBUG
     !call print_macro(macro_head)
@@ -189,6 +195,7 @@ contains
     !
     call dealloc_macro(macro_head)
 
+    print*, "--------------GROTOP---------------------------2.5"
 
     ! open preprocessed file (read)
     !
@@ -200,6 +207,7 @@ contains
 
     g_gropp_file(ifile)%unit_no  = gro_pp_open_file
     g_gropp_file(ifile)%filename = pp_filename
+    print*, "--------------GROTOP---------------------------2.6"
 
     return
 

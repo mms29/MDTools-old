@@ -518,8 +518,8 @@ contains
     call split(nstr, nstr, grotop_filename, strs)
 
     print*, "--------------GROTOP---------------------------2"
-
-
+    print*, nstr
+    print*, strs
 
     ! open GROMACS TOP file
     !
