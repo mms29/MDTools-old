@@ -1593,7 +1593,8 @@ contains
       ! check directive
       if (.not. check_directive(line, directive)) &
         cycle
-
+        print*, "--------------GROTOP---------------------------3.1.1"
+        print*, directive
       ! read per directive
       select case(directive)
 
