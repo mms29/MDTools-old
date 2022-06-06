@@ -527,7 +527,7 @@ contains
     ! open GROMACS TOP file
     !
     !file = gro_pp_open_file(strs(1), strs(1:nstr), error)
-    call open_file(gro_pp_open_file, pp_filename, IOFileInput)
+    call open_file(file, grotop_filename, IOFileInput)
     if (file == InvalidUnitNo) &
       call error_msg('Input_Grotop> '//trim(error))
 
