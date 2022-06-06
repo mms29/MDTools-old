@@ -2598,6 +2598,7 @@ contains
     ! check count
     !
     cnt = check_section_count(file)
+    print*, "--------------GROTOP---------------------------3.1.2"
 
     ! allocate memory
     !
@@ -2607,6 +2608,7 @@ contains
     if (VerboseOn .and. main_rank) &
       write(MsgOut,'(" Read_Grotop>   [atoms] :"'// &
            ',i5," (total:",i5,")")') cnt, old_cnt+cnt
+           print*, "--------------GROTOP---------------------------3.1.3"
 
     ! read data
     !
