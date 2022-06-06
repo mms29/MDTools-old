@@ -512,36 +512,28 @@ contains
 
     nstr = split_num(grotop_filename)
     allocate(strs(nstr))
-    print*, "--------------GROTOP---------------------------1"
 
     call split(nstr, nstr, grotop_filename, strs)
-
-    print*, "--------------GROTOP---------------------------2"
 
 
     ! open GROMACS TOP file
     !
-    !file = gro_pp_open_file(strs(1), strs(1:nstr), error)
-    call open_file(file, grotop_filename, IOFileInput)
+    file = gro_pp_open_file(strs(1), strs(1:nstr), error)
     if (file == InvalidUnitNo) &
       call error_msg('Input_Grotop> '//trim(error))
 
-      print*, "--------------GROTOP---------------------------3"
 
     ! read GROMACS TOP file
     !
     call read_grotop(file, grotop)
-    print*, "--------------GROTOP---------------------------4"
 
-    !call error_msg("STOP")
+
     ! close GROMACS TOP file
     !
-    call close_file(file)
+    call gro_pp_close_file(file)
 
 
-    print*, "--------------GROTOP---------------------------5"
-
-    !deallocate(strs)
+    deallocate(strs)
 
     return
 
@@ -1585,7 +1577,6 @@ contains
 
     directive = DUnknown
     unk = .false.
-    print*, "--------------GROTOP---------------------------3.1"
 
     do while(.true.)
       read(file,'(A)',end=100) line
@@ -1593,8 +1584,7 @@ contains
       ! check directive
       if (.not. check_directive(line, directive)) &
         cycle
-        print*, "--------------GROTOP---------------------------3.1.1"
-        print*, directive
+
       ! read per directive
       select case(directive)
 
@@ -1694,7 +1684,6 @@ contains
     grotop%num_nbonparms   = size_grotop(grotop, GroTopNbonParm)
     grotop%num_moltypes    = size_grotop(grotop, GroTopMolType)
     grotop%num_molss       = size_grotop(grotop, GroTopMols)
-    print*, "--------------GROTOP---------------------------3.2"
 
     ! bind molecule and type
     !
@@ -1711,7 +1700,6 @@ contains
                          trim(grotop%molss(i)%name))
       end if
     end do
-    print*, "--------------GROTOP---------------------------3.3"
 
     ! write summary of GROTOP information
     !
@@ -2598,7 +2586,6 @@ contains
     ! check count
     !
     cnt = check_section_count(file)
-    print*, "--------------GROTOP---------------------------3.1.2"
 
     ! allocate memory
     !
@@ -2608,7 +2595,6 @@ contains
     if (VerboseOn .and. main_rank) &
       write(MsgOut,'(" Read_Grotop>   [atoms] :"'// &
            ',i5," (total:",i5,")")') cnt, old_cnt+cnt
-           print*, "--------------GROTOP---------------------------3.1.3"
 
     ! read data
     !
@@ -2679,7 +2665,6 @@ contains
       end if
 
     end do
-    print*, "--------------GROTOP---------------------------3.1.4"
 
     gromol%num_atoms = size_grotop_mol(gromol, GMGroMolAtom)
 

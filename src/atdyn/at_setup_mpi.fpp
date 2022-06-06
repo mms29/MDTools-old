@@ -159,14 +159,14 @@ contains
     if (alloc_stat /= 0) &
       call error_msg_alloc
 
-    call mpi_gather(my_world_rank,   1, mpi_integer,                     &
-                    globrank,  1, mpi_integer, 0, mpi_comm_world, ierror)
-    call mpi_gather(my_city_rank, 1, mpi_integer,                        &
-                    locrank,   1, mpi_integer, 0, mpi_comm_world, ierror)
-    call mpi_gather(real_calc, 1, mpi_logical,                           &
-                    nonbreal,  1, mpi_logical, 0, mpi_comm_world, ierror)
-    call mpi_gather(reciprocal_calc, 1, mpi_logical,                     &
-                    nonbrecip, 1, mpi_logical, 0, mpi_comm_world, ierror)
+    ! call mpi_gather(my_world_rank,   1, mpi_integer,                     &
+    !                 globrank,  1, mpi_integer, 0, mpi_comm_world, ierror)
+    ! call mpi_gather(my_city_rank, 1, mpi_integer,                        &
+    !                 locrank,   1, mpi_integer, 0, mpi_comm_world, ierror)
+    ! call mpi_gather(real_calc, 1, mpi_logical,                           &
+    !                 nonbreal,  1, mpi_logical, 0, mpi_comm_world, ierror)
+    ! call mpi_gather(reciprocal_calc, 1, mpi_logical,                     &
+    !                 nonbrecip, 1, mpi_logical, 0, mpi_comm_world, ierror)
 
     if (main_rank) then
 
