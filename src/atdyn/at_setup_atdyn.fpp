@@ -135,6 +135,12 @@ contains
     type(s_spot)             :: spot
 
 
+        ! output process time
+    !
+    call mpi_comm_rank(mpi_comm_world, my_world_rank, ierror)
+    call mpi_comm_size(mpi_comm_world, nproc_world,   ierror)
+    main_rank = (my_world_rank == 0)
+
     ! input md
     !
     call input_md(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
@@ -155,6 +161,10 @@ contains
     call dealloc_grocrd_all(grocrd)
     call dealloc_grocrd_all(groref)
     call dealloc_mode(mode)
+
+    my_world_rank = 0
+    nproc_world   = 1
+    main_rank     = .true.
 
     ! set dynamics
     !
