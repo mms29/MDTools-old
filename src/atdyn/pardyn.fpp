@@ -83,7 +83,7 @@ program pardyn
   integer :: pardyn_start =1
   character(MaxFilename)      :: tmp_str
   integer      :: tmp_int, unit_no
-  logical :: file_exists
+  logical :: file_exists, main_rank_pardyn
 
 
 
@@ -95,6 +95,7 @@ program pardyn
   call mpi_comm_rank(mpi_comm_world, my_world_rank, ierror)
   call mpi_comm_size(mpi_comm_world, nproc_world,   ierror)
   main_rank = (my_world_rank == 0)
+  main_rank_pardyn = (my_world_rank == 0)
 
 
 #ifdef OMP
@@ -140,15 +141,12 @@ program pardyn
   write(tmp_str,'(I0.5)') pardyn_start + my_world_rank
   log_filename =  log_filename(:tmp_int-1)//trim(tmp_str)//log_filename(tmp_int+2:)
 
-  ! END MPI
+  ! END MPI comm
   my_world_rank = 0
   nproc_world   = 1
   main_rank     = .true.
 
-
-
-  write(MsgOut,*) trim(log_filename)
-
+  ! Dynvars output to appropriate log files
 
   if (file_exists) then
       call open_file (unit_no=unit_no, filename=log_filename, in_out=IOFileOutputReplace)
@@ -167,7 +165,10 @@ program pardyn
   !
   call atomic_decomposition_genesis(ctrl_filename, genesis_run_mode)
 
+  ! Close log files
   call close_file(unit_no)
+
+  ! finalize MPI
   call mpi_finalize(ierror)
 
   stop
@@ -241,7 +242,7 @@ contains
 
     ! [Step0] Architecture & Compiler information
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') '[STEP0] Architecture and Compiler Information'
       write(MsgOut,'(A)') ' '
 
@@ -252,7 +253,7 @@ contains
 
     ! [Step1] Read control file
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') '[STEP1] Read Control Parameters'
       write(MsgOut,'(A)') ' '
     end if
@@ -284,7 +285,7 @@ contains
 
     ! [Step2] Setup MPI
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') '[STEP2] Setup MPI'
       write(MsgOut,'(A)') ' '
     end if
@@ -312,7 +313,7 @@ contains
 
     ! [Step3] Set relevant variables and structures 
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') '[STEP3] Set Relevant Variables and Structures'
       write(MsgOut,'(A)') ' '
     end if
@@ -352,7 +353,7 @@ contains
 
     ! [Step4] Compute single point energy for molecules
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') '[STEP4] Compute Single Point Energy for Molecules'
       write(MsgOut,'(A)') ' '
     end if
@@ -390,7 +391,7 @@ contains
         end if
 
       else
-        if (main_rank) then
+        if (main_rank_pardyn) then
           write(MsgOut,'(A)') 'SKIPPED: Energy calculation is omitted when QMMM is performed'
           write(MsgOut,'(A)') ' '
         end if
@@ -420,7 +421,7 @@ contains
 
     case (GenesisMD)
 
-      if (main_rank) then
+      if (main_rank_pardyn) then
         write(MsgOut,'(A)') '[STEP5] Perform Molecular Dynamics Simulation'
         write(MsgOut,'(A)') ' '
       end if
@@ -430,7 +431,7 @@ contains
 
     case (GenesisMIN)
 
-      if (main_rank) then
+      if (main_rank_pardyn) then
         write(MsgOut,'(A)') '[STEP5] Perform Energy Minimization'
         write(MsgOut,'(A)') ' '
       end if
@@ -440,7 +441,7 @@ contains
 
     case (GenesisREMD)
 
-      if (main_rank) then
+      if (main_rank_pardyn) then
         write(MsgOut,'(A)') '[STEP5] Perform Replica-Exchange MD Simulation'
         write(MsgOut,'(A)') ' '
       end if
@@ -450,7 +451,7 @@ contains
 
     case (GenesisRPATH)
 
-      if (main_rank) then
+      if (main_rank_pardyn) then
         write(MsgOut,'(A)') '[STEP5] Perform Replica Path MD Simulation'
         write(MsgOut,'(A)') ' '
       end if
@@ -460,7 +461,7 @@ contains
 
     case (GenesisVIB)
 
-      if (main_rank) then
+      if (main_rank_pardyn) then
         write(MsgOut,'(A)') '[STEP5] Perform Vibrational Analysis'
         write(MsgOut,'(A)') ' '
       end if
@@ -475,7 +476,7 @@ contains
 
     ! [Step6] Deallocate arrays
     !
-    if (main_rank) then
+    if (main_rank_pardyn) then
       write(MsgOut,'(A)') ' '
       write(MsgOut,'(A)') '[STEP6] Deallocate Arrays'
       write(MsgOut,'(A)') ' '
