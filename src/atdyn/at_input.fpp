@@ -497,10 +497,13 @@ contains
     if (inp_info%psffile /= '') then
       call input_psf(inp_info%psffile, psf)
     end if
+    print*, "----------------------------------------------------------------5"
+
 
     if (inp_info%prmtopfile /= '') then
       call input_prmtop(inp_info%prmtopfile, prmtop)
     end if
+    print*, "----------------------------------------------------------------5"
 
     if (inp_info%grotopfile /= '') then
       call input_grotop(inp_info%grotopfile, grotop)
