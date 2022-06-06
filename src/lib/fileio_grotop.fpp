@@ -516,6 +516,8 @@ contains
     call split(nstr, nstr, grotop_filename, strs)
 
 
+
+
     ! open GROMACS TOP file
     !
     file = gro_pp_open_file(strs(1), strs(1:nstr), error)
@@ -533,7 +535,12 @@ contains
     call gro_pp_close_file(file)
 
 
-    deallocate(strs)
+    print*, "--------------GROTOP---------------------------"
+    print*, nstr
+    print*, strs
+    print*, file
+
+    !deallocate(strs)
 
     return
 
