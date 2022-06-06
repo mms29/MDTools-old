@@ -497,13 +497,13 @@ contains
     if (inp_info%psffile /= '') then
       call input_psf(inp_info%psffile, psf)
     end if
-    print*, "----------------------------------------------------------------5"
+    print*, "---------------------------------------------------------------4.1"
 
 
     if (inp_info%prmtopfile /= '') then
       call input_prmtop(inp_info%prmtopfile, prmtop)
     end if
-    print*, "----------------------------------------------------------------5"
+    print*, "----------------------------------------------------------------4.2"
 
     if (inp_info%grotopfile /= '') then
       call input_grotop(inp_info%grotopfile, grotop)
@@ -513,14 +513,19 @@ contains
     if (inp_info%pdbfile /= '') then
       call input_pdb(inp_info%pdbfile, pdb)
     end if
+    print*, "----------------------------------------------------------------5.1"
+
 
     if (inp_info%crdfile /= '') then
       call input_crd(inp_info%crdfile, crd)
     end if
+    print*, "----------------------------------------------------------------5.2"
+
 
     if (inp_info%ambcrdfile /= '') then
       call input_ambcrd(inp_info%ambcrdfile, ambcrd)
     end if
+    print*, "----------------------------------------------------------------5.3"
 
     if (inp_info%grocrdfile /= '') then
       call input_grocrd(inp_info%grocrdfile, grocrd)
