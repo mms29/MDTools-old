@@ -509,12 +509,15 @@ contains
 
     ! parse filename string
     !
+    print*, "--------------GROTOP---------------------------0"
 
     nstr = split_num(grotop_filename)
     allocate(strs(nstr))
+    print*, "--------------GROTOP---------------------------1"
 
     call split(nstr, nstr, grotop_filename, strs)
 
+    print*, "--------------GROTOP---------------------------2"
 
 
 
@@ -524,10 +527,12 @@ contains
     if (file == InvalidUnitNo) &
       call error_msg('Input_Grotop> '//trim(error))
 
+      print*, "--------------GROTOP---------------------------3"
 
     ! read GROMACS TOP file
     !
     call read_grotop(file, grotop)
+    print*, "--------------GROTOP---------------------------4"
 
 
     ! close GROMACS TOP file
