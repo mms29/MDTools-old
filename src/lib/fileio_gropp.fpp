@@ -104,7 +104,6 @@ contains
     
     file_in  = InvalidUnitNo
     file_out = InvalidUnitNo
-    print*, "--------------GROTOP---------------------------2.1"
 
 
     ! check file handle
@@ -121,7 +120,6 @@ contains
       return
     end if
 
-    print*, "--------------GROTOP---------------------------2.2"
 
     ! allocate head macro
     !
@@ -134,13 +132,11 @@ contains
     macro_cur => macro_head
     macro_cur%def = 'M_A_C_R_O_H_E_A_D'
 
-    print*, "--------------GROTOP---------------------------2.3.1"
 
     ! allocate pre-defined macro
     !
     call predef_macro(predefs, macro_cur)
 
-    print*, "--------------GROTOP---------------------------2.3.2"
 
     ! open include file (read)
     !
@@ -150,7 +146,6 @@ contains
       goto 900
     end if
 
-    print*, "--------------GROTOP---------------------------2.3.3"
 
     ! open preprocessed file (write)
     !
@@ -158,14 +153,12 @@ contains
          trim(filename),      &
          '__gro_pp_file_pid', &
          getpid()
-         print*, "--------------GROTOP---------------------------2.3.4"
 
     call open_file(file_out, pp_filename, IOFileOutputReplace)
     if (file_out == InvalidUnitNo) then
       error = 'file open error. [Temporary-file]'
       goto 900
     end if
-    print*, "--------------GROTOP---------------------------2.3.5"
 
 
     ! preprocessing recursively
@@ -179,11 +172,8 @@ contains
       error = 'Bad pre-processor command state.'
       goto 900
     end if
-    print*, "--------------GROTOP---------------------------2.3.6"
-
     if (error /= '') &
       goto 900
-      print*, "--------------GROTOP---------------------------2.4"
 
     !DEBUG
     !call print_macro(macro_head)
@@ -199,7 +189,6 @@ contains
     !
     call dealloc_macro(macro_head)
 
-    print*, "--------------GROTOP---------------------------2.5"
 
     ! open preprocessed file (read)
     !
@@ -211,7 +200,6 @@ contains
 
     g_gropp_file(ifile)%unit_no  = gro_pp_open_file
     g_gropp_file(ifile)%filename = pp_filename
-    print*, "--------------GROTOP---------------------------2.6"
 
     return
 
@@ -289,7 +277,6 @@ contains
 
     type(s_gro_macro), pointer  :: macro, macro2
 
-    print*, "--------------GROTOP---------------------------2.3.5.1"
 
     do while(.true.)
 
@@ -300,7 +287,6 @@ contains
 
       str1 = ''
       read(str,*,err=100,end=100) str1
-      print*, "--------------GROTOP---------------------------2.3.5.2"
 
       ! process #ifdef
       !
@@ -317,7 +303,6 @@ contains
 
       ! process #ifndef
       !
-             print*, "--------------GROTOP---------------------------2.3.5.3"
 
       else if (str1 == '#ifndef') then
 
@@ -329,7 +314,6 @@ contains
              str3, read_on, .false., depth, error)
         if (error /= '') &
              return
-             print*, "--------------GROTOP---------------------------2.3.5.4"
 
       ! process #else
       !
@@ -344,7 +328,6 @@ contains
 
         depth = depth - 1
         return
-        print*, "--------------GROTOP---------------------------2.3.5.5"
 
       ! process #include
       !
@@ -353,22 +336,18 @@ contains
         str2 = ''
         str3 = ''
         read(str,*,err=900,end=900) str2, str3
-        print*, "--------------GROTOP---------------------------2.3.5.6"
 
         call open_include(file_in_inc, str3, ifile)
         if (file_in_inc == InvalidUnitNo) &
           goto 920
-          print*, "--------------GROTOP---------------------------2.3.5.7"
 
         call pp_body(ifile, file_in_inc, file_out, macro_cur, macro_head, &
                      read_on, depth, error)
-                     print*, "--------------GROTOP---------------------------2.3.5.8"
 
         call close_include(file_in_inc, ifile)
 
         if (error /= '') &
           return
-          print*, "--------------GROTOP---------------------------2.3.5.9"
 
       ! process #define
       !
@@ -378,7 +357,6 @@ contains
         str3 = ''
         read(str,*,err=900,end=900) str2, str3
         str4 = adjustl(str((index(str, trim(str3)) + len_trim(str3)):))
-        print*, "--------------GROTOP---------------------------2.3.5.10"
 
         macro => macro_head
         do while(associated(macro))
@@ -387,7 +365,6 @@ contains
           end if
           macro => macro%next
         end do
-        print*, "--------------GROTOP---------------------------2.3.5.11"
 
         ! macro expansion in macro
         macro2 => macro_head
@@ -395,7 +372,6 @@ contains
           call expand_macro(macro2, str4)
           macro2 => macro2%next
         end do
-        print*, "--------------GROTOP---------------------------2.3.5.12"
 
         if (associated(macro)) then
 
@@ -405,7 +381,6 @@ contains
 
           macro%val = str4
           macro%val_len = len_trim(str4)
-          print*, "--------------GROTOP---------------------------2.3.5.13"
 
         else
 
@@ -419,7 +394,6 @@ contains
           macro%val_len = len_trim(str4)
           macro_cur%next => macro
           macro_cur => macro
-          print*, "--------------GROTOP---------------------------2.3.5.14"
 
         end if
 
@@ -433,7 +407,6 @@ contains
                'Fileio_Gropp> WARNING: unknown pre-process command ['// &
                trim(str1)//']'
 
-               print*, "--------------GROTOP---------------------------2.3.5.15"
 
       ! process non pre-processor line
       !
@@ -445,12 +418,10 @@ contains
           call expand_macro(macro, str)
           macro => macro%next
         end do
-        print*, "--------------GROTOP---------------------------2.3.5.16"
 
         write(file_out,'(A)') trim(str)
 
       end if
-      print*, "--------------GROTOP---------------------------2.3.5.17"
 
     end do
 
