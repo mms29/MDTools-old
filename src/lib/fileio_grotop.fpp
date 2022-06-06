@@ -509,7 +509,6 @@ contains
 
     ! parse filename string
     !
-    print*, "--------------GROTOP---------------------------0"
 
     nstr = split_num(grotop_filename)
     allocate(strs(nstr))
@@ -518,11 +517,7 @@ contains
     call split(nstr, nstr, grotop_filename, strs)
 
     print*, "--------------GROTOP---------------------------2"
-    print*, "nstr"
-    print*, nstr
-    print*, "strs"
-    print*, strs
-    print*, "done"
+
 
     ! open GROMACS TOP file
     !
@@ -544,10 +539,7 @@ contains
     call close_file(file)
 
 
-    print*, "--------------GROTOP---------------------------"
-    print*, nstr
-    print*, strs
-    print*, file
+    print*, "--------------GROTOP---------------------------5"
 
     !deallocate(strs)
 

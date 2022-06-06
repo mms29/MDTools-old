@@ -458,7 +458,6 @@ contains
     type(s_eef1),            intent(inout) :: eef1
     type(s_spot),            intent(inout) :: spot
 
-    print*, "----------------------------------------------------------------1"
 
     call init_top(top)
     call init_par(par)
@@ -473,8 +472,6 @@ contains
     call init_pdb(ref)
     call init_ambcrd(ambref)
     call init_grocrd(groref)
-    print*, "----------------------------------------------------------------2"
-
 
     if (inp_info%topfile /= '') then
       call input_top(inp_info%topfile, top)
@@ -483,7 +480,6 @@ contains
     if (inp_info%parfile /= '') then
       call input_par(inp_info%parfile, par, top)
     end if
-    print*, "----------------------------------------------------------------3"
 
     if (inp_info%strfile /= '') then
       call input_str(inp_info%strfile, top, par)
@@ -492,45 +488,34 @@ contains
     if (inp_info%gprfile /= '') then
       call input_gpr(inp_info%gprfile, gpr)
     end if
-    print*, "----------------------------------------------------------------4"
 
     if (inp_info%psffile /= '') then
       call input_psf(inp_info%psffile, psf)
     end if
-    print*, "---------------------------------------------------------------4.1"
-
 
     if (inp_info%prmtopfile /= '') then
       call input_prmtop(inp_info%prmtopfile, prmtop)
     end if
-    print*, "----------------------------------------------------------------4.2"
 
     if (inp_info%grotopfile /= '') then
       call input_grotop(inp_info%grotopfile, grotop)
     end if
-    print*, "----------------------------------------------------------------5"
 
     if (inp_info%pdbfile /= '') then
       call input_pdb(inp_info%pdbfile, pdb)
     end if
-    print*, "----------------------------------------------------------------5.1"
-
 
     if (inp_info%crdfile /= '') then
       call input_crd(inp_info%crdfile, crd)
     end if
-    print*, "----------------------------------------------------------------5.2"
-
 
     if (inp_info%ambcrdfile /= '') then
       call input_ambcrd(inp_info%ambcrdfile, ambcrd)
     end if
-    print*, "----------------------------------------------------------------5.3"
 
     if (inp_info%grocrdfile /= '') then
       call input_grocrd(inp_info%grocrdfile, grocrd)
     end if
-    print*, "----------------------------------------------------------------6"
 
     if (inp_info%rstfile /= '') then
       call input_rst(inp_info%rstfile, rst)
@@ -547,7 +532,6 @@ contains
     if (inp_info%groreffile /= '') then
       call input_grocrd(inp_info%groreffile, groref)
     end if
-    print*, "----------------------------------------------------------------7"
 
     if (inp_info%modefile /= '') then
       call input_mode(inp_info%modefile, mode)
@@ -560,7 +544,6 @@ contains
     if (inp_info%spotfile /= '') then
       call input_spot(inp_info%spotfile, spot)
     end if
-    print*, "----------------------------------------------------------------8"
 
     return
 
