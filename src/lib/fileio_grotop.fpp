@@ -541,7 +541,7 @@ contains
     !call error_msg("STOP")
     ! close GROMACS TOP file
     !
-    call gro_pp_close_file(file)
+    call close_file(file)
 
 
     print*, "--------------GROTOP---------------------------"
