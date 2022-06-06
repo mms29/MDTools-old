@@ -2679,6 +2679,7 @@ contains
       end if
 
     end do
+    print*, "--------------GROTOP---------------------------3.1.4"
 
     gromol%num_atoms = size_grotop_mol(gromol, GMGroMolAtom)
 
