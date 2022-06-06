@@ -316,6 +316,7 @@ contains
       write(MsgOut,'(A)') '[STEP3] Set Relevant Variables and Structures'
       write(MsgOut,'(A)') ' '
     end if
+    print*, "----------------------------------------------------------------0"
 
     select case (genesis_run_mode)
 
@@ -349,6 +350,7 @@ contains
 
     end select
 
+    print*, "----------------------------------------------------------------18"
 
     ! [Step4] Compute single point energy for molecules
     !
