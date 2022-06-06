@@ -135,20 +135,16 @@ contains
     type(s_spot)             :: spot
 
 
-    print*, "----------------------------------------------------------------1"
     ! input md
     !
     call input_md(ctrl_data%inp_info, top, par, gpr, psf, prmtop, grotop, &
                   pdb, crd, ambcrd, grocrd, rst, ref, ambref, groref,     &
                   mode, eef1, spot)
-    print*, "----------------------------------------------------------------2"
 
     ! define molecules
     !
     call define_molecules(molecule, pdb, crd, top, par, gpr, psf, ref, fit, &
                           mode, prmtop, ambcrd, ambref, grotop, grocrd, groref)
-        print*, "----------------------------------------------------------------3"
-
     call dealloc_top_all(top)
     call dealloc_pdb_all(pdb)
     call dealloc_crd_all(crd)
@@ -159,15 +155,12 @@ contains
     call dealloc_grocrd_all(grocrd)
     call dealloc_grocrd_all(groref)
     call dealloc_mode(mode)
-    print*, "----------------------------------------------------------------4"
-
 
     ! set dynamics
     !
     call setup_dynamics(ctrl_data%dyn_info, ctrl_data%bound_info,       &
                         ctrl_data%res_info, ctrl_data%out_info,         &
                         rst, molecule, dynamics)
-    print*, "----------------------------------------------------------------5"
 
     ! setup boundary conditions
     !
@@ -176,32 +169,27 @@ contains
                         ctrl_data%sel_info,                             &
                         molecule, rst, spot, boundary)
     call dealloc_spot(spot)
-    print*, "----------------------------------------------------------------6"
 
     ! setup dynamic variables
     !
     call setup_dynvars(molecule, rst, dynvars, dynamics,                &
                        ctrl_data%ens_info%tpcontrol)
     call dealloc_rst_all(rst)
-    print*, "----------------------------------------------------------------7"
 
     ! setup restraints
     !
     call setup_restraints(ctrl_data%res_info, ctrl_data%sel_info,       &
                           molecule, restraints)
-    print*, "----------------------------------------------------------------8"
 
     ! setup energy
     !
     call setup_energy(restraints, dynvars%energy)
-    print*, "----------------------------------------------------------------9"
 
     ! setup qmmm
     !
     call setup_qmmm(ctrl_data%qmmm_info, ctrl_data%sel_info, boundary,  &
                     psf, molecule, enefunc%qmmm)
     call dealloc_psf_all(psf)
-    print*, "----------------------------------------------------------------10"
 
     ! define enefunc
     !
@@ -209,7 +197,6 @@ contains
                         boundary,                       &
                         par, gpr, prmtop, grotop, eef1, &
                         molecule, restraints, enefunc)
-    print*, "----------------------------------------------------------------11"
 
     call setup_fitting_atdyn(.false., ctrl_data%fit_info, ctrl_data%sel_info, &
                              molecule, enefunc)
@@ -219,7 +206,6 @@ contains
     call dealloc_prmtop_all(prmtop)
     call dealloc_grotop_all(grotop)
     call dealloc_eef1(eef1)
-    print*, "----------------------------------------------------------------12"
 
     if (.not. dynamics%target_md) enefunc%target_function = 0
     if (.not. dynamics%steered_md) enefunc%steered_function = 0
@@ -232,7 +218,6 @@ contains
     !
     call setup_constraints(ctrl_data%cons_info, dynamics, boundary, molecule, &
                            enefunc, constraints)
-    print*, "----------------------------------------------------------------13"
 
     ! setup pairlist
     !
@@ -243,17 +228,14 @@ contains
     call setup_experiments(ctrl_data%exp_info, molecule, restraints, &
                            enefunc)
     call dealloc_restraints_all(restraints)
-    print*, "----------------------------------------------------------------14"
 
     ! set gamd
     !
     call setup_gamd(ctrl_data%gamd_info, dynamics, molecule, enefunc)
-    print*, "----------------------------------------------------------------15"
 
     ! setup output
     !
     call setup_output_md(ctrl_data%out_info, dynamics, output)
-    print*, "----------------------------------------------------------------16"
 
     if (enefunc%nonb_limiter .and. main_rank) then
       write(MsgOut,'(A,F12.8)')  &
@@ -266,7 +248,6 @@ contains
     if (enefunc%qmmm%do_qmmm) then
       call error_msg('Setup_Atdyn_Md> QM/MM-MD is not available')
     end if
-    print*, "----------------------------------------------------------------17"
 
     return
 
