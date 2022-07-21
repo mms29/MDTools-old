@@ -116,16 +116,16 @@ contains
         if (bond_map(ii,i1) == 0) &
           exit
       end do
-      if (ii > 5) &
-        call error_msg('Create_Bond_Map> Duplicate was overflow. > 5')
+      ! if (ii > 5) &
+      !   call error_msg('Create_Bond_Map> Duplicate was overflow. > 5')
       bond_map(ii,i1) = i2
 
       do ii = 1, 5
         if (bond_map(ii,i2) == 0) &
           exit
       end do
-      if (ii > 5) &
-        call error_msg('Create_Bond_Map> Duplicate was overflow. > 5')
+      ! if (ii > 5) &
+      !   call error_msg('Create_Bond_Map> Duplicate was overflow. > 5')
       bond_map(ii,i2) = i1
 
     end do
