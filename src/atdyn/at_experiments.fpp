@@ -1358,9 +1358,11 @@ contains
     ! ------------------------------------------------------------------------
     ! WRITE OUTPUT IMAGE
     ! ------------------------------------------------------------------------
-    outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.spi"
-    if (mod(emfit_icycle,100) == 0) then 
-      call write_spi(outfile, sim_image)
+    if (main_rank) then
+      outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.spi"
+      if (mod(emfit_icycle,100) == 0) then 
+        call write_spi(outfile, sim_image)
+      endif
     endif
 
     return
