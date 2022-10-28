@@ -1284,9 +1284,10 @@ contains
         enddo
   
         emfit_img_force(1:2,n) = dcc * force_constant
+        emfit_img_force(1:3,n) = matmul(experiments%emfit_img%inv_rot_matrix(1:3,1:3), &
+                                  emfit_img_force(1:3,n))
   
-        force(1:3,n) = force(1:3,n) + matmul(experiments%emfit_img%inv_rot_matrix(1:3,1:3), &
-                      emfit_img_force(1:3,n))
+        force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)
       end do
   
       !$omp end parallel do
