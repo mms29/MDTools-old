@@ -83,21 +83,56 @@ module at_experiments_str_mod
   end type s_emfit_img
 
 
+
+  type, public :: s_emfit_stk
+  ! Emfit Image
+real(wp), allocatable :: target_imgs(:,:,:)      ! memory for target
+real(wp), allocatable :: simulated_imgs(:,:,:)   ! memory for simulated map
+
+real(wp), allocatable :: rot_coord(:,:)
+integer , allocatable :: pixels(:,:)
+real(wp), allocatable :: gaussians_saved(:,:,:)
+real(wp), allocatable :: emfit_img_force(:,:)
+
+integer               :: image_size
+integer               :: stack_size
+real(wp)              :: pixel_size 
+real(wp)              :: roll_angle 
+real(wp)              :: tilt_angle 
+real(wp)              :: yaw_angle  
+real(wp)              :: tilt_series_angle 
+real(wp)              :: tilt_series_step  
+real(wp)              :: shift_x    
+real(wp)              :: shift_y   
+real(wp)              :: shift_z   
+
+integer               :: period
+real(wp)              :: sigma     
+integer               :: cutoff   
+
+real(wp)              :: rot_matrix(3,3)
+real(wp)              :: inv_rot_matrix(3,3)
+
+end type s_emfit_stk
+
   ! structures
   type, public :: s_experiments
     logical                       :: do_emfit
     integer                       :: emfit_type
     type(s_emfit)                 :: emfit
     type(s_emfit_img)             :: emfit_img
+    type(s_emfit_stk)             :: emfit_stk
   end type s_experiments
 
   ! parameters
   integer,      public, parameter :: ExperimentsEmfit = 1
   integer,      public, parameter :: ExperimentsEmfitImg = 2
+  integer,      public, parameter :: ExperimentsEmfitStk = 3
 
-  character(*), public, parameter :: ExperimentsTypes(2)  = (/&
+  character(*), public, parameter :: ExperimentsTypes(3)  = (/&
                                                           'VOLUME',&
-                                                          'IMAGE '&
+                                                          'IMAGE ',&
+                                                          'STACK '&
                                                           /)
 
   ! subroutines
@@ -198,6 +233,34 @@ contains
       experiments%emfit_img%pixels(1:2, 1:var_size2) = 0
       experiments%emfit_img%gaussians_saved(1:var_size1, 1:var_size1, 1:var_size2) = 0.0_wp
       experiments%emfit_img%emfit_img_force(1:3, 1:var_size2) = 0.0_wp
+
+    case(ExperimentsEmfitStk)
+
+      if (allocated(experiments%emfit_stk%target_imgs)) then
+        if (size(experiments%emfit_stk%target_imgs(1,:,1)) == var_size1) return
+        deallocate(experiments%emfit_stk%target_imgs,      &
+                   experiments%emfit_stk%simulated_imgs,   &
+                   experiments%emfit_stk%rot_coord,       &
+                   experiments%emfit_stk%pixels,          &
+                   experiments%emfit_stk%gaussians_saved, &
+                   experiments%emfit_stk%emfit_img_force, &
+                   stat = dealloc_stat)
+      end if
+
+      allocate(experiments%emfit_stk%target_imgs   (var_size3, var_size1, var_size1), &
+               experiments%emfit_stk%simulated_imgs(var_size3, var_size1, var_size1), &
+               experiments%emfit_stk%rot_coord    (3, var_size2),         &
+               experiments%emfit_stk%pixels       (2, var_size2),         &
+               experiments%emfit_stk%gaussians_saved(var_size1, var_size1, var_size2), & 
+               experiments%emfit_stk%emfit_img_force(3, var_size2),         &     
+               stat = alloc_stat)
+
+      experiments%emfit_stk%target_imgs   (1:var_size3, 1:var_size1, 1:var_size1) = 0.0_wp
+      experiments%emfit_stk%simulated_imgs(1:var_size3, 1:var_size1, 1:var_size1) = 0.0_wp
+      experiments%emfit_stk%rot_coord(1:3, 1:var_size2) = 0.0_wp
+      experiments%emfit_stk%pixels(1:2, 1:var_size2) = 0
+      experiments%emfit_stk%gaussians_saved(1:var_size1, 1:var_size1, 1:var_size2) = 0.0_wp
+      experiments%emfit_stk%emfit_img_force(1:3, 1:var_size2) = 0.0_wp
 
     case default
 

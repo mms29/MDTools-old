@@ -48,6 +48,9 @@ module at_experiments_mod
     real(wp)                        :: emfit_yaw_angle    = 0.0
     real(wp)                        :: emfit_shift_x      = 0.0
     real(wp)                        :: emfit_shift_y      = 0.0
+    real(wp)                        :: emfit_shift_z      = 0.0
+    real(wp)                        :: emfit_tilt_series_angle = 60.0
+    real(wp)                        :: emfit_tilt_series_step = 1.0
 
   end type s_exp_info
 
@@ -120,6 +123,9 @@ contains
         write(MsgOut,'(A)') '# emfit_yaw_angle     = 0.0  # Euleur yaw angle in degrees'
         write(MsgOut,'(A)') '# emfit_shift_x       = 0.0  # Shift in x direction in pixel'
         write(MsgOut,'(A)') '# emfit_shift_y       = 0.0  # Shift in y direction in pixel'
+        write(MsgOut,'(A)') '# emfit_shift_z       = 0.0  # Shift in z direction in pixel'
+        write(MsgOut,'(A)') '# emfit_tilt_series_angle       = 60.0  # Maximum tilt series angle in degrees'
+        write(MsgOut,'(A)') '# emfit_tilt_series_step        = 1.0  # Step angle of the tilt series in degrees'
         write(MsgOut,'(A)') ' '
 
       end select
@@ -188,8 +194,17 @@ contains
     call read_ctrlfile_real   (handle, Section, 'emfit_shift_y',	&
                             exp_info%emfit_shift_y)
 
+    call read_ctrlfile_real   (handle, Section, 'emfit_shift_z',	&
+                            exp_info%emfit_shift_z)
+
     call read_ctrlfile_real(handle, Section, 'emfit_pixel_size',		&
                             exp_info%emfit_pixel_size)
+
+    call read_ctrlfile_real(handle, Section, 'emfit_tilt_series_angle',		&
+                            exp_info%emfit_tilt_series_angle)
+
+    call read_ctrlfile_real(handle, Section, 'emfit_tilt_series_step',		&
+                            exp_info%emfit_tilt_series_step)
 
 
     call end_ctrlfile_section(handle)
@@ -232,6 +247,30 @@ contains
                 '  emfit_shift_y    = ', exp_info%emfit_shift_y
           write(MsgOut,'(a)') ' '
 
+        else if (exp_info%emfit_type == ExperimentsEmfitStk) then
+
+          write(MsgOut,'(a)') 'Read_Ctrl_Experiments > Parameters for experimental data fitting of stack of images'
+          write(MsgOut,'(a20)') '  emfit           = IMAGE'
+          write(MsgOut,'(a20,a)') '  emfit_target    = ', trim(exp_info%emfit_target)
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')                      &
+                '  emfit_sigma     = ', exp_info%emfit_sigma,        &
+                '  emfit_tolerance = ', exp_info%emfit_tolerance
+          write(MsgOut,'(a20,I10, a20,F10.4)')                       &
+                '  emfit_period    = ', exp_info%emfit_period, &
+                '  emfit_yaw_angle = ', exp_info%emfit_yaw_angle
+
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')&
+                '  emfit_roll_angle = ', exp_info%emfit_roll_angle, &
+                '  emfit_tilt_angle = ', exp_info%emfit_tilt_angle
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')&      
+                '  emfit_shift_x    = ', exp_info%emfit_shift_x,  &
+                '  emfit_shift_y    = ', exp_info%emfit_shift_y
+          write(MsgOut,'(a20,F10.4,a20,F10.4)')&      
+                '  emfit_shift_z    = ', exp_info%emfit_shift_z,  &
+                '  emfit_tilt_series_angle    = ', exp_info%emfit_tilt_series_angle
+          write(MsgOut,'(a20,F10.4)')                                  &
+                    '  emfit_tilt_series_step    = ', exp_info%emfit_tilt_series_step
+          write(MsgOut,'(a)') ' '
         end if
       end if
 
@@ -283,6 +322,8 @@ contains
         call setup_experiments_emfit(exp_info, molecule)
       else if (exp_info%emfit_type == ExperimentsEmfitImg) then
         call setup_experiments_emfit_img(exp_info, molecule)
+      else if (exp_info%emfit_type == ExperimentsEmfitStk) then
+        call setup_experiments_emfit_stk(exp_info, molecule)
       endif
 
     end if
@@ -465,6 +506,55 @@ contains
     emfit_target_test = exp_info%emfit_target
 
   end subroutine setup_experiments_emfit_img
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Function      setup_experiments_emfit_stk
+  !> @brief        setup experiments information for stack image
+  !! @authors      RV
+  !! @param[in]    exp_info    : EXPERIMENTS section control parameter
+  !! @param[in]    molecule : experiments information
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+
+  subroutine setup_experiments_emfit_stk(exp_info, molecule)
+    ! formal arguments
+    type(s_exp_info),        intent(in)    :: exp_info
+    type(s_molecule),        intent(in)    :: molecule
+
+    experiments%emfit_stk%pixel_size  = exp_info%emfit_pixel_size 
+    experiments%emfit_stk%shift_x     = exp_info%emfit_shift_x    
+    experiments%emfit_stk%shift_y     = exp_info%emfit_shift_y   
+    experiments%emfit_stk%shift_z     = exp_info%emfit_shift_z   
+    experiments%emfit_stk%period      = exp_info%emfit_period
+    experiments%emfit_stk%sigma       = exp_info%emfit_sigma    
+    experiments%emfit_stk%tilt_series_angle       = exp_info%emfit_tilt_series_angle    
+    experiments%emfit_stk%tilt_series_step       = exp_info%emfit_tilt_series_step    
+
+    emfit_icycle = -1
+    
+    call Euler_angle2Matrix(exp_info%emfit_roll_angle, &
+        exp_info%emfit_tilt_angle , exp_info%emfit_yaw_angle, &
+        experiments%emfit_stk%rot_matrix)
+
+    experiments%emfit_stk%inv_rot_matrix = transpose(experiments%emfit_stk%rot_matrix)
+      
+    ! distance in pixel where the gaussian is truncated
+    experiments%emfit_stk%cutoff = 	&
+          ceiling((sqrt((-(2*(experiments%emfit_stk%sigma**2)))&
+          * log(exp_info%emfit_tolerance)))/ experiments%emfit_stk%pixel_size)
+
+    call read_header_stk(exp_info%emfit_target,&
+          experiments%emfit_stk%image_size, experiments%emfit_stk%stack_size)
+
+    call alloc_experiments(experiments, ExperimentsEmfitStk, &
+            experiments%emfit_stk%image_size,molecule%num_atoms,experiments%emfit_stk%stack_size,0,0)
+
+    call read_data_stk(exp_info%emfit_target, experiments%emfit_stk%target_imgs)
+    emfit_target_test = exp_info%emfit_target
+
+!  call write_stk(emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.stk", experiments%emfit_stk%target_imgs)
+
+  end subroutine setup_experiments_emfit_stk
 
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -505,6 +595,11 @@ contains
       else if (experiments%emfit_type == ExperimentsEmfitImg) then
        
         call compute_energy_experimental_restraint_emfit_img &
+              (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
+
+      else if (experiments%emfit_type == ExperimentsEmfitStk) then
+       
+        call compute_energy_experimental_restraint_emfit_stk &
               (enefunc, coord, inum, calc_force, force, virial, eexp, cv)
 
       endif
@@ -1174,8 +1269,8 @@ contains
     do a=1, n_atoms_group
       n=  atom_id(a,group_id)
       rot_coord(1:3,a)=matmul(experiments%emfit_img%rot_matrix(1:3,1:3),coord(1:3,n))
-      rot_coord(1,a) = rot_coord(1,a) - (shift_x * pixel_size)
-      rot_coord(2,a) = rot_coord(2,a) - (shift_y * pixel_size)
+      rot_coord(1,a) = rot_coord(1,a) + (shift_x * pixel_size)
+      rot_coord(2,a) = rot_coord(2,a) + (shift_y * pixel_size)
     end do
     
     ! ------------------------------------------------------------------------
@@ -1306,6 +1401,528 @@ contains
 
     return
   end subroutine compute_energy_experimental_restraint_emfit_img
+  
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine    compute_energy_experimental_restraint_emfit_stk
+  !> @brief        calculate restraint energy from experimental stack of images
+  !! @authors      Rémi Vuillemot
+  !! @param[in]    enefunc : potential energy functions information: this potential engergy function is extracted from CHARMM forcefield
+  !! @param[in]    coord   : coordinates of target systems
+  !! @param[in]    inum    : pointer for restraint function
+  !! @param[in]    const   : force constants
+  !! @param[in]    ref     : reference value
+  !! @param[inout] force   : forces of target systems
+  !! @param[inout] virial  : virial of target systems
+  !! @param[out]   eexp    : restraint energy
+  !
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine compute_energy_experimental_restraint_emfit_stk(enefunc, coord, inum, &
+    calc_force, force, virial, eexp, cv)
+    ! formal arguments
+    type(s_enefunc), target, intent(inout) 	:: enefunc
+    real(wp),                intent(in)    	:: coord(:,:)
+    integer,                 intent(in)    	:: inum
+    logical,                 intent(in)    	:: calc_force
+    real(wp),                intent(inout) 	:: force(:,:)
+    real(wp),                intent(inout) 	:: virial(3,3)
+    real(wp),                intent(inout) 	:: eexp
+    real(wp),                intent(inout) 	:: cv
+  
+    integer                   :: ii, i, j, a, n_atoms, n_pix, group_id, &
+                                  n, n_atoms_group, cutoff, image_size, stack_size
+    real(wp) :: roll_angle, tilt_angle, yaw_angle, shift_x, shift_y,shift_z, pixel_size
+    real(wp) :: gaussian, sigma, norm, threshold
+    real(wp) :: sum_sim2, sum_exp2, sum_simpexp, force_constant	
+    real(wp) :: const1, const2, tilt_series_angle, tilt_series_step
+    real(wp) :: mu(2), dpsim(2),  dcc(2)
+    real(wp) :: rot_matrix(4,4),  inv_rot_matrix(4,4),rot_matrix_tmp(4,4),tomo_matrix(4,4)
+    integer,  pointer ::numatoms(:), atom_id(:,:)
+    real(wp), pointer :: sim_images(:,:,:), exp_images(:,:,:)
+    real(wp), pointer :: rot_coord(:,:), gaussians_saved(:,:,:), emfit_img_force(:,:)
+    integer,pointer	:: pixels(:,:)
+    character(MaxFilename) :: outfile 
+  
+    n_atoms = size(coord,2)
+    atom_id        => enefunc%restraint_atomlist
+    group_id       =  enefunc%restraint_grouplist(1,inum)
+    numatoms       => enefunc%restraint_numatoms
+    n_atoms_group = numatoms(group_id)
+    cv = 0.0_wp
+
+    image_size = experiments%emfit_stk%image_size
+    stack_size = experiments%emfit_stk%stack_size
+    pixel_size = experiments%emfit_stk%pixel_size
+    roll_angle = experiments%emfit_stk%roll_angle
+    tilt_angle = experiments%emfit_stk%tilt_angle
+    yaw_angle  = experiments%emfit_stk%yaw_angle 
+    shift_x    = experiments%emfit_stk%shift_x   
+    shift_y    = experiments%emfit_stk%shift_y   
+    shift_z    = experiments%emfit_stk%shift_z   
+    sigma      = experiments%emfit_stk%sigma
+    cutoff     = experiments%emfit_stk%cutoff
+    exp_images  => experiments%emfit_stk%target_imgs 
+    sim_images  => experiments%emfit_stk%simulated_imgs  
+    rot_coord  => experiments%emfit_stk%rot_coord   
+    pixels     => experiments%emfit_stk%pixels     
+    emfit_img_force  => experiments%emfit_stk%emfit_img_force       
+    gaussians_saved  => experiments%emfit_stk%gaussians_saved
+    tilt_series_angle    = experiments%emfit_stk%tilt_series_angle   
+    tilt_series_step     = experiments%emfit_stk%tilt_series_step 
+    force_constant = enefunc%restraint_const(1,inum)
+
+    ! ------------------------------------------------------------------------
+    ! PERFORM EMFIT OR NOT
+    ! ------------------------------------------------------------------------
+    emfit_icycle = emfit_icycle + 1
+    if (experiments%emfit_stk%period /= 0) then
+      if (mod(emfit_icycle,experiments%emfit_stk%period) /= 0) then
+        do a=1, n_atoms_group
+          n=  atom_id(a,group_id)
+          force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)
+        end do
+        cv= corrcoeff_save
+        force_constant = enefunc%restraint_const(1,inum)
+        eexp = force_constant * (1.0_wp - cv)
+        return
+      end if
+    else
+      return
+    end if
+
+    !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    ! LOOP
+    do ii = 1, stack_size
+
+      ! ------------------------------------------------------------------------
+      ! ROTATE AND SHIFT PDB
+      ! ------------------------------------------------------------------------
+      call Euler_angle2Matrix(0.0_wp,-tilt_series_angle+ (tilt_series_step*(ii - 1)), 0.0_wp, tomo_matrix(1:3,1:3))
+      tomo_matrix(4,4) = 1.0_wp
+
+      rot_matrix_tmp(:,:) = 0.0_wp
+      rot_matrix_tmp(1:3,1:3) =  experiments%emfit_stk%rot_matrix
+      rot_matrix_tmp(1,4) = shift_x * pixel_size
+      rot_matrix_tmp(2,4) = shift_y * pixel_size
+      rot_matrix_tmp(3,4) = shift_z * pixel_size
+      rot_matrix_tmp(4,4) = 1.0_wp
+
+      rot_matrix = matmul(tomo_matrix,rot_matrix_tmp)
+      inv_rot_matrix = transpose(rot_matrix)
+
+      do a=1, n_atoms_group
+        n=  atom_id(a,group_id)
+        rot_coord(1:3,a)=matmul(rot_matrix(1:3,1:3),coord(1:3,n))
+        rot_coord(1,a) = rot_coord(1,a) + rot_matrix(1,4)
+        rot_coord(2,a) = rot_coord(2,a) + rot_matrix(2,4)
+        rot_coord(3,a) = rot_coord(3,a) + rot_matrix(3,4)
+      end do
+      
+      ! ------------------------------------------------------------------------
+      ! SELECT PIXELS TO INTEGRATE
+      ! ------------------------------------------------------------------------
+      ! number of pixels considered per atom
+      n_pix = int(cutoff*2)  	
+
+      do a = 1, n_atoms_group
+        pixels(1,a) = 1+nint(rot_coord(1,a)/pixel_size + (image_size/2))-cutoff ! starting pixel
+        pixels(2,a) = 1+nint(rot_coord(2,a)/pixel_size + (image_size/2))-cutoff
+
+        ! Check if the atom is extending outside the box
+        if (((pixels(1,a) <= 0) .or. (pixels(2,a) <= 0)) .or. &
+        (((pixels(1,a)+n_pix) > image_size) .or. ((pixels(2,a)+n_pix) > image_size))) then
+          write(MsgOut,'(A)') 'Gaussian kernel is extending outside the map box for atom '
+          write(MsgOut,'(A,I10)') '   pix1 : ', pixels(1,a)
+          write(MsgOut,'(A,I10)') '   pix2 : ', pixels(2,a)
+          call error_msg('Compute_Energy_Experimental_Restraint_Emfit_Stk> Gaussian kernel is extending outside the map box ')
+        endif
+      end do
+    
+      ! ------------------------------------------------------------------------
+      ! GENERATE SIM IMAGE
+      ! ------------------------------------------------------------------------
+      sim_images(ii,:,:) = 0.0_wp
+    
+      !$omp parallel do default(none)                                 &
+      !$omp private(a,i,j , mu, norm, gaussian)                   &
+      !$omp shared(ii, pixels, n_pix,image_size, pixel_size, &
+      !$omp 	rot_coord, sigma, sim_images, gaussians_saved, atom_id, group_id, n_atoms_group)
+      !
+    
+      do a=1, n_atoms_group
+        do j=pixels(2,a), pixels(2,a) + n_pix
+          do i=pixels(1,a), pixels(1,a) + n_pix
+
+            mu = (/i,j/)
+            mu = (mu -1- (image_size / 2)) * pixel_size
+    
+            norm = (rot_coord(1,a)-mu(1))**2 + (rot_coord(2,a)-mu(2))**2
+            gaussian = exp(-norm / (2 * (sigma ** 2)))
+            
+            sim_images(ii,i,j) = sim_images(ii,i,j) + gaussian
+    
+            ! save the gaussian to avoid computing them for the gradient
+            gaussians_saved(i,j,a) = gaussian    
+          end do
+        end do
+      end do
+    
+      !$omp end parallel do
+    
+      ! ------------------------------------------------------------------------
+      ! COMPUTE CC
+      ! ------------------------------------------------------------------------
+      sum_sim2 = 0.0
+      sum_exp2 = 0.0
+      sum_simpexp = 0.0
+
+      do j=1, image_size
+        
+        do i=1, image_size
+          sum_sim2 = sum_sim2 + sim_images(ii,i,j) ** 2
+          sum_exp2 = sum_exp2 + exp_images(ii,i,j) ** 2
+          sum_simpexp = sum_simpexp + exp_images(ii,i,j) * sim_images(ii, i,j)
+        end do
+      end do
+    
+      cv= cv + (sum_simpexp / sqrt(sum_sim2 * sum_exp2))
+    
+      ! ------------------------------------------------------------------------
+      ! GRADIENT COMPUTATION
+      ! ------------------------------------------------------------------------
+      if (calc_force) then
+    
+        const1 = 1/ sqrt(sum_sim2 * sum_exp2)
+        const2 = sum_simpexp / (sqrt(sum_exp2) * sum_sim2**(1.5_wp))
+        emfit_img_force(:,:) = 0.0_wp
+    
+        !$omp parallel do default(none)                                 &
+        !$omp private(a,n, i, j,mu, dpsim,dcc)     &
+        !$omp shared(ii, stack_size, pixels, n_pix, image_size, pixel_size, &
+        !$omp 	rot_coord, sigma, sim_images, gaussians_saved, atom_id, group_id,&
+        !$omp 	exp_images, const1, const2, force_constant,&
+        !$omp 	emfit_img_force,inv_rot_matrix, force, experiments)
+        !
+    
+        do a= 1, n_atoms_group
+    
+          n=  atom_id(a,group_id)
+          dcc = 0.0_wp
+    
+          do j=pixels(2,a), pixels(2,a) + n_pix
+            do i=pixels(1,a), pixels(1,a) + n_pix
+
+              mu = (/i,j/)
+              mu = (mu -1- (image_size / 2)) * pixel_size
+              dpsim = -(rot_coord(1:2,a) - mu) * gaussians_saved(i,j,a) / (sigma ** 2)
+              dcc = dcc + ((exp_images(ii, i,j) * dpsim * const1) - ( sim_images(ii, i,j) * dpsim * const2))
+
+            end do
+          enddo
+    
+          emfit_img_force(1:2,n) = dcc * force_constant
+          emfit_img_force(1:3,n) = matmul(inv_rot_matrix(1:3,1:3), &
+                                    emfit_img_force(1:3,n))
+    
+          force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)/stack_size
+        end do
+    
+        !$omp end parallel do
+      end if
+    enddo
+
+    cv = cv/stack_size
+    eexp = force_constant * (1.0_wp - cv)
+    corrcoeff_save = cv
+
+    ! ------------------------------------------------------------------------
+    ! WRITE OUTPUT IMAGE
+    ! ------------------------------------------------------------------------
+    if (main_rank) then
+      outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.stk"
+      if (mod(emfit_icycle,100) == 0) then 
+        call write_stk(outfile, sim_images)
+      endif
+    endif
+    ! if (main_rank) then
+    !   outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.spi"
+    !   if (mod(emfit_icycle,100) == 0) then 
+    !     call write_spi(outfile, sim_images(61,:,:))
+    !   endif
+    ! endif
+    ! if (main_rank) then
+    !   outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_exp.spi"
+    !   if (mod(emfit_icycle,100) == 0) then 
+    !     call write_spi(outfile, exp_images(61,:,:))
+    !   endif
+    ! endif
+
+    return
+  end subroutine compute_energy_experimental_restraint_emfit_stk
+  
+  ! subroutine compute_energy_experimental_restraint_emfit_stk(enefunc, coord, inum, &
+  !   calc_force, force, virial, eexp, cv)
+  !   ! formal arguments
+  !   type(s_enefunc), target, intent(inout) 	:: enefunc
+  !   real(wp),                intent(in)    	:: coord(:,:)
+  !   integer,                 intent(in)    	:: inum
+  !   logical,                 intent(in)    	:: calc_force
+  !   real(wp),                intent(inout) 	:: force(:,:)
+  !   real(wp),                intent(inout) 	:: virial(3,3)
+  !   real(wp),                intent(inout) 	:: eexp
+  !   real(wp),                intent(inout) 	:: cv
+  
+  !   integer                   :: ii,i, j, a, n_atoms, n_pix, group_id, &
+  !                                 n, n_atoms_group, cutoff, image_size, stack_size
+  !   real(wp) :: roll_angle, tilt_angle, yaw_angle, shift_x, shift_y,shift_z, pixel_size, tilt_series_angle, tilt_series_step
+  !   real(wp) :: gaussian, sigma, norm, threshold
+  !   real(wp) :: sum_sim2, sum_exp2, sum_simpexp, force_constant	
+  !   real(wp) :: const1, const2		
+  !   real(wp) :: mu(2), dpsim(2),  dcc(2), force_tmp(3), tmp
+  !   real(wp) :: rot_matrix(4,4),  inv_rot_matrix(4,4), tomo_matrix(4,4),rot_matrix_tmp(4,4) ,rot_matrix_test(4,4) 
+
+  !   real(wp), allocatable :: ccs(:)
+  !   integer,  pointer ::numatoms(:), atom_id(:,:)
+  !   real(wp), pointer :: sim_images(:,:,:), exp_images(:,:,:)
+  !   real(wp), pointer :: rot_coord(:,:), gaussians_saved(:,:,:), emfit_img_force(:,:)
+  !   integer,pointer	:: pixels(:,:)
+  !   character(MaxFilename) :: outfile 
+  
+  !   n_atoms = size(coord,2)
+  !   atom_id        => enefunc%restraint_atomlist
+  !   group_id       =  enefunc%restraint_grouplist(1,inum)
+  !   numatoms       => enefunc%restraint_numatoms
+  !   n_atoms_group = numatoms(group_id)
+
+  !   image_size = experiments%emfit_stk%image_size
+  !   stack_size = experiments%emfit_stk%stack_size
+  !   pixel_size = experiments%emfit_stk%pixel_size
+  !   roll_angle = experiments%emfit_stk%roll_angle
+  !   tilt_angle = experiments%emfit_stk%tilt_angle
+  !   yaw_angle  = experiments%emfit_stk%yaw_angle 
+  !   shift_x    = experiments%emfit_stk%shift_x   
+  !   shift_y    = experiments%emfit_stk%shift_y   
+  !   shift_z    = experiments%emfit_stk%shift_z   
+  !   tilt_series_angle    = experiments%emfit_stk%tilt_series_angle   
+  !   tilt_series_step     = experiments%emfit_stk%tilt_series_step 
+  !   sigma      = experiments%emfit_stk%sigma
+  !   cutoff     = experiments%emfit_stk%cutoff
+  !   exp_images  => experiments%emfit_stk%target_imgs
+  !   sim_images  => experiments%emfit_stk%simulated_imgs  
+  !   rot_coord  => experiments%emfit_stk%rot_coord   
+  !   pixels     => experiments%emfit_stk%pixels     
+  !   emfit_img_force  => experiments%emfit_stk%emfit_img_force       
+  !   gaussians_saved  => experiments%emfit_stk%gaussians_saved
+  !   force_constant = enefunc%restraint_const(1,inum)
+
+  !   allocate(ccs(stack_size))
+  !   ! emfit_img_force(:,:) = 0.0_wp
+
+  !   ! ------------------------------------------------------------------------
+  !   ! PERFORM EMFIT OR NOT
+  !   ! ------------------------------------------------------------------------
+  !   emfit_icycle = emfit_icycle + 1
+  !   if (experiments%emfit_stk%period /= 0) then
+  !     if (mod(emfit_icycle,experiments%emfit_stk%period) /= 0) then
+  !       do a=1, n_atoms_group
+  !         n=  atom_id(a,group_id)
+  !         force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)
+  !       end do
+  !       cv= corrcoeff_save
+  !       force_constant = enefunc%restraint_const(1,inum)
+  !       eexp = force_constant * (1.0_wp - cv)
+  !       return
+  !     else
+  !       emfit_img_force(:,:) = 0.0_wp
+  !     end if
+  !   else
+  !     return
+  !   end if
+
+
+
+
+  !   !==================================================LOOP
+  !   do ii=1, stack_size
+  !       ! ------------------------------------------------------------------------
+  !     ! ROTATE AND SHIFT PDB
+  !     ! ------------------------------------------------------------------------
+
+  !     call Euler_angle2Matrix(0.0_wp,-tilt_series_angle+ (tilt_series_step*(ii - 1)), 0.0_wp, tomo_matrix(1:3,1:3))
+
+  !     rot_matrix_tmp(:,:) = 0.0_wp
+  !     rot_matrix_tmp(1:3,1:3) =  experiments%emfit_stk%rot_matrix
+  !     rot_matrix_tmp(1,4) = -shift_x * pixel_size
+  !     rot_matrix_tmp(2,4) = -shift_y * pixel_size
+  !     rot_matrix_tmp(3,4) = -shift_z * pixel_size
+  !     rot_matrix_tmp(4,4) = 1.0_wp
+  !     ! rot_matrix_tmp = transpose(rot_matrix_tmp)
+  !     tomo_matrix(4,4) = 1.0_wp
+
+  !     rot_matrix = matmul(tomo_matrix,rot_matrix_tmp)
+
+  !     ! rot_matrix_test(:,:) = 0.0_wp
+  !     ! call Euler_angle2Matrix(180.0_wp,0.0_wp, 180.0_wp, rot_matrix_test(1:3,1:3))
+  !     ! rot_matrix_test(4,4) = 1.0_wp
+  !     ! rot_matrix = matmul(rot_matrix_test, rot_matrix)
+
+
+  !     inv_rot_matrix = transpose(rot_matrix)
+  !     do a=1, n_atoms_group
+  !       n=  atom_id(a,group_id)
+  !       rot_coord(1:3,a)=matmul(rot_matrix(1:3,1:3),coord(1:3,n))
+  !       ! rot_coord(1,a) = rot_coord(1,a) + rot_matrix(1,4)
+  !       ! rot_coord(2,a) = rot_coord(2,a) + rot_matrix(2,4)
+  !       ! rot_coord(3,a) = rot_coord(3,a) + rot_matrix(3,4)
+  !     end do
+
+  !    ! ! ------------------------------------------------------------------------
+  !     ! ! SELECT PIXELS TO INTEGRATE
+  !     ! ! ------------------------------------------------------------------------
+  !     ! number of pixels considered per atom
+  !     n_pix = int(cutoff*2)  	
+
+  !     do a = 1, n_atoms_group
+  !       pixels(1,a) = 1+nint(rot_coord(1,a)/pixel_size + (image_size/2))-cutoff ! starting pixel
+  !       pixels(2,a) = 1+nint(rot_coord(2,a)/pixel_size + (image_size/2))-cutoff
+
+  !       ! Check if the atom is extending outside the box
+  !       if (((pixels(1,a) <= 0) .or. (pixels(2,a) <= 0)) .or. &
+  !       (((pixels(1,a)+n_pix) > image_size) .or. ((pixels(2,a)+n_pix) > image_size))) then
+  !         write(MsgOut,'(A)') "Mean coordinate : "
+  !         print*, sum(rot_coord(1,:))/n_atoms
+  !         print*, sum(rot_coord(2,:))/n_atoms
+  !         print*, sum(rot_coord(3,:))/n_atoms
+  !         write(MsgOut,'(A)') "Min coordinate : "
+  !         print*, minval(rot_coord(1,:))
+  !         print*, minval(rot_coord(2,:))
+  !         print*, minval(rot_coord(3,:))
+  !         write(MsgOut,'(A)') "Max coordinate : "
+  !         print*, maxval(rot_coord(1,:))
+  !         print*, maxval(rot_coord(2,:))
+  !         print*, maxval(rot_coord(3,:))
+  !         write(MsgOut,'(A)') 'Gaussian kernel is extending outside the map box for atom '
+  !         write(MsgOut,'(A,I10)') '   pix1 : ', pixels(1,a)
+  !         write(MsgOut,'(A,I10)') '   pix2 : ', pixels(2,a)
+  !         call error_msg('Compute_Energy_Experimental_Restraint_Emfit_Stk> Gaussian kernel is extending outside the map box ')
+  !       endif
+  !     end do
+    
+  !     ! ! ------------------------------------------------------------------------
+  !     ! ! GENERATE SIM IMAGE
+  !     ! ! ------------------------------------------------------------------------
+  !     sim_images(ii,:,:) = 0.0_wp
+    
+  !     !$omp parallel do default(none)                                 &
+  !     !$omp private(a,i,j , mu, norm, gaussian)                   &
+  !     !$omp shared(ii,pixels, n_pix,image_size, pixel_size, &
+  !     !$omp 	rot_coord, sigma, sim_images, gaussians_saved, atom_id, group_id, n_atoms_group)
+  !     !
+    
+  !     do a=1, n_atoms_group
+  !       do j=pixels(2,a), pixels(2,a) + n_pix
+  !         do i=pixels(1,a), pixels(1,a) + n_pix
+
+  !           mu = (/i,j/)
+  !           mu = (mu -1- (image_size / 2)) * pixel_size
+    
+  !           norm = (rot_coord(1,a)-mu(1))**2 + (rot_coord(2,a)-mu(2))**2
+  !           gaussian = exp(-norm / (2 * (sigma ** 2)))
+            
+  !           sim_images(ii,i,j) = sim_images(ii,i,j) + gaussian
+    
+  !           ! save the gaussian to avoid computing them for the gradient
+  !           gaussians_saved(i,j,a) = gaussian    
+  !         end do
+  !       end do
+  !     end do
+    
+  !     !$omp end parallel do
+    
+  !     ! ! ------------------------------------------------------------------------
+  !     ! ! COMPUTE CC
+  !     ! ! ------------------------------------------------------------------------
+  !     sum_sim2 = 0.0
+  !     sum_exp2 = 0.0
+  !     sum_simpexp = 0.0
+
+  !     do j=1, image_size
+        
+  !       do i=1, image_size
+  !         sum_sim2 = sum_sim2 + sim_images(ii,i,j) ** 2
+  !         sum_exp2 = sum_exp2 + exp_images(ii,i,j) ** 2
+  !         sum_simpexp = sum_simpexp + exp_images(ii,i,j) * sim_images(ii,i,j)
+  !       end do
+  !     end do
+    
+  !     ccs(ii)= (sum_simpexp / sqrt(sum_sim2 * sum_exp2))
+    
+  !     ! ! ------------------------------------------------------------------------
+  !     ! ! GRADIENT COMPUTATION
+  !     ! ! ------------------------------------------------------------------------
+  !     if (calc_force) then
+    
+  !       const1 = 1/ sqrt(sum_sim2 * sum_exp2)
+  !       const2 = sum_simpexp / (sqrt(sum_exp2) * sum_sim2**(1.5_wp))
+  !       force_tmp(:) = 0.0_wp
+    
+  !       !$omp parallel do default(none)                                 &
+  !       !$omp private(a,n, i, j,mu, dpsim,dcc)     &
+  !       !$omp shared(ii, pixels, n_pix, image_size, pixel_size, &
+  !       !$omp 	rot_coord, sigma, sim_images, gaussians_saved, atom_id, group_id,&
+  !       !$omp 	exp_images, const1, const2, force_constant,&
+  !       !$omp 	emfit_img_force,inv_rot_matrix, force, experiments, force_tmp)
+  !       !
+    
+  !       do a= 1, n_atoms_group
+    
+  !         n=  atom_id(a,group_id)
+  !         dcc = 0.0_wp
+    
+  !         do j=pixels(2,a), pixels(2,a) + n_pix
+  !           do i=pixels(1,a), pixels(1,a) + n_pix
+
+  !             mu = (/i,j/)
+  !             mu = (mu -1- (image_size / 2)) * pixel_size
+  !             dpsim = -(rot_coord(1:2,a) - mu) * gaussians_saved(i,j,a) / (sigma ** 2)
+  !             dcc = dcc + ((exp_images(ii,i,j) * dpsim * const1) - ( sim_images(ii,i,j) * dpsim * const2))
+
+  !           end do
+  !         enddo
+    
+  !         force_tmp(1:2) = dcc * force_constant
+  !         force_tmp(1:3) = matmul(inv_rot_matrix(1:3,1:3), &
+  !                             force_tmp(1:3))
+  !         emfit_img_force(1:3,n) = emfit_img_force(1:3,n) + force_tmp(1:3)
+
+  !       end do
+    
+  !       !$omp end parallel do
+  !     end if
+  !   enddo
+  !   do a= 1, n_atoms_group
+  !     n=  atom_id(a,group_id)
+  !     force(1:3,n) = force(1:3,n) + emfit_img_force(1:3,n)/stack_size
+  !   enddo
+
+  !   ! ------------------------------------------------------------------------
+  !   ! WRITE OUTPUT IMAGE
+  !   ! ------------------------------------------------------------------------
+  !   if (main_rank) then
+  !     outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.stk"
+  !     if (mod(emfit_icycle,1000) == 0) then 
+  !       call write_stk(outfile, sim_images)
+  !     endif
+  !   endif
+
+  !   cv = sum(ccs)/stack_size
+  !   eexp = force_constant * (1.0_wp - cv)
+  !   corrcoeff_save = cv
+  !   ! print*, ccs
+
+  !   deallocate(ccs)
+  !   return
+  ! end subroutine compute_energy_experimental_restraint_emfit_stk
   
   !======1=========2=========3=========4=========5=========6=========7=========8
   !
@@ -1450,6 +2067,119 @@ contains
 
   end subroutine read_data_spi  
 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         read_header_stk
+  !> @brief		read image_size in header of Spider stack of image 
+  !!			
+  !! @authors           Rémi Vuillemot
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine read_header_stk(filename, image_size, stack_size)
+    character(MaxFilename),         intent(in)    	 :: filename
+    integer,						intent(inout)    :: image_size
+    integer,						intent(inout)    :: stack_size
+
+    !local variable
+    real(4)								:: buffer
+    integer ::unit_no, status, i, LENBYT, LABREC, LABBYT, ISTACK
+
+
+    unit_no = get_unit_no()
+    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
+
+    LABBYT=256
+    i=1
+    do while(i<=LABBYT)
+      read(unit_no,IOSTAT=status) buffer
+      if (status /= 0) &
+        call error_msg("Read_Spider> Error while reading spider image")
+      if (i==12) then
+        image_size = nint(buffer)
+      else if (i==22) then
+	      LABBYT = ceiling(real(buffer)/4)
+      else if (i==26) then
+	      stack_size = nint(buffer)
+      endif
+      i=i+1
+    end do
+    call close_file(unit_no)
+    return
+  end subroutine read_header_stk  
+
+   !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         read_data_stk
+  !> @brief		read Spider stack of image format
+  !!			
+  !! @authors           Rémi Vuillemot
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine read_data_stk(filename, target_stack)
+    character(MaxFilename),         intent(in)    	 :: filename
+    real(wp),						intent(inout)    :: target_stack(:,:,:)
+
+    !local variable
+    real(4)								:: buffer
+    integer :: i, ii,j, im_size,stk_size, unit_no, status,LABBYT, NX, LABREC, LENBYT
+
+    im_size = size(target_stack(1,:,1))
+    stk_size = size(target_stack(:,1,1))
+    LABBYT=256
+
+    unit_no = get_unit_no()
+    open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE')
+
+    i=1
+    do while(i<=LABBYT)
+      read(unit_no,IOSTAT=status) buffer
+      if (status /= 0) &
+        call error_msg("Read_Spider> Error while reading spider image")
+      if (i==22) then
+	      LABBYT = ceiling(real(buffer)/4)
+      endif
+      if (i==12) then
+	      NX = real(buffer)
+      endif
+      if (i==13) then
+	      LABREC = real(buffer)
+      endif
+      if (i==23) then
+	      LENBYT = real(buffer)
+      endif
+
+      i=i+1
+    end do
+
+    do ii=1, stk_size
+      i=1
+      LABBYT=256
+      do while(i<=LABBYT)
+        read(unit_no,IOSTAT=status) buffer
+        if (status /= 0) &
+          call error_msg("Read_Spider> Error while reading spider image")
+        i=i+1
+      end do
+
+      do i= 1, im_size
+        do j= 1, im_size
+          read(unit_no,IOSTAT=status) buffer
+          if (status == 0) then
+            target_stack(ii, j,i) = real(buffer,wp)
+          else
+            call error_msg("Read_Spider> Error while reading spider image")
+          endif
+        end do
+      end do
+
+    end do
+
+    call close_file(unit_no)
+
+     return
+
+  end subroutine read_data_stk  
+
      !======1=========2=========3=========4=========5=========6=========7=========8
   !
   !  Subroutine         write_spi
@@ -1532,5 +2262,138 @@ contains
     return
 
   end subroutine write_spi  
+
+     !======1=========2=========3=========4=========5=========6=========7=========8
+  !
+  !  Subroutine         write_stk
+  !> @brief		write Spider stak image format
+  !!			
+  !! @authors           Rémi Vuillemot
+  ! 
+  !======1=========2=========3=========4=========5=========6=========7=========8
+  subroutine write_stk(filename, target_stack)
+    character(MaxFilename),         intent(in)    	 :: filename
+    real(wp),						intent(inout)    :: target_stack(:,:,:)
+
+    !local variable
+    integer :: i,ii,j, unit_no, status,stack_size
+    integer :: LABBYT, NX,LENBYT, LABREC
+    logical :: file_exists
+
+
+    ! HEADER DATA
+    NX = size(target_stack(1,:,1))
+    stack_size = size(target_stack(:,1,1))
+    LENBYT = NX * 4
+    LABREC = 1024 / LENBYT
+    IF (MOD(1024,LENBYT) .NE. 0) LABREC = LABREC + 1
+    LABBYT = LABREC * LENBYT
+
+
+    inquire(file=filename, exist=file_exists)
+    if (file_exists) then
+      unit_no = get_unit_no()
+      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="replace")
+  
+    else
+      unit_no = get_unit_no()
+      open(UNIT=unit_no, FILE=filename, FORM="UNFORMATTED", access="STREAM", convert='NATIVE', status="new")
+  
+    endif
+
+
+    ! WRITE HEADER
+    ! 1 NZ
+    write(unit_no) real(1,4)
+    ! 2 NY
+    write(unit_no) real(NX,4)  
+    ! 3 IREC
+    write(unit_no) real(LABREC + NX,4)
+    ! 4
+    write(unit_no) real(0,4)
+    ! 5 IFORM
+    write(unit_no) real(1,4)
+    ! skip 6
+    do i =1, 6
+      write(unit_no) real(0,4)
+    enddo
+    ! 12 NX
+    write(unit_no) real(NX,4)
+    ! 13 LABREC
+    write(unit_no) real(LABREC,4)
+    ! skip 7
+    do i =1, 7
+      write(unit_no) real(0,4)
+    enddo
+    ! 21 SCALE
+    write(unit_no) real(1.0,4)
+    ! 22 LABBYT
+    write(unit_no) real(LABBYT,4)
+    ! 23 LENBYT
+    write(unit_no) real(LENBYT,4)
+    ! 24 ISTACK
+    write(unit_no) real(2.0,4)
+    ! 25 NOT USED
+    write(unit_no) real(1.0,4)
+    ! 26 STACK SIZE
+    write(unit_no) real(stack_size,4)
+    ! skip
+    do i =1, (int(LABBYT/4) -26)
+      write(unit_no) real(0,4)
+    enddo
+
+    do ii= 1, stack_size
+
+      ! WRITE HEADER
+      ! 1 NZ
+      write(unit_no) real(1,4)
+      ! 2 NY
+      write(unit_no) real(NX,4)  
+      ! 3 IREC
+      write(unit_no) real(LABREC + NX,4)
+      ! 4
+      write(unit_no) real(0,4)
+      ! 5 IFORM
+      write(unit_no) real(1,4)
+      ! skip 6
+      do i =1, 6
+        write(unit_no) real(0,4)
+      enddo
+      ! 12 NX
+      write(unit_no) real(NX,4)
+      ! 13 LABREC
+      write(unit_no) real(LABREC,4)
+      ! skip 7
+      do i =1, 7
+        write(unit_no) real(0,4)
+      enddo
+      ! 21 SCALE
+      write(unit_no) real(1.0,4)
+      ! 22 LABBYT
+      write(unit_no) real(LABBYT,4)
+      ! 23 LENBYT
+      write(unit_no) real(LENBYT,4)
+      ! 24 ISTACK
+      write(unit_no) real(2.0,4)
+      ! 25 NOT USED
+      write(unit_no) real(1.0,4)
+      ! 26 STACK SIZE
+      write(unit_no) real(stack_size,4)
+      ! skip
+      do i =1, (int(LABBYT/4) -26)
+        write(unit_no) real(0,4)
+      enddo
+
+      do i= 1, NX
+        do j= 1, NX
+          write(unit_no) real(target_stack(ii, j,i),4)
+        end do
+      end do
+    end do
+
+    call close_file(unit_no)
+    return
+
+  end subroutine write_stk  
 
 end module at_experiments_mod
