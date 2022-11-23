@@ -326,6 +326,18 @@ contains
                    stat = dealloc_stat)
       end if
 
+    case(ExperimentsEmfitStk)
+
+      if (allocated(experiments%emfit_stk%target_imgs)) then
+        deallocate(experiments%emfit_stk%target_imgs,      &
+                   experiments%emfit_stk%simulated_imgs,   &
+                   experiments%emfit_stk%rot_coord,       &
+                   experiments%emfit_stk%pixels,          &
+                   experiments%emfit_stk%gaussians_saved, &
+                   experiments%emfit_stk%emfit_img_force, &
+                   stat = dealloc_stat)
+      end if
+
 
     case default
 
@@ -357,6 +369,7 @@ contains
 
     call dealloc_experiments(experiments, ExperimentsEmfit)
     call dealloc_experiments(experiments, ExperimentsEmfitImg)
+    call dealloc_experiments(experiments, ExperimentsEmfitStk)
 
     return
 

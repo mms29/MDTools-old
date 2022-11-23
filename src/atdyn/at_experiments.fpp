@@ -1640,7 +1640,7 @@ contains
     ! ------------------------------------------------------------------------
     if (main_rank) then
       outfile = emfit_target_test(:index(emfit_target_test, '.', back=.true.)-1) //"_sim.stk"
-      if (mod(emfit_icycle,100) == 0) then 
+      if (mod(emfit_icycle,10000) == 0) then 
         call write_stk(outfile, sim_images)
       endif
     endif
