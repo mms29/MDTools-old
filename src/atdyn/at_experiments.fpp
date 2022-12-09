@@ -1269,8 +1269,8 @@ contains
     do a=1, n_atoms_group
       n=  atom_id(a,group_id)
       rot_coord(1:3,a)=matmul(experiments%emfit_img%rot_matrix(1:3,1:3),coord(1:3,n))
-      rot_coord(1,a) = rot_coord(1,a) + (shift_x * pixel_size)
-      rot_coord(2,a) = rot_coord(2,a) + (shift_y * pixel_size)
+      rot_coord(1,a) = rot_coord(1,a) - (shift_x * pixel_size)
+      rot_coord(2,a) = rot_coord(2,a) - (shift_y * pixel_size)
     end do
     
     ! ------------------------------------------------------------------------
