@@ -523,6 +523,7 @@ contains
         nm_amp(1:nmodes) = nm_amp(1:nmodes) + nm_dt*nm_vel(1:nmodes)
 
 
+
         scale_v = exp(-gamma_t*0.5_wp*dt)
         do i = 1, natom
 
@@ -819,7 +820,7 @@ contains
             read (unit_no, '(A)')
             read (unit_no, '(A)')
             do j = 1, natom
-                    read (unit_no, '(A)')
+                    read (unit_no, *) nm_vectors(:,j,i)
             end do
         end do
         call close_file (unit_no)
