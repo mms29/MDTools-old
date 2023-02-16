@@ -20,6 +20,8 @@ usage = "USAGE : \n"\
       "\t\t [-sn, --num_socket_per_node NUM_SOCKET_PER_NODE ] (if rankdir is set, defines the number of sockets per node)\n" \
       "\t\t [-n, --num_node NUM_NODE ] (if rankdir is set, defines the number of nodes) \n" \
       "\t\t [-l, --localhost ] (If set, use localhost instead of relative host)\n"\
+      "\t\t [-f, --first_index FIRST_INDEX] (If set, will skip all the inputs until FIRST_INDEX. 1 start at the first input file)\n"\
+      "\t\t [-l, --last_index LAST_INDEX] (If set, will skip all the inputs after LAST_INDEX. -1 ends et the last input file)\n"\
       "\n\t\t -h, --help (Print this usage message)\n"
 
 mpi_command = ""
@@ -36,6 +38,8 @@ rankdir = ""
 num_core_per_node = 1
 num_socket_per_node = 1
 num_node = 1
+first_index = 1
+last_index = -1
 
 for i in range(1, len(sys.argv)):
     if sys.argv[i] == "-h" or sys.argv[i] == "--help":
@@ -66,22 +70,29 @@ for i in range(1, len(sys.argv)):
         num_socket_per_node = int(sys.argv[i+1])
     elif sys.argv[i] == "-n" or sys.argv[i] == "--num_node":
         num_node = int(sys.argv[i + 1])
+    elif sys.argv[i] == "-f" or sys.argv[i] == "--first_index":
+        first_index = int(sys.argv[i + 1])
+    elif sys.argv[i] == "-l" or sys.argv[i] == "--last_index":
+        last_index = int(sys.argv[i + 1])
 
 
 print("Parameters : ")
-print("\t num_mpi -> %s"%num_mpi)
-print("\t num_threads -> %s"%num_threads)
-print("\t inputs -> %s"%inputs_path)
-print("\t outputs -> %s"%outputs_path)
-print("\t executable -> %s"%executable)
+print("\t mpi_command         -> %s"%mpi_command)
+print("\t num_mpi             -> %s"%num_mpi)
+print("\t num_threads         -> %s"%num_threads)
+print("\t inputs              -> %s"%inputs_path)
+print("\t outputs             -> %s"%outputs_path)
+print("\t executable          -> %s"%executable)
+print("\t first_index         -> %i"%first_index)
+print("\t last_index          -> %i"%last_index)
 if mpi_argument is not None:
-    print("\t mpi_argument -> %s" % mpi_argument)
+    print("\t mpi_argument        -> %s" % mpi_argument )
 if use_rankfiles :
-    print("\t rankdir -> %s" % rankdir)
-    print("\t num_node -> %s" % num_node)
-    print("\t num_core_per_node -> %s" % num_core_per_node)
+    print("\t rankdir             -> %s" % rankdir)
+    print("\t num_node            -> %s" % num_node)
+    print("\t num_core_per_node   -> %s" % num_core_per_node)
     print("\t num_socket_per_node -> %s" % num_socket_per_node)
-    print("\t localhost -> %s"%str(localhost))
+    print("\t localhost           -> %s"%str(localhost))
 
 #Read inputs/ outputs
 inputs = []
@@ -95,6 +106,8 @@ with open(outputs_path,"r") as f:
 num_run = len(inputs)
 if len(outputs) != num_run:
     raise RuntimeError("Error: number of inputs and outputs differs : %i != %i"%(num_run, len(outputs)))
+if last_index != -1:
+    num_run = last_index
 
 num_core_per_socket = num_core_per_node//num_socket_per_node
 
@@ -127,7 +140,7 @@ if use_rankfiles:
 
 # prepare env
 num_complete = 0
-launch_index = 0
+launch_index = first_index -1
 env = os.environ
 env["OMP_NUM_THREADS"] = str(num_threads)
 process = [None for i in range(num_mpi)]
