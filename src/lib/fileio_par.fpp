@@ -158,7 +158,7 @@ contains
     ! local variables
     type(s_par)              :: par0
     integer                  :: file, i
-    character(100)           :: filename
+    character(Maxfilename)           :: filename
 
 
     call init_par(par)

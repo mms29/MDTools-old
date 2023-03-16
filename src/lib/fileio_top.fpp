@@ -81,7 +81,7 @@ contains
     ! local variables
     type(s_top)              :: top0
     integer                  :: unit_no, i
-    character(100)           :: filename
+    character(Maxfilename)           :: filename
 
 
     call init_top(top)

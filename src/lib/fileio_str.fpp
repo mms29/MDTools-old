@@ -53,7 +53,7 @@ contains
     type(s_par)              :: par0
     type(s_top)              :: top0
     integer                  :: file, i
-    character(100)           :: filename, str_name
+    character(Maxfilename)           :: filename, str_name
 
 
     i  = 0
